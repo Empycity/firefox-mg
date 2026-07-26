@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>XHR request body trace smoke</title>
+<script>
+async function run() {
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/echo", true);
+  xhr.setRequestHeader("Content-Type", "application/json");
+  xhr.onload = () => {
+    document.body.textContent = "xhr-status=" + xhr.status + " " + xhr.responseText;
+  };
+  xhr.onerror = () => {
+    document.body.textContent = "xhr-error";
+  };
+  xhr.send(JSON.stringify({
+    anti_content: "trace-xhr-request-body-token",
+    nested: { n: 11 }
+  }));
+}
+run();
+</script>

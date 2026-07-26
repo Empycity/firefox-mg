@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>firefox trace cookie lifecycle smoke</title>
+<script>
+  document.cookie = "ft_lifecycle=a; path=/; max-age=120; SameSite=Lax";
+  document.cookie = "ft_lifecycle=b; path=/; max-age=120; SameSite=Lax";
+  document.cookie = "ft_lifecycle=gone; path=/; max-age=0; SameSite=Lax";
+  document.cookie = "ft_lifecycle_expired=gone; path=/; max-age=0; SameSite=Lax";
+  document.cookie = "ft_lifecycle_keep=c; path=/; max-age=120; SameSite=Lax";
+  fetch("/cookie-lifecycle-done?cookie=" + encodeURIComponent(document.cookie))
+    .catch(() => {});
+</script>
+cookie lifecycle smoke

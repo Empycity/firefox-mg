@@ -1,0 +1,30 @@
+# Do not commit the full Firefox source checkout or build outputs.
+/gecko-dev/
+/.mozbuild/
+/.mozbuild-state/
+/obj-*/
+
+# Runtime profiles and browser cache/state. Keep only the template.
+/profiles/*
+!/profiles/
+!/profiles/trace-user.js
+
+# Trace outputs and artifacts.
+/firefox-trace-*/
+/values/
+/scripts/
+*.jsonl
+
+# Local agent/editor/cache state.
+/.codex/
+/.agents/
+.DS_Store
+**/.DS_Store
+__pycache__/
+*.pyc
+
+# Logs and temp files.
+*.log
+*.tmp
+*.swp
+

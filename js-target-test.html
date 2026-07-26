@@ -1,0 +1,87 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Firefox Trace JS Target Test</title>
+<body>
+<div id="result"></div>
+<script>
+function SHA256(input) {
+  return "hash:" + input;
+}
+
+function buildSign(tk, fp, ts, ai) {
+  const rd = "rd-test";
+  const str = "" + tk + fp + ts + ai + rd;
+  return SHA256(str);
+}
+
+function objectTarget(payload) {
+  return payload.token + ":" + payload.nested.sign;
+}
+
+function longStringTarget(payload) {
+  return payload.h5stLike.slice(0, 16) + ":" + payload.h5stLike.length;
+}
+
+function typedArrayTarget(bytes, buffer, view) {
+  return bytes[0] + ":" + buffer.byteLength + ":" + view.getUint16(0);
+}
+
+const evalResult = eval('function evalTraceTarget(v){ return "eval:" + v; } evalTraceTarget("demo")');
+const newFunctionTraceTarget = new Function("v", "return 'newfn:' + v;");
+window.newFunctionResult = newFunctionTraceTarget("demo");
+
+window.result = buildSign("tk-demo", "fp-demo", "123", "app-demo");
+window.objectResult = objectTarget({
+  token: "tok-object-demo-1234567890",
+  nested: {
+    sign: "sign-object-demo",
+    arr: [1, "two", { deep: "value" }]
+  },
+  body: {
+    appid: "demo-app",
+    functionId: "demoFunction"
+  }
+});
+window.longStringResult = longStringTarget({
+  h5stLike: "20260725000000000;tk-demo;algo;" + "x".repeat(1800) + ";sha-demo"
+});
+const traceBytes = new Uint8Array([1, 2, 3, 4, 250, 251, 252, 253, 254, 255]);
+const traceBuffer = traceBytes.buffer;
+const traceView = new DataView(traceBuffer, 2, 4);
+window.typedArrayResult = typedArrayTarget(traceBytes, traceBuffer, traceView);
+document.getElementById("result").textContent = window.result;
+
+localStorage.setItem("traceSign", "ls-sign-1234567890");
+window.localStorageRead = localStorage.getItem("traceSign");
+sessionStorage.setItem("traceToken", "ss-token-12345678901234567890");
+window.sessionStorageRead = sessionStorage.getItem("traceToken");
+sessionStorage.removeItem("traceToken");
+document.cookie = "traceCookie=ck-cookie-12345678901234567890; path=/; SameSite=Lax";
+window.cookieRead = document.cookie;
+
+if ("cookieStore" in window) {
+  window.cookieStoreSupported = true;
+  cookieStore.set({
+    name: "traceStore",
+    value: "cs-token-12345678901234567890",
+    path: "/",
+    sameSite: "lax"
+  }).then(() => cookieStore.get("traceStore"))
+    .then(() => cookieStore.getAll({ name: "traceStore" }))
+    .then(() => cookieStore.delete({ name: "traceStore", path: "/" }))
+    .catch((err) => {
+      window.cookieStoreError = String(err && err.message || err);
+    });
+} else {
+  window.cookieStoreSupported = false;
+}
+
+const xhr = new XMLHttpRequest();
+xhr.open("GET", location.href.split("?")[0] + "?functionId=demoFn&sign=abc123demo&token=tok_demo_12345678901234567890");
+xhr.send();
+
+fetch(location.href.split("?")[0] + "?functionId=fetchDemo&sign=fetchSign123&token=tok_fetch_demo_12345678901234567890", {
+  method: "GET"
+}).catch(() => {});
+</script>
+</body>
