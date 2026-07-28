@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Boundary Window Smoke</title>
+<pre id="out">running</pre>
+<script>
+  function leaf(i) {
+    return i + 1;
+  }
+
+  function hop(i) {
+    return leaf(i) * 3;
+  }
+
+  function run() {
+    let total = 0;
+    for (let i = 0; i < 20; i++) {
+      total += hop(i);
+    }
+    document.createElement("div");
+    document.getElementById("out").textContent = String(total);
+  }
+
+  run();
+</script>

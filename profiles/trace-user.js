@@ -3,9 +3,9 @@
 // Copy this file to <profile>/user.js before launching the modified Firefox.
 // These prefs are intentionally about browser background noise only: updates,
 // telemetry, recommendations, remote experiments, captive-portal checks,
-// newtab/content feeds, and default-browser prompts. They must not spoof target
-// website-visible fingerprint values such as navigator.*, screen.*, WebGL, UA,
-// timezone, language, hardwareConcurrency, or canvas.
+// newtab/content feeds, and default-browser prompts. Browser-visible automation
+// and fingerprint surfaces are handled by explicit trace surface modes instead
+// of being mixed into this background-noise profile.
 
 // Keep startup deterministic and avoid about:home/about:newtab background work.
 user_pref("browser.startup.page", 0);
@@ -47,6 +47,7 @@ user_pref("browser.search.update", false);
 user_pref("browser.region.update.enabled", false);
 user_pref("browser.region.network.url", "");
 user_pref("browser.region.update.regionFetchTimeout", 1);
+user_pref("services.settings.loglevel", "off");
 user_pref("services.settings.poll_interval", 31536000);
 
 // Disable newtab/content recommendation services.
@@ -74,6 +75,14 @@ user_pref("network.dns.disablePrefetch", true);
 user_pref("network.http.speculative-parallel-limit", 0);
 user_pref("dom.push.enabled", false);
 user_pref("dom.push.connection.enabled", false);
+
+// Keep script loading deterministic for trace runs. Bytecode/navigation cache
+// can make page transitions depend on stale per-profile script state, which is
+// bad for reproducible trace and has caused fragile ScriptLoadHandler paths on
+// heavy navigation pages.
+user_pref("dom.script_loader.bytecode_cache.enabled", false);
+user_pref("dom.script_loader.bytecode_cache.strategy", -2);
+user_pref("dom.script_loader.navigation_cache", false);
 
 // Avoid sign-in/sync and other browser chrome services during trace runs.
 user_pref("identity.fxaccounts.enabled", false);

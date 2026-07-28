@@ -244,14 +244,26 @@ def prioritize_findings(findings: list[Finding]) -> list[Finding]:
 
 @dataclass
 class Index:
-    calls: dict[str, dict[str, Any]] = field(default_factory=dict)
+    calls: dict[tuple[str, str, str], dict[str, Any]] = field(default_factory=dict)
     call_events: list[dict[str, Any]] = field(default_factory=list)
-    children: dict[str, list[str]] = field(default_factory=lambda: collections.defaultdict(list))
+    children: dict[tuple[str, str, str], list[tuple[str, str, str]]] = field(
+        default_factory=lambda: collections.defaultdict(list)
+    )
     degraded: list[dict[str, Any]] = field(default_factory=list)
     function_counts: collections.Counter[tuple[str, str]] = field(default_factory=collections.Counter)
     script_counts: collections.Counter[str] = field(default_factory=collections.Counter)
     script_hash_counts: collections.Counter[str] = field(default_factory=collections.Counter)
     script_sources: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+def call_key(row: dict[str, Any], call_id: str | None = None) -> tuple[str, str, str] | None:
+    """Keep independently numbered content-process call trees separate."""
+    cid = call_id if call_id is not None else row.get("call_id")
+    if not isinstance(cid, str) or not cid:
+        return None
+    pid = str(row.get("pid") or "unknown")
+    segment = str(row.get("segment_id") or "initial")
+    return pid, segment, cid
 
 
 def build_index(rows: list[dict[str, Any]]) -> Index:
@@ -263,11 +275,14 @@ def build_index(rows: list[dict[str, Any]]) -> Index:
         if typ == "js.call.enter":
             idx.call_events.append(row)
             cid = row.get("call_id")
-            if isinstance(cid, str):
-                idx.calls[cid] = row
+            key = call_key(row, cid if isinstance(cid, str) else None)
+            if key:
+                idx.calls[key] = row
                 parent = row.get("parent_call_id")
                 if isinstance(parent, str):
-                    idx.children[parent].append(cid)
+                    parent_key = call_key(row, parent)
+                    if parent_key:
+                        idx.children[parent_key].append(key)
             script = row.get("script_url") or ""
             fn = row.get("function_name") or ""
             script_sha256 = row.get("script_sha256") or ""
@@ -293,12 +308,14 @@ def build_index(rows: list[dict[str, Any]]) -> Index:
     return idx
 
 
-def call_chain(idx: Index, call_id: str | None, max_depth: int = 80) -> list[dict[str, Any]]:
-    if not call_id:
+def call_chain(idx: Index, source_row: dict[str, Any], call_id: str | None,
+               max_depth: int = 80) -> list[dict[str, Any]]:
+    key = call_key(source_row, call_id)
+    if not key:
         return []
     out: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    cur = call_id
+    seen: set[tuple[str, str, str]] = set()
+    cur = key
     while cur and cur not in seen and len(out) < max_depth:
         seen.add(cur)
         row = idx.calls.get(cur)
@@ -306,7 +323,7 @@ def call_chain(idx: Index, call_id: str | None, max_depth: int = 80) -> list[dic
             break
         out.append(row)
         parent = row.get("parent_call_id")
-        cur = parent if isinstance(parent, str) else ""
+        cur = call_key(row, parent if isinstance(parent, str) else None)
     return out
 
 
@@ -421,7 +438,7 @@ def build_next_trace_env(
 def summarize_finding(
     finding: Finding, idx: Index, nearby_window_us: int
 ) -> dict[str, Any]:
-    chain = call_chain(idx, finding.origin_call_id)
+    chain = call_chain(idx, finding.row, finding.origin_call_id)
     nearby = nearby_calls(idx, finding.row, nearby_window_us)
     row = finding.row
     summary: dict[str, Any] = {
@@ -506,7 +523,7 @@ def main(argv: list[str]) -> int:
     findings = prioritize_findings(find_interesting_fields(rows, fields))[
         : args.max_findings
     ]
-    chains = [call_chain(idx, f.origin_call_id) for f in findings]
+    chains = [call_chain(idx, f.row, f.origin_call_id) for f in findings]
     nearby_groups = [nearby_calls(idx, f.row, args.nearby_window_us) for f in findings]
     scripts, funcs, script_hashes = candidate_filters(chains, nearby_groups, idx)
 

@@ -1,0 +1,39 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Firefox Trace runtime segment smoke</title>
+<pre id="out">starting</pre>
+<script>
+let tick = 0;
+function makeSegmentValue() {
+  const ts = Date.now();
+  return [
+    String(ts),
+    "fp-segment-smoke",
+    "app",
+    "tk-segment-smoke",
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "5.3",
+    String(ts),
+    "payload-segment-smoke-" + tick,
+  ].join(";");
+}
+
+function sendTick() {
+  tick++;
+  const value = makeSegmentValue();
+  const url = "/runtime-control-target.json?trace_value=" +
+    encodeURIComponent(value) + "&tick=" + tick;
+  const xhr = new XMLHttpRequest();
+  xhr.open("GET", url, true);
+  xhr.onloadend = () => {
+    document.getElementById("out").textContent =
+      "tick=" + tick + "\nstatus=" + xhr.status + "\n" + value;
+  };
+  xhr.send();
+}
+
+const params = new URLSearchParams(location.search);
+const interval = Math.max(250, Math.min(10000, Number(params.get("interval") || "1000")));
+setInterval(sendTick, interval);
+setTimeout(sendTick, Math.max(0, Math.min(10000, Number(params.get("delay") || "1000"))));
+</script>

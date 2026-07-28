@@ -1,0 +1,146 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Firefox Trace automation surface smoke</title>
+<style>
+  body {
+    font: 13px/1.45 system-ui, sans-serif;
+    margin: 24px;
+  }
+  pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+</style>
+<h1>automation surface</h1>
+<pre id="out">collecting...</pre>
+<script>
+async function permissionState(name) {
+  if (!navigator.permissions || !navigator.permissions.query) {
+    return "unsupported";
+  }
+  try {
+    const status = await navigator.permissions.query({ name });
+    return status.state;
+  } catch (error) {
+    return "error:" + String(error && error.name || error);
+  }
+}
+
+function getWebGL() {
+  const canvas = document.createElement("canvas");
+  const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+  if (!gl) {
+    return { supported: false };
+  }
+  const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
+  const out = {
+    supported: true,
+    vendor: gl.getParameter(gl.VENDOR),
+    renderer: gl.getParameter(gl.RENDERER),
+    version: gl.getParameter(gl.VERSION),
+    shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+  };
+  if (debugInfo) {
+    out.unmaskedVendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+    out.unmaskedRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+  }
+  return out;
+}
+
+function descriptorOf(object, property) {
+  let current = object;
+  while (current) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, property);
+    if (descriptor) {
+      return {
+        owner: current === object ? "self" : current.constructor && current.constructor.name,
+        enumerable: !!descriptor.enumerable,
+        configurable: !!descriptor.configurable,
+        hasGetter: typeof descriptor.get === "function",
+        hasValue: "value" in descriptor,
+      };
+    }
+    current = Object.getPrototypeOf(current);
+  }
+  return null;
+}
+
+async function collect() {
+  const surface = {
+    href: location.href,
+    userAgent: navigator.userAgent,
+    appVersion: navigator.appVersion,
+    appName: navigator.appName,
+    appCodeName: navigator.appCodeName,
+    product: navigator.product,
+    productSub: navigator.productSub,
+    vendor: navigator.vendor,
+    vendorSub: navigator.vendorSub,
+    buildID: navigator.buildID,
+    oscpu: navigator.oscpu,
+    webdriver: navigator.webdriver,
+    webdriverDescriptor: descriptorOf(navigator, "webdriver"),
+    language: navigator.language,
+    languages: Array.from(navigator.languages || []),
+    platform: navigator.platform,
+    hardwareConcurrency: navigator.hardwareConcurrency,
+    maxTouchPoints: navigator.maxTouchPoints,
+    cookieEnabled: navigator.cookieEnabled,
+    onLine: navigator.onLine,
+    doNotTrack: navigator.doNotTrack,
+    globalPrivacyControl: navigator.globalPrivacyControl,
+    mozAddonManagerPresent: "mozAddonManager" in navigator,
+    pluginsLength: navigator.plugins ? navigator.plugins.length : null,
+    mimeTypesLength: navigator.mimeTypes ? navigator.mimeTypes.length : null,
+    pdfViewerEnabled: navigator.pdfViewerEnabled,
+    window: {
+      innerWidth,
+      innerHeight,
+      outerWidth,
+      outerHeight,
+      screenX,
+      screenY,
+      devicePixelRatio,
+    },
+    screen: {
+      width: screen.width,
+      height: screen.height,
+      availWidth: screen.availWidth,
+      availHeight: screen.availHeight,
+      colorDepth: screen.colorDepth,
+      pixelDepth: screen.pixelDepth,
+    },
+    document: {
+      hidden: document.hidden,
+      visibilityState: document.visibilityState,
+      hasFocus: document.hasFocus(),
+    },
+    permissions: {
+      notifications: "pending",
+      geolocation: "pending",
+      camera: "pending",
+      microphone: "pending",
+    },
+    webgl: getWebGL(),
+    time: {
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      dateString: new Date().toString(),
+    },
+  };
+  window.__automationSurface = surface;
+  document.getElementById("out").textContent = JSON.stringify(surface, null, 2);
+  surface.permissions = {
+    notifications: await permissionState("notifications"),
+    geolocation: await permissionState("geolocation"),
+    camera: await permissionState("camera"),
+    microphone: await permissionState("microphone"),
+  };
+  document.getElementById("out").textContent = JSON.stringify(surface, null, 2);
+}
+
+collect().catch((error) => {
+  const message = String(error && error.stack || error);
+  window.__automationSurfaceError = message;
+  document.getElementById("out").textContent = message;
+});
+</script>

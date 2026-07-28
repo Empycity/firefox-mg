@@ -1,0 +1,9 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Firefox Trace source map smoke</title>
+<h1>source map smoke</h1>
+<pre id="out">loading...</pre>
+<script src="./source-map-target.js"></script>
+<script>
+document.getElementById("out").textContent = String(window.__traceSourceMapSmoke());
+</script>

@@ -1,6 +1,6 @@
 # Firefox Trace 魔改进展记录
 
-更新时间：2026-07-26
+更新时间：2026-07-27
 
 ## 目标定位
 
@@ -202,6 +202,357 @@
 | WebSocket frame trace | 有 | 无 | 第三阶段 |
 
 ## 当前已实现能力
+
+### Runtime Trace Control
+
+本轮新增：
+
+- `tools/run-trace-firefox.sh --trace-start active|paused|prewarm`。
+- `tools/trace-control.sh TRACE_DIR config|new-segment|start|stop|prewarm|status`。
+- `manifest.json` 写入 `trace_start`、`trace_control_file`、`TRACE_CONTROL_FILE`。
+- `firefox-control.jsonl` 记录 `trace.control` start/stop 事件。
+- `trace-control.json` 升级为 `firefox_trace.control.v2`，包含
+  `segment_id`、`segment_label`、`config_hash`、`modules` 和可热切 `env`。
+- Gecko runtime gate 下沉到 JS/DOM/XHR/Fetch/Storage/Cookie enabled 入口，paused/prewarm
+  阶段不再做主要 trace 构造和 value/body/script artifact 写入。
+- Parent 进程通过 `FirefoxTraceRuntimeConfig` IPC 把 control config 推给 content；
+  JS trace 能在同一浏览器进程内从 boundary/discover 切到 target/value。
+- ContentChild/ContentParent IPC 写入前保留二次 gate。
+- 控制状态 200ms 缓存刷新；刷新时直接重读小控制文件，不再依赖 mtime+size 判断。
+- 控制 JSON 解析只看 `previous_state` 前的顶层字段，避免 start 后误命中历史 paused 状态。
+- Parent 写 JSONL 前统一注入 `segment_id`、`control_version`、`config_hash`。
+
+最新本地 smoke：
+
+- 目录：`/private/tmp/firefox-trace-1785146389-29562`
+- paused 启动后无业务日志；
+- start 后捕获 delayed XHR：
+  - `xhr.open/send/response`
+  - `anti_content=runtime-control-token-1785146413444`
+  - `origin_call_id=call_2530`
+  - `js.boundary.flush_summary complete_window=true`
+- stop 后再次触发请求，server 有请求，但 XHR/JS 日志行数不增加。
+
+runtime segment/config 热切 smoke：
+
+- 目录：`/private/tmp/firefox-trace-runtime-segments-smoke6`
+- 同一个 headless Firefox 进程内：
+  - `seg_002` 使用 `discover-light`；
+  - 不重开浏览器切到 `seg_003`，使用 `target-values`，
+    `TRACE_SCRIPT_CONTAINS=runtime-segments`，
+    `TRACE_FUNCTION_CONTAINS=sendTick,makeSegmentValue`。
+- 结果：
+  - `firefox-js-55477.jsonl` 60 行；
+  - `seg_002` 为 boundary 事件；
+  - `seg_003` 出现 `js_mode=target`、`target_match=true` 和 9 条
+    `js.value.store`；
+  - `makeSegmentValue return` 的完整复合字段 preview 被记录。
+- 边界：
+  - 刚切 segment 后首批事件可能仍按旧配置产生；控制台/UI 需要提供
+    `apply/prewarm` 或等待 `control_version` 生效确认。
+
+当前待补：
+
+- `apply/prewarm` 确认机制；
+- JS 模块启动级关闭已 build/smoke 通过；paused 热切换仍依赖 `apply/prewarm` ack；
+- PDD paused-flow 真实页复验。
+
+### Trace Console v1
+
+新增：
+
+- `tools/trace-console-server.py`
+  - 本地 Web UI：`http://127.0.0.1:8788/`
+  - Agent HTTP API：
+    - `GET /api/latest`
+    - `GET /api/status?trace_dir=...`
+    - `GET /api/summary?trace_dir=...`
+    - `POST /api/config`
+    - `POST /api/new-segment`
+    - `POST /api/start`
+    - `POST /api/stop`
+    - `POST /api/prewarm`
+- UI 可配置：
+  - `TRACE_DIR` / `TRACE_CONTROL_FILE`
+  - segment label / preset
+  - module 开关：js/xhr/fetch/dom/cookie/storage/script
+  - profile / js mode
+  - script/function/script_sha256 filter
+  - target match / query fields
+  - object depth/keys、array items、typed array bytes
+  - value metadata / primitive metadata
+  - value store min bytes / JS limit events
+  - custom `TRACE_*` / `FIREFOX_TRACE_*`
+- API 统一调用 `tools/trace-control.sh`，避免 UI 和 agent 走不同控制路径。
+- 支持清空旧配置：
+  - `tools/trace-control.sh config --unset TRACE_NAME`
+  - UI custom env 中 `TRACE_NAME=` 会转成 unset。
+
+验证：
+
+- Python 语法检查通过：`python3 -m py_compile tools/trace-console-server.py`。
+- `trace-control.sh --unset` smoke 通过，能同时清理 `TRACE_SCRIPT_CONTAINS`
+  和 `FIREFOX_TRACE_SCRIPT_CONTAINS`。
+- HTTP API smoke 通过：
+  - 控制台服务：`127.0.0.1:8788`
+  - 目录：`/private/tmp/firefox-trace-console-api-smoke`
+  - 完成 `/api/config -> /api/start -> /api/stop -> /api/new-segment ->
+    /api/config -> /api/status -> /api/summary`。
+
+当前边界：
+
+- 控制台 v1 是控制面，不是 viewer；请求时间线、value/script artifact 查看和报告导出后续补。
+- 尚未实现 `apply/prewarm` 生效确认；切换到 target/deep 后仍建议等一次 status/summary
+  或稍等再触发关键动作。
+
+真实页 JD paused-flow 验证：
+
+- 目录：`/private/tmp/firefox-trace-1785149433-86188`
+- 流程：`--trace-start paused` 打开 JD，用户完成登录和搜索跳转后，执行
+  `tools/trace-control.sh ... start jd-search`，目标接口触发后执行
+  `tools/trace-control.sh ... stop after-page2`。
+- 结果：登录和搜索跳转稳定，不再出现 “Gah. Your tab just crashed.”。
+- 本轮总日志约 12MB，`firefox-xhr-86188.jsonl` 40 行，
+  `firefox-js-86188.jsonl` 27197 行。
+- 捕获主搜索 h5st：
+  - `request_id=xhr_166`
+  - `functionId=pc_search_searchWare`
+  - API body 记录 `page=3`，以实际请求 body 为准；
+  - `origin_call_id=call_1446748`
+  - `h5st` 长度 1195；
+  - sha256：`e2e5624564c2f17106c3b702d2abcfd2a27899dfd0d9c595947f13dc1b761d47`
+  - 完整值：`values/qfv_xhr_86206_213.txt`、`values/qfv_xhr_86206_215.txt`
+- `xhr.open.h5st` 对应 `js.boundary.flush_summary`：
+  - `flushed=168`
+  - `dropped_before_flush=0`
+  - `skipped_by_window=0`
+  - `complete_window=true`
+- discover-light 候选链路：
+  - `pc-tk.js?v=2024-06-20-17`：`getJsToken`、`__getTkResult`、
+    `__callbackWrapper`、`_0x1d73`
+  - `pc-core-disposal.js`：`onRequest`、`DisposalSDK.prototype.attachCustomHeader`、
+    `D<`、`send`
+  - `main_search/pro/0.0.11/js/index.6fe45f56.js`：搜索业务请求包装函数。
+
+本轮 crash 根因和修复：
+
+- crash 发生在 paused 阶段 JD 登录/搜索跳转期间，栈位于
+  `ScriptLoadHandler::OnStreamComplete`，不是 trace active 后日志爆量导致。
+- 直接原因是 `ScriptLoadHandler.cpp` 中 `mRequest->ScriptTextLength()` 在
+  `script.resource` 实际需要记录前就执行；部分 JD 脚本请求没有可读 text source，
+  触发 `MOZ_RELEASE_ASSERT(isSome())`。
+- 修复：
+  - `script.resource` enabled 判断增加 runtime active gate；
+  - `NotifyStart/NotifyStop` 增加 `HasScriptLoadContext()` 保护；
+  - `ScriptTextLength()` 移入 `FirefoxTraceScriptResourceShouldRecord(...)` 内部，
+    并先判断 `mRequest->IsTextSource()`；
+  - trace profile 禁用 script bytecode/navigation cache，降低该路径不确定性。
+- 修复后已重新 build，并用上面的 JD paused-flow 通过验证。
+
+### JD target-values 二轮深抓验证
+
+前置目录：`/private/tmp/firefox-trace-jd-h5st-target-values-fix-1785150459-35916`
+
+metadata 验证目录：`/private/tmp/firefox-trace-jd-h5st-target-values-meta-1785151960-86646`
+
+本轮目标是用上一轮 discover 得到的候选脚本/函数，跑 `target-values` 看 h5st 的
+args/return/object/value_store。
+
+新增 crash 修复：
+
+- 初次打开 `target-values + paused` 时，JD 首页 worker 脚本触发 content crash。
+- crash reason：
+
+  ```text
+  MOZ_RELEASE_ASSERT(mWorkerThread && mWorkerThread->IsOnCurrentThread()) (not on worker thread!)
+  ```
+
+- 符号化后确认是 worker 线程执行 JS 时，`AutoFirefoxTraceJSCall` 写事件，进而调用
+  `PContentChild::SendFirefoxTraceDOMEvent`。PContent IPC 只能在 content main thread
+  调用。
+- 已修：
+  - `FirefoxTraceSendEventToParent`
+  - `FirefoxTraceSendValueToParent`
+  - `FirefoxTraceSendScriptSourceToParent`
+  在非主线程直接 handled/drop。
+  - JS raw event/value/script source 写入增加 runtime active gate。
+- 修复后重新 build 通过，并重新打开 JD `target-values + paused`，启动稳定。
+
+二轮 trace 结果：
+
+- start label：`jd-h5st-target-values-deep2`
+- stop label：`after-target-trigger`
+- 运行稳定，无 content crash。
+- 总目录约 14MB。
+- 捕获 h5st 请求：
+  - `pc_search_searchWare`：`bb172d8a0f417db38a89fed63b17406ee7e3b961cb57bf20e2f270aa4879c374`
+  - `pc_search_adv_Search`：`52799107ef546a1eed3314bc02ec7903859d3738f6c65780459334fae5c1d52b`
+  - `pctradesoa_mixer`：`b87562c2e925f9704cf3f39931936c4b530e675ef1b4315b8d0d7621ab985277`
+  - `pc_club_productCommentSummaries`：`b37d8024d39df4f2a54ddc387d13bc6bc583117f834e831749cf9c72002c8e71`
+- `values/jsv_*.txt` 中每组 h5st 都有 16 个 artifact 与 XHR query field
+  artifact sha256 完全一致，说明 JS value serialization 已抓到最终 h5st 完整字符串。
+
+前置轮暴露的新缺口：
+
+- `firefox-js-*.jsonl` 只有 2 行 chrome/newtab 事件；大量 `jsv_*` value artifact
+  缺少对应 `call_id/function/script/path` 元数据。
+- 现状能证明“JS 层出现过最终 h5st 完整值”，但不能仅凭这轮日志直接指认具体函数
+  args/return。
+- 已补 JS value_store metadata 事件，并重新跑 JD target-values 验证。
+
+metadata 验证结果：
+
+- start label：`jd-h5st-meta-target`
+- stop label：`after-h5st-meta-trigger`
+- 运行稳定，无 content crash。
+- 总目录约 16MB。
+- `firefox-js-86646.jsonl` 1036 行，其中 `js.value.store` 1032 行。
+- `firefox-xhr-86646.jsonl` 76 行。
+- 无 `trace.degraded`、无 event limit、无 hot-function 抑制。
+- 主搜索请求：
+  - `request_id=xhr_148`
+  - `functionId=pc_search_searchWare`
+  - `origin_call_id=call_297474`
+  - caller：`pc-core-disposal.js`
+  - XHR h5st sha256：`7f2917e203c397f6c4ad0f6a52ea7422df0abf28689c75704bdea65856ecb1e4`
+- 该 sha256 在 JS value metadata 中命中 16 条，关键行：
+  - `_$PI.prototype._$gsp` return，同 sha256；
+  - `_$PI.prototype._$ms` return `h5st`；
+  - `_$PI.prototype._$sdnmd` return `h5st`；
+  - `_$PI.prototype.signSync` return `h5st`；
+  - `zxGsw`、`_$iW`、`stringify`、`bhikZ`、`_$fv`、`resolve`、`_$hc`、
+    `EiLPS`、`_$R0` 等 helper 继续接收或返回同 sha256 的 h5st。
+- 同轮另外 3 组 h5st 也均有 16 条 JS metadata 命中：
+  - `pc_search_adv_Search`
+  - `pctradesoa_mixer`
+  - `pc_club_productCommentSummaries`
+
+结论：
+
+- `target-values` 现在不只证明 JS 层出现最终 h5st；日志已经能给出
+  `value_id -> call_id/function/script/arg|return/path` 的反向链路。
+- JD 这轮能直接看出 h5st 由 `js_security_v3_0.1.6.js?v=2024-06-20-17`
+  内的 `_$PI.prototype.signSync` / `_$sdnmd` / `_$ms` 返回并继续传递到请求组包层。
+- 还原算法内部每一步仍需后续窄化到候选函数后做 `deep-causal`、动态调试或 opcode/window。
+
+字段级补强：
+
+- 当前 JD 日志里 h5st 10 个 `;` 分段中：
+  - 第 7 段长 payload 已有独立 exact metadata：
+    `encode -> _$PI.prototype._$clt -> _$PI.prototype._$ms(arg1) -> _$PI.prototype._$gsp(arg3)`；
+  - 第 4 段 `signStr` 是 308 字节签名输入串的 sha256：
+    `_eData` return / `parse` arg 的 `sha256` 等于 h5st 第 4 段；
+  - 第 3 段 token 出现在算法依赖解析结果：
+    `stringify` / `UTyhQ` / `zIXmn` / `_$fI` 的值里包含 `tk` 和 `algo`；
+  - 第 0/1/2/5/6/8/9 段这轮主要在最终 h5st 或结构化 result 里出现，
+    还没有稳定的独立字段 metadata。
+- 为补这个短字段缺口，已新增：
+  - `TRACE_JS_VALUE_METADATA=1`
+  - `TRACE_JS_VALUE_METADATA_MIN_BYTES=1`
+  - `TRACE_JS_VALUE_STORE_MIN_BYTES`
+- 行为：
+  - target/deep preset 默认开启短字符串 metadata；
+  - 大值是否写文件仍由 value_store/store min/max 控制；
+  - 短值默认写 `stored:false + preview + sha256 + call_id/function/value_path`。
+- 本地 smoke 目录：
+  `/private/tmp/firefox-trace-value-metadata-object-smoke`。
+  结果：`tests/value-metadata.html` 中 `makeTraceParts` return 对象字段
+  `ts/fp/app/token/digest/version/payload` 均写出独立 metadata。
+
+最新 JD 复验：
+
+- 目录：`/private/tmp/firefox-trace-1785153736-41130`
+- 配置：`target-values + paused`，`TRACE_SCRIPT_CONTAINS=js_security_v3_0.1.6.js`，
+  `TRACE_JS_VALUE_METADATA=1`，`TRACE_JS_VALUE_METADATA_MIN_BYTES=1`，
+  `TRACE_JS_VALUE_STORE_MIN_BYTES=256`。
+- 结果：
+  - 总目录约 6.8MB；
+  - `firefox-js-41130.jsonl` 7893 行；
+  - `js.value.store` 3179 条，其中 `stored=false` 2956 条；
+  - XHR h5st 4 组；
+  - 无 `trace.degraded`。
+- 主搜索请求：
+  - `request_id=xhr_183`
+  - `functionId=pc_search_searchWare`
+  - `origin_call_id=call_220943`
+  - h5st sha256：`090a7f323ec9faffc7fcc0db9f57cb3a4fb230718ebaf85aae7940b7890020fe`
+- 这轮短字段 metadata 明显补齐：
+  - h5st 第 0 段时间格式串：`_$f6` return，并作为 `_$gsp` arg2；
+  - 第 1 段 fp：`_$fg` / `_$fp` / `get` return，路径包含 `v`，后续作为 `fp` 进入环境对象；
+  - 第 2 段 appId/版本 key：`get` / `_$fg` arg；
+  - 第 3 段 tk：`get` return path `tk`，进入 `_$pam` / `ZNEiI`；
+  - 第 4 段 signStr：`_$PI.prototype._$gs` return，并作为 `_$gsp` arg0；
+    同时 `_eData` 308 字节签名输入串的 sha256 等于该段；
+  - 第 5 段版本 `5.3`：`get` / `_$fg` arg；
+  - 第 7 段长 payload：`encode -> _$PI.prototype._$clt -> _$PI.prototype._$ms(arg1) -> _$PI.prototype._$gsp(arg3)`；
+  - 第 8 段 default sign：`format -> stringify -> toString -> _$PI.prototype._$gsd`
+    return，并作为 `_$gsp` arg4；其前置 `_eData` 173 字节输入串 sha256 等于该段；
+  - 第 9 段短 encode：`encode` return，并作为 `_$gsp` arg5。
+- 仍需说明的边界：
+  - 第 6 段 13 位时间戳主要以 number 出现在 `_ $ms` / `_ $gsd` 的参数对象中，
+    例如 key `t` 的 value 是 number preview；短字符串 metadata 不会覆盖 number。
+
+primitive metadata 补强：
+
+- 已新增：
+  - `TRACE_JS_PRIMITIVE_METADATA=1`
+  - `TRACE_JS_PRIMITIVE_METADATA_MIN_BYTES=1`
+- 行为：
+  - number/boolean 也写 `js.value.store` metadata；
+  - `stored=false`，不写 `values/`；
+  - 记录 `value_type=number|boolean`、`preview`、`sha256`、`call_id`、
+    `function_name`、`value_role`、`arg_index`、`value_path`。
+- target/deep preset 默认开启；discover 不默认开启。
+- 本地 smoke 目录：
+  `/private/tmp/firefox-trace-primitive-metadata-smoke`。
+  结果：`tests/value-metadata.html` 中 `makeTraceParts` return 对象字段
+  `ts_num` 输出 `value_type=number`，`ok` 输出 `value_type=boolean`。
+
+JD 真实页 primitive metadata 复验：
+
+- 目录：`/private/tmp/firefox-trace-1785161281-80006`
+- 配置：`target-values + paused`，宽脚本过滤
+  `TRACE_SCRIPT_CONTAINS=js_security_v3,js-security-v3-rac`，
+  `TRACE_TARGET_MATCH=any`，并开启：
+  - `TRACE_JS_VALUE_METADATA=1`
+  - `TRACE_JS_VALUE_METADATA_MIN_BYTES=1`
+  - `TRACE_JS_PRIMITIVE_METADATA=1`
+  - `TRACE_JS_PRIMITIVE_METADATA_MIN_BYTES=1`
+  - `TRACE_JS_VALUE_STORE_MIN_BYTES=256`
+- 日志量：
+  - `firefox-js-80006.jsonl` 8764 行；
+  - `firefox-xhr-80006.jsonl` 9 行；
+  - `firefox-dom-80006.jsonl` 4887 行；
+  - `firefox-cookie-80006.jsonl` 959 行；
+  - 无 `trace.degraded` / `dropped` / `truncated` 类降级事件。
+- `js.value.store` 共 8764 条：
+  - string 3475 条；
+  - number 4592 条；
+  - boolean 697 条；
+  - `stored=false` 8648 条；
+  - `stored=true` 116 条。
+- 捕获 JD 首页 `pc_home_feed` 两组 XHR `h5st` 请求：
+  - `xhr_61`：page=3，h5st 长度 1155；
+  - `xhr_62`：page=4，h5st 长度 1155；
+  - 请求侧 `query_fields_meta.h5st.value_store_path` 正常写入 `values/qfv_xhr_*.txt`。
+- 以 `xhr_61` 的 h5st 为样本，10 个分段均有 JS 侧证据：
+  - 第 0 段时间格式串：`_$f6` return，进入 `_$PI.prototype._$gsp` arg2；
+  - 第 1 段 fp：`_$fg` / `_$fp` / `get`，路径包含 `v`，后续作为 `fp`；
+  - 第 2 段 app/key：`get` / `_$fg` 参数；
+  - 第 3 段 tk：`get` return path `tk`，进入 `_$pam` / `ZNEiI`；
+  - 第 4 段 signStr：`format -> stringify -> toString -> _$PI.prototype._$gs`
+    return，并进入 `_$gsp` arg0；
+  - 第 5 段版本 `5.3`：`get` / `_$fg` 参数；
+  - 第 6 段 13 位时间戳：已由 primitive metadata 精确命中
+    `_$f6` arg0 和 `_$PI.prototype._$gsp` arg1，`value_type=number`；
+  - 第 7 段长 payload：`encode -> _$PI.prototype._$clt ->
+    _$PI.prototype._$ms(arg1) -> _$PI.prototype._$gsp(arg3)`，完整落盘；
+  - 第 8 段 default sign：`format -> stringify -> toString ->
+    _$PI.prototype._$gsd` return，并进入 `_$gsp` arg4；
+  - 第 9 段短 encode：`encode` return，并进入 `_$gsp` arg5。
+- 结论：此前第 6 段只在 object/call preview 中出现的问题已修复；现在
+  string + primitive metadata 能对复合签名字段做分段级 exact/contains/digest
+  证据归因。JD 仍只是验证样本，不进入核心默认逻辑。
 
 ### DOM/WebIDL trace
 
@@ -1603,11 +1954,12 @@ JD 真实页有头 Firefox 最终验证：
    response body bounded preview 已可通过 `TRACE_FETCH_RESPONSE_BODY=preview|full` 显式开启。
    Worker fetch、keepalive/PFetch、完整 response body artifact 仍列为后续边界。
 2. document.cookie、CookieStore API、HTTP Set-Cookie、CookieStorage 底层生命周期和 Storage 生命周期 trace 已实现；CookieStorage lifecycle 当前覆盖 delete/overwrite/expired/purge/eviction/removeAll，但 JS 调用上下文仍需结合 API 层事件和 JS trace。
-3. 动态脚本 source/hash 基础能力、source map/header/charset 元数据和外部脚本 raw artifact 已实现；source map 文件自动下载/映射仍列后续。
+3. 动态脚本 source/hash 基础能力、source map/header/charset 元数据、外部脚本 raw artifact 和显式 source map 下载工具已实现；source map 文件通过 `tools/fetch_source_maps.py` 在运行后按 `source_map_resolved_url` 抓取，不由浏览器后台自动下载。
 4. XHR/Fetch 已有 URL `query_fields`；Fetch 已有 request body preview/store、response headers、response clone preview 和流式 `body_chunk` preview；XHR 已有 request body bounded preview/store/sha256，并能从 JSON body 或 form-urlencoded body 中按 `TRACE_QUERY_FIELDS` 抽取 `body_fields`。完整 response body artifact 仍列后续。
 5. 参数配置还只是环境变量，尚未接入 UI/配置面板。
-6. `discover/field` 已实现 JS boundary ring buffer + sink 触发 flush；仍需继续优化
-   flush 策略、summary interval 和覆盖后的重跑建议。
+6. `discover/field` 已实现 JS boundary ring buffer、sink 触发 flush、flush summary、
+   按 sink/字段 reason 的窗口大小配置和覆盖后的重跑建议；后续只保留更细的
+   summary interval / UI 展示优化。
 
 ### 第二阶段缺口：深度 JS 执行
 
@@ -1627,11 +1979,240 @@ JD 真实页有头 Firefox 最终验证：
 
 ## 推荐下一步
 
-优先级继续按第一阶段推进。不要先做 opcode/vm_step；当前 h5st 测试已经证明对象 preview / value store 能解决一部分可见性问题，下一步缺的是更多入口面和脚本身份标识。
+当前唯一待做清单入口是 [TODO.md](TODO.md)。本文件继续作为历史进度和验证记录，
+不要再扩写长期 TODO。
 
-1. JD/h5st 和拼多多 `anti_content` 真实站验证已完成；第一阶段核心证据链可先按当前能力交付试用。
-2. 继续优化 ring buffer：增加按目标字段/sink 的窗口大小配置、flush summary 和覆盖后的自动重跑建议。
-3. 后续再进入 opcode trace / jsvmp / WASM / HTTP/WS。
+当前最高优先级：
+
+1. P0 运行时 Trace 开关：支持浏览器先打开但 trace 暂停，用户完成登录/验证码/滑块后，
+   再 start 采集目标请求，触发后 stop。
+2. P0 运行时配置边界：明确哪些开关启动前固定，哪些可通过 control file 动态修改。
+3. P1 验证和收口：对 automation surface、boundary window、source map、XHR/Fetch 字段、
+   JD/PDD smoke 重新跑一轮，更新 patch 和 handoff。
+
+## 2026-07-26 P0 automation surface baseline
+
+本轮实现：
+
+- `gecko-dev/dom/base/Navigator.cpp`
+  - 新增 `TRACE_AUTOMATION_SURFACE` / `FIREFOX_TRACE_AUTOMATION_SURFACE`。
+  - 默认 `baseline` 行为：网页读取 `navigator.webdriver` 返回 `false`。
+  - `stock` 行为：保持 Firefox 原始逻辑，Marionette 或 RemoteAgent running 时返回 `true`。
+- `gecko-dev/browser/base/content/browser.js`
+  - 默认 `baseline` 行为：有头窗口不显示远程控制提示 UI，不设置主窗口
+    `remotecontrol` 属性。
+  - `stock` 行为：保持 Firefox 原始远控 UI 提示逻辑。
+- `gecko-dev/toolkit/modules/Troubleshoot.sys.mjs`
+  - 默认 `baseline` 行为：`about:support` RemoteAgent provider 返回 not running，
+    不展示监听 URL。
+  - `stock` 行为：保持 Firefox 原始排障页 RemoteAgent 信息。
+- `gecko-dev/toolkit/components/search/AppProvidedSearchEngine.sys.mjs`
+  - 默认 `baseline` 行为：搜索引擎图标 Remote Settings attachment 缺失时安静返回，
+    不打印 `cache or dump` console error/warn，也不排 idle 后台下载。
+  - `stock` 行为：保持 Firefox 原始图标日志和后台更新逻辑。
+- `gecko-dev/services/settings/remote-settings.sys.mjs`
+  - 默认 `baseline` 行为：Remote Settings startup bundle、timer poll 和 broadcast poll
+    no-op，保留 packaged dump 读取。
+  - `stock` 行为：保持 Firefox 原始 Remote Settings 后台同步逻辑。
+- `tools/run-trace-firefox.sh`
+  - 默认 `TRACE_AUTOMATION_SURFACE=baseline`。
+  - 新增 `--trace-automation-surface stock|baseline`。
+  - 导出 `TRACE_AUTOMATION_SURFACE` 和 `FIREFOX_TRACE_AUTOMATION_SURFACE`，后者供 Gecko
+    侧优先读取。
+  - `manifest.json` 增加顶层 `automation_surface` 和 env 记录。
+  - 默认 trace/profile 临时目录增加 pid 后缀，避免并行 smoke 同秒撞 profile。
+  - `manifest.json.target_url` 跳过 `--marionette`、`--remote-debugging-port` 等 Firefox
+    控制参数，记录实际页面参数。
+- `profiles/trace-user.js`
+  - Remote Settings 默认关闭自身日志，并保留长轮询间隔，避免浏览器 chrome 后台噪声
+    污染 trace run。
+  - 不在 profile 里修改页面可读的 UA、语言、时区、screen、WebGL 或 canvas。
+- `tests/automation-surface.html`
+  - 本地对拍页，采集 webdriver descriptor、UA/app、OS、languages、plugins、
+    permissions、screen/window、visibility、WebGL/GPU 和 timezone 等页面可见面。
+
+验证：
+
+- Gecko build 已通过；新增有头远控 UI gate 和 `about:support` RemoteAgent gate 后已重新 build 通过。
+- baseline smoke：
+  - 目录 `/private/tmp/firefox-trace-surface-baseline`。
+  - 截图 `/private/tmp/firefox-trace-surface-baseline.png`。
+  - 页面 JSON 显示 `webdriver: false`。
+- stock smoke：
+  - 目录 `/private/tmp/firefox-trace-surface-stock`。
+  - 截图 `/private/tmp/firefox-trace-surface-stock.png`。
+  - 页面 JSON 显示 `webdriver: true`。
+- 两轮均使用 `--marionette`，且 trace 目录内存在 `firefox-dom-*.jsonl`；日志记录到
+  permissions、canvas 和 WebGL 相关 DOM 事件，说明页面 API gate 没有破坏控制通道
+  或 DOM trace。
+- launcher manifest 单测使用 `FIREFOX_BIN=/usr/bin/true` 验证：
+  `tools/run-trace-firefox.sh --marionette tests/automation-surface.html` 写出的
+  `target_url` 是 `tests/automation-surface.html`。
+
+判断：
+
+- 该改动只改页面 API 返回值，不停止 MCP 依赖的 Marionette / RemoteAgent 控制通道。
+- 有头窗口/focus、WebGL/GPU、permissions、plugins/languages 等 surface 先用本地页和
+  真实页面 smoke 对拍，再决定是否需要 Gecko 层继续压平。
+
+补充真站 smoke：
+
+- BrowserScan bot detection：
+  - URL `https://www.browserscan.net/zh/bot-detection`。
+  - 页面检测结果：总结果正常；WebDriver、WebDriver Advance、Selenium、Headless
+    Chrome、CDP、Dev Tool 均正常。
+  - 页面 Navigator 列表显示 `webdriver=false`。
+- BrowserScan browser checker：
+  - URL `https://www.browserscan.net/zh/browser-checker`。
+  - 页面显示 Firefox 142；浏览器版本和 User-Agent 匹配。
+- PDD mobile：
+  - URL `https://mobile.pinduoduo.com/`。
+  - title 为 `拼多多`，页面正常渲染商品流和底部导航。
+  - 页面侧 `navigator.webdriver=false`。
+- Remote Settings 后台噪声复测：
+  - 新增 `remote-settings.sys.mjs` baseline gate 后重新 build 通过。
+  - 再次打开 BrowserScan bot detection，检测结果正常，页面侧 `navigator.webdriver=false`。
+  - 启动/关闭阶段未再出现 Remote Settings polling content-type 报错或
+    search icon attachment `cache or dump` 报错。
+
+## 2026-07-27 P1 quick user runbook
+
+README 顶部新增“快速使用入口”，覆盖：
+
+- 默认有头 baseline 行为；
+- 一轮 `discover-light` 启动命令；
+- preset 选择表；
+- discover → target-return → target-values 多轮流程；
+- `manifest.json`、XHR/Fetch/JS/DOM/Storage/Cookie/Script/values 日志速查；
+- value_store / sha256 对齐规则；
+- `trace.degraded` 的处理方式；
+- 常见降载组合。
+
+## 2026-07-27 P1 ring buffer flush summary
+
+新增 JS boundary ring buffer 体验改进：
+
+- `js.boundary.flush_summary`
+  - 每次 sink 触发 `FirefoxTraceFlushJSBoundaryBuffer()` 后写入。
+  - 字段：`flush_index`、`reason`、`first_seq`、`last_seq`、`flushed`、
+    `dropped_before_flush`、`capacity`、`complete_window`、`suggestion`。
+  - `complete_window=false` 表示本轮已有覆盖，只能作为候选定位。
+- `trace.degraded reason=boundary_buffer_overwrite`
+  - 新增 `suggestion` 字段，提示增大 `TRACE_JS_BOUNDARY_BUFFER_EVENTS`、收窄
+    `TRACE_JS_BOUNDARY_FLUSH_ON`，或用 `TRACE_SCRIPT_CONTAINS` /
+    `TRACE_FUNCTION_CONTAINS` 重跑 `target-return`。
+
+验证：
+
+- Gecko build 通过。
+- 有头本地 smoke：
+  - 目录 `/private/tmp/firefox-trace-ring-summary-1785122172`。
+  - 命令：`tools/run-trace-firefox.sh --trace-preset discover-light --marionette tests/automation-surface.html`。
+  - `firefox-js-97157.jsonl` 写出多条 `js.boundary.flush_summary`。
+  - 示例字段：`reason=dom.get`、`flushed=1/2/3`、`dropped_before_flush=0`、
+    `capacity=8192`、`complete_window=true`。
+
+## 2026-07-27 P1 ring buffer sink window
+
+新增按 sink reason 配置 JS boundary flush 窗口：
+
+- 全局默认仍是 `TRACE_JS_BOUNDARY_BUFFER_EVENTS`。
+- 新增 `TRACE_JS_BOUNDARY_BUFFER_EVENTS_<REASON>` /
+  `FIREFOX_TRACE_JS_BOUNDARY_BUFFER_EVENTS_<REASON>`，其中 `<REASON>` 为 sink reason
+  大写并把分隔符转成 `_`，例如：
+  - `dom.get` -> `TRACE_JS_BOUNDARY_BUFFER_EVENTS_DOM_GET`
+  - `dom.call` -> `TRACE_JS_BOUNDARY_BUFFER_EVENTS_DOM_CALL`
+  - `xhr.body` -> `TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY`
+  - `fetch.call` -> `TRACE_JS_BOUNDARY_BUFFER_EVENTS_FETCH_CALL`
+- XHR/Fetch URL query 和 XHR body 如果命中 `TRACE_QUERY_FIELDS`，flush reason 会追加
+  字段名，例如：
+  - `xhr.body.anti_content` -> `TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY_ANTI_CONTENT`
+  - `fetch.call.token` -> `TRACE_JS_BOUNDARY_BUFFER_EVENTS_FETCH_CALL_TOKEN`
+- 如果精确 reason 未配置，会继续尝试模块级配置，例如 `xhr.body` 可回退到
+  `TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR`。
+- `discover-light` preset 默认：
+  - DOM get/call：`2048`
+  - XHR send：`12288`
+  - XHR body：`16384`
+  - Fetch call：`12288`
+  - 全局：`8192`
+- 物理 ring 仍保留最大 32768 条，flush 时按当前 sink 的窗口裁剪；这样 DOM 小窗口
+  不会提前破坏 XHR body 需要的更长历史。
+- `js.boundary.flush_summary` 新增：
+  - `skipped_by_window`
+  - `window_capacity`
+  - `storage_capacity`
+  - `window_capacity_source`
+- `trace.degraded reason=boundary_buffer_overwrite` 新增同类窗口字段和针对 per-sink
+  窗口的重跑建议。
+
+设计收益：
+
+- 首轮 discover 可以给关键请求 sink 保留更长 JS 前置调用窗口，同时压短高频 DOM
+  环境读取窗口。
+- 日志量不需要随最大请求窗口线性膨胀，`complete_window=false` 时也能区分是物理覆盖
+  还是本次 sink 窗口裁剪。
+- 当前实现支持 sink reason 和 `TRACE_QUERY_FIELDS` 命中字段级窗口；不是字段命中的
+  sink 仍使用 sink 或模块级窗口。
+
+验证：
+
+- Gecko build 通过。
+- 本地 headless smoke：
+  - 页面：`file:///Users/empycity/Desktop/JS-tools/firefoxTrace/tests/boundary-window.html`
+  - 目录：`/private/tmp/firefox-trace-boundary-window-abs-1785123980`
+  - 配置：`TRACE_JS_BOUNDARY_BUFFER_EVENTS_DOM_CALL=3` + `discover-light`
+  - `firefox-js-67983.jsonl` 写出：
+    - `reason=dom.call`
+    - `flushed=3`
+    - `skipped_by_window=42`
+    - `window_capacity=3`
+    - `storage_capacity=32768`
+    - `window_capacity_source=TRACE_JS_BOUNDARY_BUFFER_EVENTS_DOM_CALL`
+    - `complete_window=false`
+
+## 2026-07-27 P1 source map relation fields
+
+`script.resource` 增加 source map 关系字段：
+
+- `source_map_resolved_url`
+  - 从 `mRequest->mSourceMapURL` 或 `sourcemap/x-sourcemap` 响应头得到
+    `source_map_url` 后，基于脚本最终 URL 解析成绝对 URL。
+  - 如果 request/header 未提供 source map，但完整 raw capture 里存在
+    `sourceMappingURL=` 注释，则从 raw capture 中解析。
+- `source_map_fetch_suggestion`
+  - 说明由外部工具按 `source_map_resolved_url` 显式抓取 source map，并用
+    `raw_sha256/artifact_path` 作为脚本和 map 的 join key。
+
+设计取舍：
+
+- 不在浏览器后台自动下载 source map，避免 trace 浏览器自己引入额外网络行为。
+- 已有 `TRACE_SCRIPT_RESOURCE_CAPTURE/STORE` 继续负责脚本原始响应 artifact。
+- `raw_truncated=true` 时新增 `raw_capture_limit` 和 `raw_capture_suggestion`，明确提示
+  增大 `TRACE_SCRIPT_RESOURCE_MAX_BYTES`、收窄 `TRACE_SCRIPT_RESOURCE_FILTER` 或关闭
+  无关脚本 raw store 后重跑；截断 raw 不能产生可靠 `raw_sha256` 或完整脚本 artifact。
+- 新增外部工具 `tools/fetch_source_maps.py`：
+  - 读取 `firefox-script-*.jsonl` 的 `source_map_resolved_url`；
+  - 显式下载 source map 到 `source_maps/<script-raw-sha256>.map`；
+  - 写 `source_maps/index.jsonl`，记录脚本 URL、`raw_sha256`、`artifact_path`、
+    source map URL、source map sha256 和落盘路径。
+  - 这是运行后工具，不在浏览器中自动发起额外网络请求。
+
+验证：
+
+- Gecko build 通过。
+- 本地 HTTP source map smoke：
+  - server：`python3 -m http.server 8765 --bind 127.0.0.1 --directory tests`。
+  - 页面：`http://127.0.0.1:8765/source-map-page.html`。
+  - 配置：`TRACE_SCRIPT_RESOURCE_CAPTURE=1 TRACE_SCRIPT_RESOURCE_STORE=1`
+    + `discover-light`。
+  - 目录：`/private/tmp/firefox-trace-sourcemap-http-1785122924`。
+  - `firefox-script-27128.jsonl` 写出：
+    - `source_map_url=source-map-target.js.map`
+    - `source_map_resolved_url=http://127.0.0.1:8765/source-map-target.js.map`
+    - `raw_sha256=3ffa9f58e901a5cf89b76ad7907b2f17d1b99b32a859f05a4d50ac3e20390464`
+    - `artifact_path=scripts/3ffa9f58e901a5cf89b76ad7907b2f17d1b99b32a859f05a4d50ac3e20390464.js`
+  - artifact 文件 sha256 与事件 `raw_sha256` 一致。
 
 ## 2026-07-26 第一阶段真实站验证：JD h5st + PDD anti_content
 
@@ -1739,9 +2320,9 @@ PDD `anti_content` 验证：
   - Worker fetch
   - keepalive/PFetch
   - 完整 response body artifact
-  - source map 文件自动下载/映射
   - UI/配置面板
-  - ring buffer flush summary / 覆盖后的自动重跑建议
+  - 更细的 ring buffer summary interval / UI 展示
+  - opcode / vm_step / WASM / HTTP/WS
 
 ## 构建命令
 
@@ -1796,13 +2377,40 @@ python3.11 ./mach build
 正确运行路径：
 
 ```bash
-obj-aarch64-apple-darwin25.5.0/dist/Nightly.app/Contents/MacOS/firefox
+obj-aarch64-apple-darwin25.6.0/dist/Nightly.app/Contents/MacOS/firefox
 ```
+
+`tools/run-trace-firefox.sh` 未设置 `FIREFOX_BIN` 时，会自动从
+`gecko-dev/obj-*/dist/Nightly.app/Contents/MacOS/firefox` 选择最新可执行文件。
 
 不要运行：
 
 ```bash
-obj-aarch64-apple-darwin25.5.0/dist/bin/firefox
+obj-aarch64-apple-darwin25.6.0/dist/bin/firefox
 ```
 
 该路径会报 `Couldn't load XPCOM`。
+
+## 2026-07-28：JS 模块运行时开关下沉
+
+本次按用户要求只改一个内核点后停止：
+
+- 文件：`gecko-dev/js/src/vm/Interpreter.cpp`
+- 改动：`FirefoxTraceBaseEnabled()` 现在同时检查
+  `FIREFOX_TRACE_JS` / `TRACE_JS`。
+- 目的：控制台 UI 或 CLI 写入 `--module js=0` 后，JS trace 入口直接关闭，
+  不再继续产生 JS call/value/boundary buffer 等 JS 侧日志和重活。
+- 已验证：
+  - `git -C gecko-dev diff --check -- js/src/vm/Interpreter.cpp` 通过；
+  - `python3.11 ./mach build` 通过；
+  - active smoke 目录：
+    `/private/tmp/firefox-trace-js-module-off-active-smoke-1785212600`。
+- smoke 结果：
+  - 启动参数包含 `FIREFOX_TRACE_JS=0 --trace-start active`；
+  - `firefox-xhr-97195.jsonl` 3 行，抓到
+    `anti_content=runtime-control-token-1785210988666`；
+  - `firefox-dom-97195.jsonl` 1 行；
+  - 未生成 `firefox-js-*.jsonl`。
+- 已完成：paused 后通过 `trace-control.sh config --module js=0` 热切换已闭环。2026-07-28
+  headless smoke 中，config revision 2 和 start revision 3 均收到匹配 ACK；首个目标 XHR 的
+  三个事件均带 `control_version=3` 与当前 `config_hash`，并且没有生成 JS trace。

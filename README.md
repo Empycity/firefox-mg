@@ -27,6 +27,143 @@ Agent 和 MCP 是辅助层：Agent 先消费 Trace 已经收窄的结果，只�
 - 风控字段分析：从目标请求字段出发，由 Agent 结合 Trace、断点上下文和对照实验定位计算链。
 - 浏览器修改：把已验证的环境读取、原生 API 或运行时行为整理成明确的修改位置和回归用例。
 
+## 快速使用入口
+
+交付给实际使用者的产品手册见 [docs/PRODUCT_MANUAL.md](docs/PRODUCT_MANUAL.md)。
+当前待做清单见 [docs/TODO.md](docs/TODO.md)，后续不要把新 TODO 混进本文的大段规划里。
+当前提供本地 Web 控制台 v1，用于 runtime control、segment、preset/filter 和日志摘要；
+实际证据仍以 `TRACE_DIR` 下的 JSONL 与制品为准。启动入口见
+`tools/trace-console.sh` 和产品手册。
+
+当前推荐只使用有头浏览器。launcher 默认启用 automation surface baseline：网页侧
+`navigator.webdriver=false`，有头远控提示 UI 隐藏，`about:support` 不暴露
+RemoteAgent 监听信息，但 Marionette / RemoteAgent 控制通道保持可用。
+
+### 启动一次轻量发现
+
+```bash
+TRACE_DIR=/private/tmp/firefox-trace-case-$(date +%s) \
+TRACE_CAMPAIGN_ID=case-001 \
+TRACE_QUERY_FIELDS=sign,token,riskData,fp,anti_content,h5st \
+tools/run-trace-firefox.sh --trace-preset discover-light 'https://example.com/'
+```
+
+启动后先在页面里完成正常操作，让目标请求发出。每轮配置会写入
+`TRACE_DIR/manifest.json`，其中 `automation_surface` 默认是 `baseline`。
+
+需要和 Firefox 原始自动化语义对拍时才显式使用 stock：
+
+```bash
+tools/run-trace-firefox.sh --trace-automation-surface stock tests/automation-surface.html
+```
+
+真实站点如果需要先登录、过验证码、滑块或人工跳转，推荐 paused 启动，目标触发前再开启：
+
+```bash
+TRACE_QUERY_FIELDS=sign,token,anti_content,h5st \
+tools/run-trace-firefox.sh --trace-preset discover-light --trace-start paused 'https://example.com/'
+
+tools/trace-control.sh "$TRACE_DIR" start target-action
+tools/trace-control.sh "$TRACE_DIR" stop after-target
+```
+
+`trace-control.sh` 只改本轮 `TRACE_DIR/trace-control.json`，不杀浏览器、不改 profile。
+
+### Preset 选择
+
+| 场景 | preset | 说明 |
+|---|---|---|
+| 第一次进站、找目标请求和候选脚本 | `discover-light` | 默认选择，轻量抓 XHR/Fetch、DOM signal、Cookie、Storage、script artifact |
+| 已找到候选函数，要确认返回值 | `target-return` | 配合 `TRACE_SCRIPT_CONTAINS` / `TRACE_FUNCTION_CONTAINS` / `TRACE_SCRIPT_SHA256` 使用 |
+| 要看目标函数输入依赖 | `target-values` | 打开 args/return preview、object preview 和 value_store |
+| 需要目标局部调用树 | `deep-causal` | 只在目标脚本已收窄后使用 |
+| VM/opcode 场景 | `opcode-window` | 必须锁脚本；可再锁 PC 范围，默认 10,000 条 |
+
+### 推荐多轮流程
+
+1. 首轮 `discover-light`：只配置目标 URL 和 `TRACE_QUERY_FIELDS`，确认目标请求、脚本 URL/hash、DOM/Storage/Cookie 环境读取。
+2. 从 `firefox-xhr-*.jsonl` / `firefox-fetch-*.jsonl` 里看 `query_fields`、`body_fields`、`origin_call_id`、`caller_url`。
+3. 从 `firefox-script-*.jsonl` 找动态脚本 URL、hash 和落盘路径，选择候选脚本。
+4. 二轮 `target-return`：加 `TRACE_SCRIPT_CONTAINS` 或 `TRACE_FUNCTION_CONTAINS`，确认目标函数 return。
+5. 三轮 `target-values`：只对确认目标打开 args/object/value_store，看 Cookie、Storage、时间、随机数、环境 API 等输入依赖。
+6. 仍有缺口时再用 MCP/断点做单变量验证，不把 Agent 猜测直接写成结论。
+
+### 日志文件速查
+
+| 文件 | 主要用途 |
+|---|---|
+| `manifest.json` | 本轮目标、preset、surface 模式、profile、Firefox binary、关键环境变量 |
+| `firefox-xhr-*.jsonl` | XHR open/send/response、URL query 字段、request body 字段、body value_store |
+| `firefox-fetch-*.jsonl` | fetch call/request/response/done、headers、body preview/chunk、query/body 字段 |
+| `firefox-js-*.jsonl` | JS enter/return、`call_id` / `parent_call_id`、args/return preview、value_store |
+| `firefox-dom-*.jsonl` | navigator/screen/permissions/canvas/WebGL 等页面 API get/call |
+| `firefox-storage-*.jsonl` | localStorage/sessionStorage/IndexedDB 相关读写 |
+| `firefox-cookie-*.jsonl` | document.cookie、CookieStore、底层 CookieService 生命周期 |
+| `firefox-script-*.jsonl` | 静态/动态脚本加载、脚本 hash、artifact 路径 |
+| `values/` | 完整长值、请求字段、body、JS return/args 的落盘制品 |
+
+### value_store / sha256 对齐
+
+请求侧字段如果开启 `TRACE_QUERY_FIELD_VALUE_STORE=1`，会在
+`query_fields_meta` 或 `body_fields_meta` 写入 `value_store_path`、`sha256`、`size`。
+JS 侧打开 `TRACE_JS_VALUE_STORE=1` 后，return/args/object 中的长值也会写
+`value_store_path` 和 `sha256`。两个 sha256 一致，才可以把“请求里的字段值”和
+“某次 JS 产出的值”作为强证据对齐。
+
+target/deep 场景需要看短字段时，打开 `TRACE_JS_VALUE_METADATA=1`。短字符串会写
+`js.value.store` metadata，`stored=false`，包含 `preview`、`sha256`、`call_id`、
+`function_name`、`value_role`、`arg_index` 和 `value_path`；是否完整落盘仍由
+`TRACE_JS_VALUE_STORE_MIN_BYTES` / `TRACE_JS_VALUE_STORE_MAX_BYTES` 控制。
+
+复合签名字段按通用流程处理：先保存请求字段完整值，再按分隔符或 JSON path 拆分，
+然后逐段查 JS metadata。`exact` 命中说明分段本身被函数 return/arg/object 传递；
+某个 JS 值的 `sha256` 等于分段，说明该分段是前置材料 digest；只在最终串里
+`contains` 则只能说明组装后存在。number/boolean 用
+`TRACE_JS_PRIMITIVE_METADATA=1` 纳入同一套 metadata，日志会写
+`value_type=number|boolean`、`preview`、`sha256` 和 `value_path`。
+
+### `trace.degraded` 处理
+
+`discover-light` 的 JS boundary ring buffer 每次被 XHR/fetch/storage/cookie/DOM sink
+触发 flush 时，会写 `js.boundary.flush_summary`，记录本次 flush 的 `reason`、
+`first_seq`、`last_seq`、`flushed`、`dropped_before_flush`、`skipped_by_window`、
+`window_capacity`、`storage_capacity` 和 `complete_window`。默认全局窗口由
+`TRACE_JS_BOUNDARY_BUFFER_EVENTS` 控制；也可以给关键 sink 单独加大窗口，例如
+`TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY=16384`、`TRACE_JS_BOUNDARY_BUFFER_EVENTS_FETCH_CALL=12288`。
+当 XHR/Fetch 的 URL query 或 XHR body 命中 `TRACE_QUERY_FIELDS` 时，flush reason 会继续带上
+字段名，例如 `xhr.body.anti_content`、`fetch.call.token`，可配置
+`TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY_ANTI_CONTENT=20000` 这类字段级窗口。
+`complete_window=false` 表示窗口发生过覆盖或被本次 sink 配置裁剪，必须按候选日志处理。
+
+任何日志里出现 `{"type":"trace.degraded" ...}`，这轮只能用于候选定位，不能用来证明
+“没有调用”或“没有依赖”。处理顺序：
+
+1. 收窄 `TRACE_SCRIPT_CONTAINS`、`TRACE_FUNCTION_CONTAINS`、`TRACE_TARGET_MATCH`。
+2. 降低 `TRACE_JS_OBJECT_DEPTH`、`TRACE_JS_OBJECT_KEYS`、`TRACE_DOM_PREVIEW`。
+3. 关闭暂时无关模块，例如 `FIREFOX_TRACE_STORAGE=0`、`FIREFOX_TRACE_COOKIE=0`。
+4. 增大针对性窗口，例如 `TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY=16384` 或全局
+   `TRACE_JS_BOUNDARY_BUFFER_EVENTS=16384`。
+5. 重跑并保留上一轮 manifest，用 campaign 多轮合并证据。
+
+### 常见降载组合
+
+```bash
+# 首轮仍爆量：只保留请求和脚本身份，DOM 只抓信号面
+TRACE_REQUEST_URL=preview \
+TRACE_DOM_MODE=signal \
+TRACE_DOM_PREVIEW=none \
+TRACE_JS_CAPTURE_VALUES=0 \
+tools/run-trace-firefox.sh --trace-preset discover-light 'https://example.com/'
+
+# 二轮只看目标函数 return
+TRACE_SCRIPT_CONTAINS='risk' \
+TRACE_FUNCTION_CONTAINS='sign,token' \
+TRACE_JS_ARGS=none \
+TRACE_JS_RET=preview \
+TRACE_JS_OBJECT_DEPTH=1 \
+tools/run-trace-firefox.sh --trace-preset target-return 'https://example.com/'
+```
+
 ### 1.1 能力边界
 
 Trace、调试和 Agent 各有明确边界：
@@ -708,7 +845,7 @@ opcode 开启硬性条件：
 目标函数太大 -> 指定脚本 deep
 脚本像 VM -> opcode operands
 需要看 VM 栈/寄存器槽 -> opcode stack
-需要还原指令流 -> vm_step
+需要标记已定位 dispatcher 的每次 native loop 迭代 -> vm_step
 ```
 
 ### 8.1 JIT 与 opcode 模式
@@ -887,7 +1024,46 @@ riskData 已确认依赖：
 
 验收：Agent 能对一个 demo 字段给出已确认入口、输入、环境依赖和可重放验证记录。
 
-### Phase 4：深度 Trace 能力
+### Phase 4：automation / fingerprint surface
+
+目标：
+
+- 优先处理浏览器底层自动化可见面，让 Agent/WebDriver/headless 相关 surface 可配置。
+- 建立 stock Firefox vs trace Firefox 对拍页和差异报告。
+- 将 surface 模式写入 `manifest.json`，便于区分 stock、baseline 和后续细分模式。
+- 修正 trace/profile/launcher 自身引入的异常，不绑定任何站点规则。
+
+第一批范围：
+
+- `navigator.webdriver`、Marionette / RemoteAgent running 页面可见面。
+- 有头浏览器远控提示 UI、窗口/focus、GPU/WebGL、权限和事件时序差异。
+- 自动化 profile/prefs、窗口尺寸、plugins、languages 和 permissions 默认值。
+- `TRACE_AUTOMATION_SURFACE=stock|baseline` 运行模式。
+
+当前第一步已落地：
+
+- `TRACE_AUTOMATION_SURFACE=baseline` 为 launcher 默认值，浏览器底层页面 API
+  默认隐藏 `navigator.webdriver`，有头窗口默认隐藏远程控制提示 UI，`about:support`
+  默认不展示 RemoteAgent 监听信息。
+- `TRACE_AUTOMATION_SURFACE=stock` 保留 Firefox 原始 `navigator.webdriver`
+  、远控 UI 和 RemoteAgent 排障页语义，用于 stock/trace 对拍。
+- 该模式不关闭 Marionette、RemoteAgent 或 WebDriver/BiDi 控制通道，只压平页面
+  或用户可见 surface。
+- trace profile 默认降低 Remote Settings 日志噪声并延长后台轮询间隔，避免
+  浏览器 chrome 后台任务污染启动日志；这不修改网页可读的 `navigator`、screen、
+  WebGL、UA、语言或时区值。
+- trace baseline 下 Remote Settings 后台 startup bundle、timer poll 和 broadcast poll
+  默认 no-op；本地 packaged dump 读取保留，避免浏览器后台网络/console 噪声影响运行。
+- trace baseline 下搜索引擎图标 Remote Settings attachment 缺失会安静失败，并跳过
+  idle 后台下载；`stock` 模式保留原始日志和更新行为。
+- `tests/automation-surface.html` 作为本地对拍页，采集 webdriver、UA/app、OS、
+  languages、plugins、permissions、screen/window、visibility 和 WebGL/GPU 等页面可见值。
+
+验收：本地测试页能输出 automation / fingerprint surface 对拍报告；真实页面 smoke
+中 manifest 明确记录 surface 模式，trace 日志仍能正常采集请求、JS、DOM、Cookie
+和 Storage。
+
+### Phase 5：深度 Trace 能力
 
 目标：
 
@@ -900,7 +1076,7 @@ riskData 已确认依赖：
 - Firefox/SpiderMonkey 深度 Trace patch 和对应开关。
 - 每个增强项的触发案例和回归测试。
 
-### Phase 5：高级 VM / WASM
+### Phase 6：高级 VM / WASM
 
 目标：
 
@@ -917,7 +1093,7 @@ riskData 已确认依赖：
 
 验收：明确记录解释执行、deopt 和 trace 开销；目标 VM 样例能导出稳定的受限指令窗口，不要求全站 opcode。
 
-### Phase 6：浏览器修改与验证
+### Phase 7：浏览器修改与验证
 
 目标：
 
@@ -929,7 +1105,7 @@ riskData 已确认依赖：
 
 - 修改清单、适用 host/frame/script 范围、patch 和回归运行记录。
 
-### Phase 7：可选桌面控制台
+### Phase 8：可选桌面控制台
 
 目标：
 
@@ -1056,7 +1232,9 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_JS_MAX_ARGS` | 整数，`0` 表示不限 | `64` | 单次函数调用最多 preview 的参数个数 |
 | `TRACE_JS_CAPTURE_VALUES` | `1` / `0` | `0` | 是否采集 target/deep 命中函数的 this/args/return |
 | `TRACE_JS_BOUNDARY_BUFFER` | `1` / `0` | discover/field 默认 `1` | boundary 调用边界先进入 ring buffer，由 XHR/fetch/storage/cookie/DOM sink 触发 flush |
+| `TRACE_JS_TARGET_BOUNDARY_BUFFER` | `1` / `0` | `0` | target/deep 下显式启用同一 ring buffer；适合等待较久的真实页，只把目标 sink 前的调用/return/value_store 窗口写盘 |
 | `TRACE_JS_BOUNDARY_BUFFER_EVENTS` | 整数 | `4096` | boundary ring buffer 容量，当前实现最大 `32768`；命中覆盖写 `trace.degraded` |
+| `TRACE_JS_BOUNDARY_BUFFER_EVENTS_<REASON>` | 整数 | 空 | 按 sink/字段 reason 覆盖 flush 窗口，reason 转大写并把 `.` 等分隔符变 `_`，例如 `xhr.body` 对应 `TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY`，`xhr.body.anti_content` 对应 `TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY_ANTI_CONTENT` |
 | `TRACE_JS_BOUNDARY_FLUSH_ON` | CSV / `all` | `all` | 限制哪些 sink 触发 boundary buffer flush，例如 `xhr.send,fetch.call,dom.get` |
 | `TRACE_JS_STACK` | `1` / `0` | `1` | 记录调用栈 |
 | `TRACE_JS_NATIVE` | `1` / `0` | `0` | 是否记录原生 builtin |
@@ -1069,6 +1247,11 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_JS_ARRAY_ITEMS` | 整数 | `16` | 数组最多 preview 元素数 |
 | `TRACE_JS_TYPED_ARRAY_BYTES` | 整数 | `64` | TypedArray、ArrayBuffer、DataView 最多 preview 字节数 |
 | `TRACE_JS_VALUE_STORE` | `1` / `0` | `0` | 将完整长值保存到 `values/` |
+| `TRACE_JS_VALUE_METADATA` | `1` / `0` | `0` | 为字符串值写 metadata；target/deep preset 默认开启 |
+| `TRACE_JS_VALUE_METADATA_MIN_BYTES` | 整数 | `1` | 字符串 metadata 最小长度 |
+| `TRACE_JS_PRIMITIVE_METADATA` | `1` / `0` | `0` | 为 number/boolean 写轻量 metadata；target/deep preset 默认开启 |
+| `TRACE_JS_PRIMITIVE_METADATA_MIN_BYTES` | 整数 | `1` | primitive preview 最小长度 |
+| `TRACE_JS_VALUE_STORE_MIN_BYTES` | 整数 | 同 `TRACE_JS_DEEP_LONG_STR` | 完整落盘最小长度 |
 | `TRACE_JS_DEEP_LONG_STR` | 整数 | `1024` | 长字符串超过该阈值时优先落盘 |
 | `TRACE_JS_VALUE_STORE_MAX_BYTES` | 整数 | `2097152` | 单个 value_store 文件最大字节数 |
 | `TRACE_JS_LIMIT_EVENTS` | 整数 | `50000` | JS 调用事件上限，命中后写 limit 哨兵 |
@@ -1179,7 +1362,7 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | 开关 | 值 | 默认 | 说明 |
 |---|---|---|---|
 | `TRACE_DYNAMIC_SCRIPT` | `1` / `0` | `1` | eval/new Function/Blob/Worker 脚本落盘 |
-| `TRACE_SCRIPT_RESOURCE` | `1` / `0` | preset 默认 `1` | 外部脚本资源加载事件 `script.resource`，记录 URL、page、content-type、charset、source map、headers 和可选 raw artifact |
+| `TRACE_SCRIPT_RESOURCE` | `1` / `0` | preset 默认 `1` | 外部脚本资源加载事件 `script.resource`，记录 URL、page、content-type、charset、source map、resolved source map、headers 和可选 raw artifact |
 | `TRACE_SCRIPT_RESOURCE_FILTER` | `web` / `chrome` / `all` | `web` | 控制 `script.resource` 记录范围；默认只抓网页脚本，避免扩展/chrome 脚本噪声 |
 | `TRACE_SCRIPT_RESOURCE_CAPTURE` | `1` / `0` | `0` | 缓存外部脚本原始响应字节用于 sha256/artifact；默认关闭 |
 | `TRACE_SCRIPT_RESOURCE_STORE` | `1` / `0` | `0` | 将未截断的外部脚本原始响应写入 `scripts/<raw_sha256>.js` |
@@ -1190,8 +1373,41 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_EXECUTION_MODE` | `jit` / `target-interpreter` / `opcode` | `jit` | JIT 与目标解释执行策略 |
 | `TRACE_OPCODE` | `1` / `0` | `0` | JS opcode 级 trace，默认关闭 |
 | `TRACE_OPCODE_SCRIPT_CONTAINS` | CSV | 空 | opcode 必须锁单脚本 |
-| `TRACE_OPCODE_PC_RANGE` | `start:end` | 空 | PC 窗口 |
-| `TRACE_VM_STEP` | `1` / `0` | `0` | jsvmp/vm_step |
+| `TRACE_OPCODE_SCRIPT_LINE` | 整数 | 空 | 可选 JSScript 起始行 pin；与 URL filter 同时匹配 |
+| `TRACE_OPCODE_SCRIPT_COLUMN` | 整数 | 空 | 可选 JSScript 起始列 pin |
+| `TRACE_OPCODE_SCRIPT_BYTECODE_LENGTH` | 整数 | 空 | 可选 JSScript bytecode length pin |
+| `TRACE_OPCODE_PC_RANGE` | `start:end` | 空 | PC 窗口；运行中可更新 |
+| `TRACE_OPCODE_LIMIT` | 整数 / `0` | `10000` | 每个 segment 的 opcode 事件上限；`0` 不限，运行中可更新；超限写 `trace.degraded reason=opcode_limit` |
+| `TRACE_OPCODE_OPERANDS` | `1` / `0` | `1` | 输出原始 `operand_bytes_hex` 与 bytecode operand format |
+| `TRACE_OPCODE_STACK_SLOTS` | `0..8` | `0` | 输出指定数量的栈顶 slot 类型；`opcode-window` preset 默认 `4` |
+| `TRACE_OPCODE_STACK_PRIMITIVES` | `1` / `0` | `0` | 对栈顶的 number/boolean/null/undefined 附带原始值；不展开字符串或对象 |
+| `TRACE_VM_STEP` | `1` / `0` | `0` | 启用已定位 dispatcher PC 的 `js.vm_step` 标记；运行中可更新 |
+| `TRACE_VM_DISPATCH_PC` | 整数 | 空 | 必填；仅此 native JS bytecode PC 写 step；运行中可更新 |
+| `TRACE_VM_STEP_LIMIT` | 整数 / `0` | `10000` | 每 segment 的 step 上限；`0` 不限，运行中可更新；超限写 `trace.degraded module=vm_step reason=vm_step_limit` |
+
+`js.vm_step` 是收窄后的 native dispatcher-loop iteration marker，记录 `step_index`、
+JSScript identity、`vm_dispatch_pc` 和栈深度。它不自动从 JS 局部变量或数组中解码 VMP 的
+virtual opcode / virtual PC；先用 opcode analyzer 确认 dispatcher，再显式传入
+`TRACE_VM_DISPATCH_PC`。脚本 identity/tier-pin 是启动级配置；opcode PC window、opcode
+limit、vm_step 开关、dispatcher PC 和 step limit 可经 `trace-control config` 热更新。vm_step
+只受匹配 JSScript 和自己的 dispatcher PC/limit 限制，不受 opcode 显示 PC window 限制。
+
+`script.resource` 中如果脚本、响应头或完整 raw capture 里的 `sourceMappingURL=`
+声明了 source map，会输出 `source_map_url` 和 `source_map_resolved_url`。如果同时开启
+`TRACE_SCRIPT_RESOURCE_CAPTURE=1` 和 `TRACE_SCRIPT_RESOURCE_STORE=1`，脚本原始响应会写到
+`scripts/<raw_sha256>.js`，事件中的 `raw_sha256` / `artifact_path` 可作为脚本和 map
+制品的 join key。source map 文件不由浏览器后台自动下载；需要时由外部工具按
+`source_map_resolved_url` 显式抓取，避免 trace 浏览器自己引入额外网络行为。
+可运行：
+
+```bash
+tools/fetch_source_maps.py "$TRACE_DIR"
+```
+
+工具会读取 `firefox-script-*.jsonl`，把 source map 写入 `source_maps/`，并维护
+`source_maps/index.jsonl`。如果 `raw_truncated=true`，事件会写
+`raw_capture_suggestion`，通常应增大 `TRACE_SCRIPT_RESOURCE_MAX_BYTES` 或收窄
+`TRACE_SCRIPT_RESOURCE_FILTER` 后重跑。
 
 ### 13.8 性能与熔断开关
 
@@ -1582,8 +1798,14 @@ tools/run-trace-firefox.sh --trace-preset discover-light https://example.com/
 | `deep-causal` | 目标局部调用树 | deep + 关闭目标脚本内 prune，仍保持浅值策略 |
 | `opcode-window` | VM/opcode 前置 | 只设置 opcode 模式基础项，必须另行锁脚本/PC/limit |
 
-脚本会在 `TRACE_DIR/manifest.json` 写入本轮 preset、目标 URL、Firefox binary、
-profile、headless 状态和关键 trace 环境变量，供 AI/用户后续综合多轮结果。
+脚本会在 `TRACE_DIR/manifest.json` 写入本轮 preset、`automation_surface`、目标 URL、
+Firefox binary、profile、headless 状态和关键 trace 环境变量，供 AI/用户后续综合多轮结果。
+默认 `TRACE_AUTOMATION_SURFACE=baseline`，页面可见 `navigator.webdriver` 返回
+`false`；需要原始 Firefox 行为对拍时使用：
+
+```bash
+tools/run-trace-firefox.sh --trace-automation-surface stock tests/automation-surface.html
+```
 
 ### 16.1 常规风控字段分析
 
@@ -1668,12 +1890,44 @@ TRACE_DYNAMIC_SCRIPT=1
 TRACE_EXECUTION_MODE=opcode
 TRACE_OPCODE=1
 TRACE_OPCODE_SCRIPT_CONTAINS=risk,captcha,challenge
-TRACE_LIMIT_EVENTS=5000000
-TRACE_LIMIT_FILE_MB=1024
-TRACE_DEGRADE_ON_LIMIT=1
+TRACE_OPCODE_PC_RANGE=0:12000
+TRACE_OPCODE_LIMIT=10000
 ```
 
-说明：VM 模式只用于 jsvmp、控制流平坦化、单大函数黑盒等场景。opcode 必须先锁脚本，确认目标 PC 窗口后再设置 `TRACE_OPCODE_PC_RANGE=start:end`。该模式会改变 JIT 和时序，不与常规运行等价。
+说明：VM 模式只用于 jsvmp、控制流平坦化、单大函数黑盒等场景。当前 opcode window
+记录 SpiderMonkey 原生 bytecode 的 `pc/op/op_name`、raw operands、stack depth 和可选的
+栈顶 slot 类型/primitive。尚未记录虚拟 PC 或 VM step。opcode 必须先锁脚本，确认目标 PC 窗口后再设置
+`TRACE_OPCODE_PC_RANGE=start:end`。该模式会改变 JIT 和时序，不与常规运行等价。
+
+本地 smoke：
+
+```bash
+TRACE_HEADLESS=1 \
+TRACE_OPCODE_SCRIPT_CONTAINS=opcode-window.html \
+TRACE_OPCODE_PC_RANGE=10:11 \
+TRACE_OPCODE_LIMIT=1000 \
+tools/run-trace-firefox.sh --trace-preset opcode-window \
+  'file:///Users/empycity/Desktop/JS-tools/firefoxTrace/tests/opcode-window.html?auto=1'
+```
+
+日志只应出现 `pc=10` 和 `pc=11` 的 `js.opcode`；将 limit 改为 `5` 时，应额外出现
+`trace.degraded module=opcode reason=opcode_limit`。
+
+首轮 opcode 日志可用通用 PC window 分析器收敛：
+
+```bash
+python3 tools/trace_opcode_analyzer.py "$TRACE_DIR" \
+  --script-contains '<target-script-substring>' \
+  --width 48 \
+  --top-windows 3
+```
+
+输出按 `script_url + script_line + script_column + script_bytecode_length` 分组，列出 hot PC、
+branch hits 和候选窗口；每个窗口的 `env` 字段可直接用于下一轮
+`TRACE_OPCODE_PC_RANGE=start:end`，脚本组的 `tier_pin_env` 可直接用于 script-level
+interpreter pin。pin 生效后只有目标 JSScript 强制解释执行，同 URL 的其它函数仍保留 JIT。
+`dispatcher_candidate` 使用循环重复度、branch、data access 和 call hits 给出 heuristic
+score/confidence；它用于候选排序，不代表已经解码 VMP virtual instruction。
 
 ## 17. 正确性、性能与回归测试
 

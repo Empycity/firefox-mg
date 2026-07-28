@@ -1,0 +1,92 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Firefox Trace Generic VMP Fixtures</title>
+<button data-case="simple">Simple VM</button>
+<button data-case="register">Register VM</button>
+<button data-case="complex">Nested VM</button>
+<output id="result"></output>
+<script>
+function simpleVmp(seed) {
+  const program = [1, 23, 2, 0x5a, 3, 7, 255];
+  let pc = 0;
+  let acc = seed;
+  while (pc < program.length) {
+    switch (program[pc++]) {
+      case 1: acc = (acc + program[pc++]) & 0xff; break;
+      case 2: acc ^= program[pc++]; break;
+      case 3: acc = (acc * program[pc++]) & 0xff; break;
+      case 255: return acc;
+    }
+  }
+  return acc;
+}
+
+function registerVmp(seed) {
+  const program = [1, 0, 3, 1, 1, 31, 5, 0, 1, 6, 0, 1, 8, 0, 2, 255];
+  const regs = new Int32Array(8);
+  regs[0] = seed;
+  for (let pc = 0; pc < program.length;) {
+    const opcode = program[pc++];
+    if (opcode === 1) regs[program[pc++]] = program[pc++];
+    else if (opcode === 3) regs[program[pc++]] += regs[program[pc++]];
+    else if (opcode === 5) regs[program[pc++]] ^= regs[program[pc++]];
+    else if (opcode === 6) regs[program[pc++]] = (regs[program[pc++]] << 3) | (regs[0] >>> 29);
+    else if (opcode === 8) regs[program[pc++]] = Math.imul(regs[program[pc++]], 17);
+    else if (opcode === 255) return regs[0] >>> 0;
+  }
+  return regs[0] >>> 0;
+}
+
+function nestedVmp(seed) {
+  const program = [1, 1, 9, 4, 1, 1, 2, 7, 3, 2, 1, 5, 3, 6, 3, 2, 255];
+  const regs = [seed >>> 0, 0, 0, 0];
+  const stack = [];
+  const handlers = {
+    1() { regs[program[pc++]] = program[pc++]; },
+    2() { regs[program[pc++]] ^= regs[program[pc++]]; },
+    3() { regs[program[pc++]] = Math.imul(regs[program[pc - 1]], regs[program[pc++]]); },
+    4() { stack.push(regs[program[pc++]]); },
+    5() { regs[program[pc++]] = stack.pop(); },
+    6() { regs[program[pc++]] = (regs[program[pc - 1]] + regs[program[pc++]]) >>> 0; },
+  };
+  let pc = 0;
+  while (pc < program.length) {
+    const opcode = program[pc++];
+    if (opcode === 255) break;
+    handlers[opcode]();
+  }
+  return (regs[1] ^ regs[2] ^ regs[3]) >>> 0;
+}
+
+function stressVmp(seed) {
+  let state = seed;
+  for (let round = 0; round < 4000; round++) {
+    state = nestedVmp((state + round) & 0xff);
+  }
+  return state;
+}
+
+const fixtures = {
+  simple: simpleVmp,
+  register: registerVmp,
+  complex: nestedVmp,
+  stress: stressVmp,
+};
+function runFixture(name) {
+  const fn = fixtures[name] || fixtures.complex;
+  document.querySelector('#result').textContent = `${name}:${fn(19)}`;
+}
+
+document.addEventListener('click', (event) => {
+  if (event.target.dataset.case) runFixture(event.target.dataset.case);
+});
+
+const params = new URL(location.href).searchParams;
+const initialCase = params.get('case') || 'complex';
+const delayMs = Number.parseInt(params.get('delay_ms') || '0', 10);
+if (Number.isFinite(delayMs) && delayMs > 0) {
+  window.setTimeout(() => runFixture(initialCase), delayMs);
+} else {
+  runFixture(initialCase);
+}
+</script>
