@@ -155,10 +155,23 @@ def check_fetch_body(trace_dir):
     print(f"fetch-body: validated {len(responses)} complete response artifacts")
 
 
+def check_http_raw(trace_dir):
+    events = json_lines(trace_dir, "firefox-http-raw-*.jsonl")
+    chunks = [event for _, _, event in events if event.get("type") == "http.raw_chunk"]
+    if not chunks:
+        fail("no http.raw_chunk event found")
+    for index, event in enumerate(chunks, 1):
+        for field in ("channel_id", "offset", "source_count", "captured_size", "url", "payload_hex", "payload_hex_truncated", "capture_truncated"):
+            require_field(event, field, f"http raw chunk #{index}")
+        if len(event["payload_hex"]) % 2:
+            fail(f"http raw chunk #{index} payload_hex is not byte aligned")
+    print(f"http-raw: validated {len(chunks)} raw chunks")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "check", choices=("runtime", "boundary", "source-map", "worker", "websocket", "fetch-body")
+        "check", choices=("runtime", "boundary", "source-map", "worker", "websocket", "fetch-body", "http-raw")
     )
     parser.add_argument("trace_dir", type=Path)
     args = parser.parse_args()
@@ -174,6 +187,8 @@ def main():
         check_worker(args.trace_dir)
     elif args.check == "fetch-body":
         check_fetch_body(args.trace_dir)
+    elif args.check == "http-raw":
+        check_http_raw(args.trace_dir)
     else:
         check_websocket(args.trace_dir)
 

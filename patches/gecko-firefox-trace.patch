@@ -13147,6 +13147,144 @@ index a0ca1365c9..855cf4febe 100644
  
      aRemoveCookieCallback(purgeList[i]);
    }
+diff --git a/netwerk/protocol/http/HttpChannelParent.cpp b/netwerk/protocol/http/HttpChannelParent.cpp
+index e43fe41337..b1df9407ce 100644
+--- a/netwerk/protocol/http/HttpChannelParent.cpp
++++ b/netwerk/protocol/http/HttpChannelParent.cpp
+@@ -8,6 +8,14 @@
+ #include "ErrorList.h"
+ #include "HttpLog.h"
+ 
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#ifndef XP_WIN
++#  include <sys/stat.h>
++#  include <unistd.h>
++#endif
++
+ #include "mozilla/ConsoleReportCollector.h"
+ #include "mozilla/dom/BrowsingContext.h"
+ #include "mozilla/ipc/IPCStreamUtils.h"
+@@ -62,6 +70,7 @@
+ #include "nsStreamUtils.h"
+ #include "nsStringStream.h"
+ #include "nsThreadUtils.h"
++#include "prtime.h"
+ #include "nsQueryObject.h"
+ #include "nsIMultiPartChannel.h"
+ #include "nsIViewSourceChannel.h"
+@@ -103,6 +112,48 @@ using namespace mozilla::ipc;
+ 
+ namespace mozilla::net {
+ 
++namespace {
++
++bool FirefoxTraceHttpRawEnabled() {
++  const char* enabled = getenv("FIREFOX_TRACE_ENABLE");
++  if (!enabled || !enabled[0] || strcmp(enabled, "0") == 0) return false;
++  const char* raw = getenv("FIREFOX_TRACE_HTTP_RAW");
++  if (!raw || !raw[0]) raw = getenv("TRACE_HTTP_RAW");
++  return raw && raw[0] && strcmp(raw, "0") != 0 && strcmp(raw, "false") != 0 && strcmp(raw, "off") != 0;
++}
++
++uint32_t FirefoxTraceHttpRawLimit(const char* aName, uint32_t aDefault, uint32_t aMaximum) {
++  const char* value = getenv(aName);
++  if ((!value || !value[0]) && !strncmp(aName, "FIREFOX_TRACE_", 14)) {
++    nsAutoCString fallback("TRACE_");
++    fallback.Append(aName + 14);
++    value = getenv(fallback.get());
++  }
++  if (!value || !value[0]) return aDefault;
++  char* end = nullptr;
++  unsigned long parsed = strtoul(value, &end, 10);
++  return end == value ? aDefault : std::min<uint32_t>(parsed, aMaximum);
++}
++
++void FirefoxTraceHttpRawWriteLine(const nsACString& aLine) {
++  const char* logDir = getenv("FIREFOX_TRACE_LOG_DIR");
++  if (!logDir || !logDir[0]) logDir = getenv("TRACE_LOG_DIR");
++  if (!logDir || !logDir[0]) logDir = "/tmp/firefox-trace";
++#ifndef XP_WIN
++  mkdir(logDir, 0755);
++#endif
++  nsAutoCString path(logDir);
++  if (!path.IsEmpty() && path.Last() != '/') path.Append('/');
++  path.AppendPrintf("firefox-http-raw-%d.jsonl", getpid());
++  FILE* file = fopen(path.get(), "a");
++  if (!file) return;
++  fwrite(aLine.BeginReading(), 1, aLine.Length(), file);
++  fputc('\n', file);
++  fclose(file);
++}
++
++}  // namespace
++
+ HttpChannelParent::HttpChannelParent(dom::BrowserParent* iframeEmbedding,
+                                      nsILoadContext* aLoadContext,
+                                      PBOverrideStatus aOverrideStatus)
+@@ -1526,6 +1577,46 @@ HttpChannelParent::OnDataAvailable(nsIRequest* aRequest,
+     return rv;
+   }
+ 
++  if (FirefoxTraceHttpRawEnabled()) {
++    uint32_t maxEvents = FirefoxTraceHttpRawLimit("FIREFOX_TRACE_HTTP_RAW_EVENTS", 8, 1024);
++    uint32_t maxBytes = FirefoxTraceHttpRawLimit("FIREFOX_TRACE_HTTP_RAW_MAX_BYTES", 65536, 4 * 1024 * 1024);
++    uint32_t hexBytes = FirefoxTraceHttpRawLimit("FIREFOX_TRACE_HTTP_RAW_HEX_BYTES", 256, 4096);
++    if ((!maxEvents || mFirefoxTraceRawEvents < maxEvents) && mFirefoxTraceRawBytes < maxBytes) {
++      uint32_t capture = std::min<uint32_t>(data.Length(), maxBytes - mFirefoxTraceRawBytes);
++      nsAutoCString url;
++      nsCOMPtr<nsIURI> uri;
++      Unused << mChannel->GetURI(getter_AddRefs(uri));
++      if (uri) Unused << uri->GetSpec(url);
++      static const char kHex[] = "0123456789abcdef";
++      nsAutoCString line;
++      line.AppendLiteral("{\"schema\":\"firefox_trace.http.v1\",\"type\":\"http.raw_chunk\",\"ts_us\":");
++      line.AppendInt(static_cast<int64_t>(PR_Now()));
++      line.AppendLiteral(",\"channel_id\":"); line.AppendInt(mChannel->ChannelId());
++      line.AppendLiteral(",\"offset\":"); line.AppendInt(aOffset);
++      line.AppendLiteral(",\"source_count\":"); line.AppendInt(aCount);
++      line.AppendLiteral(",\"captured_size\":"); line.AppendInt(capture);
++      line.AppendLiteral(",\"url\":\"");
++      for (uint32_t i = 0; i < url.Length(); ++i) { char c = url[i]; if (c == '"' || c == '\\') line.Append('\\'); line.Append(c); }
++      line.AppendLiteral("\",\"payload_hex\":\"");
++      for (uint32_t i = 0; i < std::min(capture, hexBytes); ++i) { unsigned char c = static_cast<unsigned char>(data[i]); line.Append(kHex[c >> 4]); line.Append(kHex[c & 15]); }
++      line.AppendLiteral("\",\"payload_hex_truncated\":"); line.Append(capture > hexBytes ? "true" : "false");
++      line.AppendLiteral(",\"capture_truncated\":"); line.Append(capture < data.Length() ? "true" : "false");
++      line.Append('}');
++      FirefoxTraceHttpRawWriteLine(line);
++      mFirefoxTraceRawBytes += capture;
++      ++mFirefoxTraceRawEvents;
++    } else if (!mFirefoxTraceRawDegraded) {
++      nsAutoCString line;
++      line.AppendLiteral("{\"schema\":\"firefox_trace.http.v1\",\"type\":\"trace.degraded\",\"module\":\"http_raw\",\"reason\":");
++      line.Append((maxEvents && mFirefoxTraceRawEvents >= maxEvents) ? "\"event_limit\"" : "\"byte_limit\"");
++      line.AppendLiteral(",\"channel_id\":");
++      line.AppendInt(mChannel->ChannelId());
++      line.Append('}');
++      FirefoxTraceHttpRawWriteLine(line);
++      mFirefoxTraceRawDegraded = true;
++    }
++  }
++
+   // Either IPC channel is closed or background channel
+   // is ready to send OnTransportAndData.
+   MOZ_ASSERT(mIPCClosed || mBgParent);
+diff --git a/netwerk/protocol/http/HttpChannelParent.h b/netwerk/protocol/http/HttpChannelParent.h
+index 514dd8b9b5..5475695e00 100644
+--- a/netwerk/protocol/http/HttpChannelParent.h
++++ b/netwerk/protocol/http/HttpChannelParent.h
+@@ -253,6 +253,10 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
+ 
+   uint64_t mEarlyHintPreloaderId{};
+ 
++  uint32_t mFirefoxTraceRawBytes{0};
++  uint32_t mFirefoxTraceRawEvents{0};
++  bool mFirefoxTraceRawDegraded{false};
++
+   RefPtr<HttpBaseChannel> mChannel;
+   nsCOMPtr<nsICacheEntry> mCacheEntry;
+ 
 diff --git a/services/settings/remote-settings.sys.mjs b/services/settings/remote-settings.sys.mjs
 index 138ea51626..d1508307ea 100644
 --- a/services/settings/remote-settings.sys.mjs

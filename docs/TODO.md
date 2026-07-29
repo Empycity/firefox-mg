@@ -334,7 +334,11 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
   send 只写长度和 `preview_available=false`；`tools/trace_check.py websocket TRACE_DIR`
   验证 send/recv 和 schema。fixture：`tests/websocket-trace.html` 配合
   `tests/websocket_trace_server.py --port 8765`。
-- HTTP packet/raw bytes trace。
+- `[已实现，待 fixture 回归]` HTTP payload raw bytes：`TRACE_HTTP_RAW=1` 在 parent
+  `HttpChannelParent::OnDataAvailable` 旁路记录 `http.raw_chunk`，包含 channel id、offset、
+  URL、source/captured size 和 bounded hex prefix；`TRACE_HTTP_RAW_EVENTS/MAX_BYTES/HEX_BYTES`
+  控制负载，耗尽时写一次 `trace.degraded module=http_raw`；
+  `tools/trace_check.py http-raw TRACE_DIR` 验证 schema。
 - 跨进程/跨 frame 请求链进一步统一。
 
 验收：

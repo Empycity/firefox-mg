@@ -32,7 +32,7 @@ OPTION_FLAGS = {
     "limit_events": ("--limit-events", "FIREFOX_TRACE_JS_LIMIT_EVENTS"),
 }
 
-MODULES = ["js", "xhr", "fetch", "ws", "dom", "cookie", "storage", "script"]
+MODULES = ["js", "xhr", "fetch", "ws", "http_raw", "dom", "cookie", "storage", "script"]
 
 RESTART_REQUIRED = [
     "TRACE_AUTOMATION_SURFACE",
@@ -192,8 +192,8 @@ HTML = r"""<!doctype html>
 </main>
 <script>
 const fields = ["profile","js_mode","script_contains","function_contains","script_sha256","target_match","query_fields","object_depth","object_keys","array_items","typed_array_bytes","value_metadata","primitive_metadata","value_store_min_bytes","limit_events"];
-const moduleNames = ["js","xhr","fetch","ws","dom","cookie","storage","script"];
-document.getElementById("modules").innerHTML = moduleNames.map(m => `<label><input type="checkbox" id="mod_${m}" ${m === "ws" ? "" : "checked"}> ${m}</label>`).join("");
+const moduleNames = ["js","xhr","fetch","ws","http_raw","dom","cookie","storage","script"];
+document.getElementById("modules").innerHTML = moduleNames.map(m => `<label><input type="checkbox" id="mod_${m}" ${(m === "ws" || m === "http_raw") ? "" : "checked"}> ${m}</label>`).join("");
 
 function traceDir() { return document.getElementById("traceDir").value.trim(); }
 function controlFile() { return document.getElementById("controlFile").value.trim(); }

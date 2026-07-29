@@ -133,6 +133,18 @@ class TraceCheckTests(unittest.TestCase):
             )
             trace_check.check_fetch_body(trace_dir)
 
+    def test_http_raw_chunk_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trace_dir = Path(directory)
+            write_jsonl(trace_dir / "firefox-http-raw-123.jsonl", [{
+                "schema": "firefox_trace.http.v1", "type": "http.raw_chunk",
+                "channel_id": 17, "offset": 0, "source_count": 4,
+                "captured_size": 4, "url": "http://fixture/raw",
+                "payload_hex": "74657374", "payload_hex_truncated": False,
+                "capture_truncated": False,
+            }])
+            trace_check.check_http_raw(trace_dir)
+
 
 if __name__ == "__main__":
     unittest.main()
