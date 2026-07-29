@@ -228,6 +228,9 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
   - URL query 字段；
   - XHR JSON/form body 字段；
   - Fetch request body 字段。
+- Worker suppression：
+  - `tests/worker-trace.html` 触发 Worker JS；
+  - `tools/trace_check.py worker TRACE_DIR` 必须命中一次显式 suppression。
 - 真实页面 smoke：
   - `[已通过]` JD `h5st` 只作为测试样本；
   - PDD `anti_content` 只作为测试样本；
@@ -270,12 +273,16 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
   `_$PI.prototype._$gsp` arg1，`value_type=number`。该轮无
   `trace.degraded` / dropped / truncated 类降级事件。
 
+已实现：
+
+- JS event 发送到 Parent 失败时会回退到本地 JSONL；IPC event budget 丢弃首条会写
+  `trace.degraded module=ipc reason=event_budget`，不再静默成功。
+- Worker JS trace 不触碰 `PContentChild` IPC；首次 Worker event/value/script artifact 被跳过时
+  写 `trace.suppressed reason=worker_thread_ipc_unsupported scope=worker`。专用跨线程 queue
+  仍是后续覆盖 Worker 事件本身的扩展项。
+
 必须补：
 
-- 大 JS event IPC send 失败不能静默返回成功；需要 fallback、split 或写
-  `trace.degraded`。
-- worker JS trace 默认策略明确化：当前为非主线程 drop，后续需要 queue 到主线程或
-  记录 suppressed。
 - bigint metadata 暂未实现；如果后续确实需要真实值字符串，再单独评估低副作用
   转换方式，不能为了 bigint 破坏真实站时序。
 

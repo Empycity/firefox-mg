@@ -96,9 +96,24 @@ def check_source_map(trace_dir):
     print(f"source-map: validated {len(resources)} script artifacts")
 
 
+def check_worker(trace_dir):
+    suppressed = [
+        event
+        for _, _, event in json_lines(trace_dir, "firefox-js-*.jsonl")
+        if event.get("type") == "trace.suppressed"
+        and event.get("reason") == "worker_thread_ipc_unsupported"
+        and event.get("scope") == "worker"
+    ]
+    if not suppressed:
+        fail("no worker_thread_ipc_unsupported trace.suppressed event found")
+    print(f"worker: validated {len(suppressed)} suppression notices")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("check", choices=("runtime", "boundary", "source-map"))
+    parser.add_argument(
+        "check", choices=("runtime", "boundary", "source-map", "worker")
+    )
     parser.add_argument("trace_dir", type=Path)
     args = parser.parse_args()
     if not args.trace_dir.is_dir():
@@ -107,8 +122,10 @@ def main():
         check_runtime(args.trace_dir)
     elif args.check == "boundary":
         check_boundary(args.trace_dir)
-    else:
+    elif args.check == "source-map":
         check_source_map(args.trace_dir)
+    else:
+        check_worker(args.trace_dir)
 
 
 if __name__ == "__main__":

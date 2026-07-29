@@ -4048,18 +4048,21 @@ index dc6bdc8d4e..50b1082fcc 100644
      MOZ_DIAGNOSTIC_ASSERT(NS_FAILED(aRv));
      SafeRefPtr<InternalResponse> response =
 diff --git a/dom/ipc/ContentChild.cpp b/dom/ipc/ContentChild.cpp
-index dc0a572729..5d002417d3 100644
+index dc0a572729..d5901ceb3e 100644
 --- a/dom/ipc/ContentChild.cpp
 +++ b/dom/ipc/ContentChild.cpp
-@@ -13,6 +13,7 @@
+@@ -13,8 +13,10 @@
  #include "ContentChild.h"
  #include "GeckoProfiler.h"
  #include "HandlerServiceChild.h"
 +#include "mozilla/Unused.h"
  #include "nsXPLookAndFeel.h"
  #include "mozilla/AppShutdown.h"
++#include "mozilla/Atomics.h"
  #include "mozilla/Attributes.h"
-@@ -138,6 +139,14 @@
+ #include "mozilla/BackgroundHangMonitor.h"
+ #include "mozilla/FOGIPC.h"
+@@ -138,6 +140,14 @@
  #include "nsRefreshDriver.h"
  #include "nsSandboxFlags.h"
  #include "mozmemory.h"
@@ -4074,7 +4077,7 @@ index dc0a572729..5d002417d3 100644
  
  #include "ChildProfilerController.h"
  
-@@ -313,6 +322,672 @@ using namespace mozilla::net;
+@@ -313,6 +323,711 @@ using namespace mozilla::net;
  using namespace mozilla::widget;
  using mozilla::loader::PScriptCacheChild;
  
@@ -4167,6 +4170,42 @@ index dc0a572729..5d002417d3 100644
 +    aChild->SendFirefoxTraceDOMEvent(nsDependentCSubstring(
 +        line, static_cast<uint32_t>(len)));
 +  }
++}
++
++void FirefoxTraceWriteWorkerTraceSuppressed() {
++  static mozilla::Atomic<bool, mozilla::Relaxed>
++      sWorkerTraceSuppressionWritten(false);
++  if (!sWorkerTraceSuppressionWritten.compareExchange(false, true)) {
++    return;
++  }
++
++  const char* logDir = PR_GetEnv("FIREFOX_TRACE_LOG_DIR");
++  if (!logDir || !logDir[0]) {
++    logDir = PR_GetEnv("TRACE_LOG_DIR");
++  }
++  if (!logDir || !logDir[0]) {
++    return;
++  }
++  mkdir(logDir, 0755);
++  nsAutoCString path(logDir);
++  if (!path.IsEmpty() && path.Last() != '/') {
++    path.Append('/');
++  }
++  path.AppendPrintf("firefox-js-%d.jsonl", getpid());
++  FILE* file = fopen(path.get(), "a");
++  if (!file) {
++    return;
++  }
++  fprintf(file,
++          "{\"schema\":\"firefox_trace.event.v1\","
++          "\"type\":\"trace.suppressed\",\"ts_us\":%lld,"
++          "\"pid\":%d,\"module\":\"js\","
++          "\"reason\":\"worker_thread_ipc_unsupported\","
++          "\"scope\":\"worker\",\"note\":"
++          "\"worker JS trace events and artifacts require a dedicated "
++          "cross-thread queue\"}\n",
++          static_cast<long long>(PR_Now()), getpid());
++  fclose(file);
 +}
 +
 +FirefoxTraceRuntimeState FirefoxTraceReadRuntimeStateFromControlFile(
@@ -4649,9 +4688,10 @@ index dc0a572729..5d002417d3 100644
 +
 +  // PContentChild is owned by the content main thread. JS can run on worker
 +  // threads, and calling Send* from there trips IPC/thread release asserts.
-+  // Treat the event as handled and drop it; worker JS tracing needs a dedicated
-+  // cross-thread queue before it can be enabled safely.
++  // Record the omission once without entering IPC; worker delivery needs a
++  // dedicated cross-thread queue.
 +  if (!NS_IsMainThread()) {
++    FirefoxTraceWriteWorkerTraceSuppressed();
 +    return true;
 +  }
 +
@@ -4683,6 +4723,7 @@ index dc0a572729..5d002417d3 100644
 +  }
 +
 +  if (!NS_IsMainThread()) {
++    FirefoxTraceWriteWorkerTraceSuppressed();
 +    return true;
 +  }
 +
@@ -4710,6 +4751,7 @@ index dc0a572729..5d002417d3 100644
 +  }
 +
 +  if (!NS_IsMainThread()) {
++    FirefoxTraceWriteWorkerTraceSuppressed();
 +    return true;
 +  }
 +

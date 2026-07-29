@@ -79,6 +79,21 @@ class TraceCheckTests(unittest.TestCase):
             )
             trace_check.check_source_map(trace_dir)
 
+    def test_worker_requires_explicit_suppression_notice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trace_dir = Path(directory)
+            write_jsonl(
+                trace_dir / "firefox-js-123.jsonl",
+                [
+                    {
+                        "type": "trace.suppressed",
+                        "reason": "worker_thread_ipc_unsupported",
+                        "scope": "worker",
+                    }
+                ],
+            )
+            trace_check.check_worker(trace_dir)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Firefox Trace worker smoke</title>
+<pre id="out">starting worker...</pre>
+<script>
+const workerSource = `
+  self.onmessage = ({ data }) => {
+    function workerTraceValue(value) {
+      return "worker-token-" + value;
+    }
+    self.postMessage(workerTraceValue(data));
+  };
+`;
+const worker = new Worker(URL.createObjectURL(new Blob([workerSource], {
+  type: "text/javascript",
+})));
+worker.onmessage = ({ data }) => {
+  document.getElementById("out").textContent = data;
+  worker.terminate();
+};
+worker.postMessage("smoke");
+</script>

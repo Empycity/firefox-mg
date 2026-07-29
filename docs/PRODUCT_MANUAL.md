@@ -272,6 +272,10 @@ profile prefs、Marionette/RemoteAgent 端口、JIT/tier/opcode 这类底层执�
 | native/self-hosted | 字符串/数组底层细节 | deep 后仍看不清时 | `TRACE_JS_DEEP_NATIVE=1`、`TRACE_JS_DEEP_SELFHOSTED=1` | 更多子调用 |
 | suppression | deep 日志爆量 | 临时压掉高频函数 | `TRACE_JS_DEEP_SUPPRESS_FUNCTIONS='=push,=pop'` | `trace.suppressed` |
 
+Worker 线程不会直接使用 content IPC。Worker JS event、value 或 script artifact 首次被跳过时，
+JS 日志会写 `trace.suppressed reason=worker_thread_ipc_unsupported`；该轮不能据此断言 Worker
+代码未执行。
+
 JS 侧判断标准：
 
 - `call_id` / `parent_call_id` 能形成候选链；

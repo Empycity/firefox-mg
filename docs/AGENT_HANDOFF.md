@@ -504,7 +504,8 @@ metadata 验证目录：
   - `FirefoxTraceSendEventToParent`
   - `FirefoxTraceSendValueToParent`
   - `FirefoxTraceSendScriptSourceToParent`
-  在非主线程直接返回 handled/drop，避免 worker 线程直接 IPC。
+  在非主线程不进入 IPC，首次跳过时直接写一次
+  `trace.suppressed reason=worker_thread_ipc_unsupported`，避免 Worker trace 缺失无迹可查。
   - `FirefoxTraceWriteJSEventLineRaw`
   - `FirefoxTraceWriteJSValueStoreFile`
   - `FirefoxTraceWriteJSScriptSourceFile`
@@ -609,10 +610,11 @@ metadata 验证结果：
     `_$PI.prototype._$gs`、`_$PI.prototype._$clt/_$ms`、`_$PI.prototype._$gsd`、
     `encode`、`_$PI.prototype._$gsp`。
   - 无 `trace.degraded` / dropped / truncated 类降级事件。
-- 大 JS event IPC send 失败不能静默返回成功；需要 fallback、split 或写
-  `trace.degraded`。
-- worker JS trace 仍是非主线程直接 handled/drop，后续需要 dedicated queue 或显式
-  `trace.suppressed`。
+- 大 JS event Parent send 失败会返回 false，由 `FirefoxTraceWriteJSEventLineRaw` 回退到本地
+  JSONL；IPC budget 丢弃首条会写 `trace.degraded module=ipc reason=event_budget`。
+- Worker JS trace 当前不经 IPC，首次跳过会写
+  `trace.suppressed reason=worker_thread_ipc_unsupported scope=worker`。如需采集 Worker
+  事件本身，后续再引入 dedicated cross-thread queue。
 
 #### first-phase target 对齐验证（早期）
 
@@ -888,6 +890,7 @@ P1 fixture 产物可用以下检查器做结构化验收：
 python3 tools/trace_check.py runtime TRACE_DIR
 python3 tools/trace_check.py boundary TRACE_DIR
 python3 tools/trace_check.py source-map TRACE_DIR
+python3 tools/trace_check.py worker TRACE_DIR
 ```
 
 ## 下一步优先级
@@ -898,7 +901,8 @@ python3 tools/trace_check.py source-map TRACE_DIR
 
 - P1：补跑 source map、boundary window、automation surface 和 XHR/Fetch 字段回归，
   并记录 `trace.degraded`。
-- P1：处理大 JS IPC send 的失败语义，并明确 worker JS trace 的 drop/suppressed 策略。
+- P1：运行 `tests/worker-trace.html`，并用 `tools/trace_check.py worker TRACE_DIR` 验证
+  Worker suppression 语义。
 - P1：完成回归后重新生成 binary Gecko patch、更新验证证据并提交。
 
 ## 当前已知边界
