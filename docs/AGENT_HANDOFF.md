@@ -909,7 +909,8 @@ python3 tools/trace_check.py worker TRACE_DIR
 
 - PDD 目前看到的是 `anti_content` 的业务组包/发送链路，不是算法内部每一步。
 - PDD 搜索请求返回 403，但验证目标是 trace 能否看到参数生成和发送，不是服务端放行结果。
-- Worker fetch、keepalive/PFetch、完整 response body artifact 仍未闭合。
+- Worker fetch 已通过 content 主线程 queue 接入，待 `tests/worker-trace.html` fixture 回归；
+  keepalive/PFetch、完整 response body artifact 仍未闭合。
 - UI/配置面板 v1 已做，当前仍缺 viewer/时间线和 apply 确认。
 - 真实站长时间运行仍可能日志很大；必须坚持 discover → target 多轮策略。
 

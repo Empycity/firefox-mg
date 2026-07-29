@@ -4,11 +4,13 @@
 <pre id="out">starting worker...</pre>
 <script>
 const workerSource = `
-  self.onmessage = ({ data }) => {
+  self.onmessage = async ({ data }) => {
     function workerTraceValue(value) {
       return "worker-token-" + value;
     }
-    self.postMessage(workerTraceValue(data));
+    const response = await fetch("/fetch-response-body.json?worker_token=" + data);
+    const body = await response.json();
+    self.postMessage(workerTraceValue(body.token));
   };
 `;
 const worker = new Worker(URL.createObjectURL(new Blob([workerSource], {

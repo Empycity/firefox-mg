@@ -317,7 +317,9 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
 
 待做：
 
-- Worker fetch。
+- `[已实现，待 fixture 回归]` Worker fetch：Worker 线程生成的 Fetch trace event 经 content
+  主线程 queue 再送 IPC；不直接触碰 `PContentChild`。`tests/worker-trace.html` 会发起本地
+  Fetch，需在持久 Firefox 终端确认 `fetch.call/open/response`。
 - keepalive/PFetch。
 - 完整 response body artifact。
 - WebSocket frame。

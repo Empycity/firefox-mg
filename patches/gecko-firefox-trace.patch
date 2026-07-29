@@ -1923,7 +1923,7 @@ index b88350d050..7c77c54019 100644
    nsCOMPtr<nsIPrincipal> partitionedCookiePrincipal;
    switch (CookieCommons::CheckGlobalAndRetrieveCookiePrincipals(
 diff --git a/dom/fetch/Fetch.cpp b/dom/fetch/Fetch.cpp
-index 52cf33bfc8..9e13e20522 100644
+index 52cf33bfc8..d7c0be5974 100644
 --- a/dom/fetch/Fetch.cpp
 +++ b/dom/fetch/Fetch.cpp
 @@ -6,19 +6,37 @@
@@ -1964,7 +1964,7 @@ index 52cf33bfc8..9e13e20522 100644
  #include "nsJSUtils.h"
  #include "nsNetUtil.h"
  #include "nsReadableUtils.h"
-@@ -61,8 +79,1499 @@
+@@ -61,8 +79,1510 @@
  
  namespace mozilla::dom {
  
@@ -2159,8 +2159,19 @@ index 52cf33bfc8..9e13e20522 100644
 +  if (XRE_IsContentProcess()) {
 +#if defined(__APPLE__) || defined(__GNUC__)
 +    if (FirefoxTraceSendEventToParent) {
-+      Unused << FirefoxTraceSendEventToParent(aLine.BeginReading(),
-+                                              aLine.Length());
++      nsCString line(aLine);
++      if (NS_IsMainThread()) {
++        Unused << FirefoxTraceSendEventToParent(line.BeginReading(),
++                                                line.Length());
++      } else {
++        NS_DispatchToMainThread(NS_NewRunnableFunction(
++            "FirefoxTraceWorkerFetchEvent", [line = std::move(line)]() {
++              if (FirefoxTraceSendEventToParent) {
++                Unused << FirefoxTraceSendEventToParent(line.BeginReading(),
++                                                        line.Length());
++              }
++            }));
++      }
 +      return;
 +    }
 +#endif
@@ -3464,7 +3475,7 @@ index 52cf33bfc8..9e13e20522 100644
  // Step 17.2.1.2 and 17.2.2 of
  // https://fetch.spec.whatwg.org/#concept-http-network-fetch
  // If stream is readable, then error stream with ...
-@@ -357,17 +1866,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -357,17 +1877,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
    RefPtr<FetchObserver> mFetchObserver;
    RefPtr<AbortSignalImpl> mSignalImpl;
    const bool mMozErrors;
@@ -3487,7 +3498,7 @@ index 52cf33bfc8..9e13e20522 100644
  
    void OnResponseAvailableInternal(
        SafeRefPtr<InternalResponse> aResponse) override;
-@@ -376,6 +1888,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -376,6 +1899,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
  
    void OnResponseEnd(FetchDriverObserver::EndReason aReason,
                       JS::Handle<JS::Value> aReasonDetails) override {
@@ -3496,7 +3507,7 @@ index 52cf33bfc8..9e13e20522 100644
      if (aReason == eAborted) {
        if (!aReasonDetails.isUndefined()) {
          mPromise->MaybeReject(aReasonDetails);
-@@ -510,6 +2024,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -510,6 +2035,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
    }
  
    SafeRefPtr<InternalRequest> internalRequest = request->GetInternalRequest();
@@ -3504,7 +3515,7 @@ index 52cf33bfc8..9e13e20522 100644
  
    // Restore information of InterceptedHttpChannel if they are passed with the
    // Request. Since Request::Constructor would not copy these members.
-@@ -593,12 +2108,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -593,12 +2119,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
      }
  
      RefPtr<MainThreadFetchResolver> resolver = new MainThreadFetchResolver(
@@ -3520,7 +3531,7 @@ index 52cf33bfc8..9e13e20522 100644
      fetch->SetDocument(doc);
      resolver->SetLoadGroup(loadGroup);
      aRv = fetch->Fetch(signalImpl, resolver);
-@@ -856,6 +2372,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
+@@ -856,6 +2383,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
    NS_ASSERT_OWNINGTHREAD(MainThreadFetchResolver);
    AssertIsOnMainThread();
  
