@@ -20,6 +20,7 @@ import json
 import math
 import pathlib
 import re
+import sqlite3
 import sys
 import urllib.parse
 from dataclasses import dataclass, field
@@ -66,6 +67,27 @@ def load_jsonl(root: pathlib.Path) -> list[dict[str, Any]]:
                 row["_line"] = line_no
                 row["_root_dir"] = str(base_dir)
                 rows.append(row)
+    return rows
+
+
+def load_store(path: pathlib.Path, run_id: str | None = None) -> list[dict[str, Any]]:
+    db = sqlite3.connect(path)
+    query = "SELECT source_file, source_line, raw_json FROM events"
+    args: tuple[str, ...] = ()
+    if run_id:
+        query += " WHERE run_id=?"
+        args = (run_id,)
+    query += " ORDER BY ts_us, id"
+    rows = []
+    for source_file, source_line, raw_json in db.execute(query, args):
+        try:
+            row = json.loads(raw_json)
+        except json.JSONDecodeError:
+            continue
+        row["_file"] = source_file
+        row["_line"] = source_line
+        row["_root_dir"] = str(path.parent)
+        rows.append(row)
     return rows
 
 
@@ -490,7 +512,9 @@ def summarize_finding(
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", type=pathlib.Path, help="trace log directory or jsonl file")
+    parser.add_argument("path", type=pathlib.Path, nargs="?", help="trace log directory or jsonl file")
+    parser.add_argument("--store", type=pathlib.Path, help="SQLite Store; takes priority over path")
+    parser.add_argument("--run-id", help="restrict --store analysis to one imported run")
     parser.add_argument(
         "--preset",
         choices=sorted(PRESET_FIELDS),
@@ -514,7 +538,14 @@ def main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    rows = load_jsonl(args.path)
+    if args.store:
+        rows = load_store(args.store, args.run_id)
+        input_path = args.store
+    elif args.path:
+        rows = load_jsonl(args.path)
+        input_path = args.path
+    else:
+        parser.error("path or --store is required")
     idx = build_index(rows)
     fields = []
     for name in PRESET_FIELDS[args.preset] + args.field:
@@ -528,7 +559,7 @@ def main(argv: list[str]) -> int:
     scripts, funcs, script_hashes = candidate_filters(chains, nearby_groups, idx)
 
     report = {
-        "path": str(args.path),
+        "path": str(input_path),
         "row_count": len(rows),
         "event_counts": dict(collections.Counter(r.get("type") for r in rows)),
         "field_preset": args.preset,

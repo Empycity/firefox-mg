@@ -351,10 +351,12 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
 - `[已实现]` JSONL -> SQLite adapter：`tools/trace_store.py import TRACE_DIR` 写入
   `trace-store.sqlite`，索引 event、segment、request/call/origin/value 和制品。
 - `[已实现]` 基础 trace query CLI：`field`、`value-sha`、`call`、`request`。
-- Run/campaign/segment 跨 run 索引。
-- request、origin_call_id、script、value_store、DOM/Cookie/Storage 统一查询。
-- 大值、脚本、source map artifact 索引。
-- analyzer 改为优先查 Run Store，保留原始 JSONL fallback。
+- `[已实现]` Run/campaign/segment 跨 run 索引：同一个 campaign SQLite Store 可重复
+  `import` 多个 run，`runs --campaign ID` 列出轮次。
+- `[已实现]` request、origin_call_id、script/value 元数据统一查询：`request`、`call`、
+  `chain`、`field`、`value-sha` 都保留 run scope；artifact 表索引 values/scripts/source maps。
+- `[已实现]` analyzer 支持 `--store TRACE_STORE.sqlite [--run-id ID]`，Store 优先读取，原始
+  JSONL 路径保持 fallback。
 - 通用分段参数归因：
   - 自动从目标字段中按 `;`、`&`、`,`、`|`、`.`、JSON path 拆分；
   - 对每个分段输出 exact / digest(source-string) / contains 三类证据；
@@ -373,7 +375,8 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
   - `trace-query field <name>`；
   - `trace-query value-sha <sha>`；
   - `trace-query call <call_id>`；
-  - `trace-query split-field <request_id> <field>`。
+- `trace-query split-field <request_id> <field>`。
+  当前实现入口为 `tools/trace_store.py split-field DB request_id:field`。
 
 验收：
 
