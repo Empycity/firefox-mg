@@ -335,8 +335,10 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
 
 待做：
 
-- JSONL -> SQLite/DuckDB adapter。
-- Run/campaign/segment 索引。
+- `[已实现]` JSONL -> SQLite adapter：`tools/trace_store.py import TRACE_DIR` 写入
+  `trace-store.sqlite`，索引 event、segment、request/call/origin/value 和制品。
+- `[已实现]` 基础 trace query CLI：`field`、`value-sha`、`call`、`request`。
+- Run/campaign/segment 跨 run 索引。
 - request、origin_call_id、script、value_store、DOM/Cookie/Storage 统一查询。
 - 大值、脚本、source map artifact 索引。
 - analyzer 改为优先查 Run Store，保留原始 JSONL fallback。
