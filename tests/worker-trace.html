@@ -8,7 +8,9 @@ const workerSource = `
     function workerTraceValue(value) {
       return "worker-token-" + value;
     }
-    const response = await fetch("/fetch-response-body.json?worker_token=" + data);
+    const response = await fetch("/fetch-response-body.json?worker_token=" + data, {
+      keepalive: true,
+    });
     const body = await response.json();
     self.postMessage(workerTraceValue(body.token));
   };
