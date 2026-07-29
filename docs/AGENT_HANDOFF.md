@@ -911,8 +911,9 @@ python3 tools/trace_check.py worker TRACE_DIR
 - PDD 搜索请求返回 403，但验证目标是 trace 能否看到参数生成和发送，不是服务端放行结果。
 - Worker fetch 已通过 content 主线程 queue 接入，待 `tests/worker-trace.html` fixture 回归；
   keepalive/PFetch 已有统一 Fetch trace 字段，待 fixture 回归；完整 response body artifact
-  仍未闭合。
-- UI/配置面板 v1 已做，当前仍缺 viewer/时间线和 apply 确认。
+  已实现并由 `tools/trace_check.py fetch-body` 校验路径、未截断状态和 SHA-256。
+- UI/配置面板 v1 已做；静态 `viewer/index.html` 已提供本地时间线、筛选、制品预览和导出，
+  仍缺跨 run 对比与自动 request -> JS -> DOM/Cookie/Storage 拼接。
 - 真实站长时间运行仍可能日志很大；必须坚持 discover → target 多轮策略。
 
 ## 接手检查命令

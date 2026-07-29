@@ -507,14 +507,16 @@ opcode window 验收：
   preset、profile、JS mode、script/function/hash filter、target match、query fields、
   module 开关、object/value metadata、limit、自定义 `TRACE_*`。
 - `[已实现]` API smoke：`/private/tmp/firefox-trace-console-api-smoke`。
+- `[已实现]` 静态 Trace Explorer：`viewer/index.html` 不依赖 Python 服务，可直接读取选中的
+  trace run 目录，按 event type / segment / request / call / 文本筛选时间线，预览已选制品并
+  导出 filtered JSONL 或 JSON report。
 
 待做：
 
 - run/campaign 管理。
 - trace preset 配置模板保存/加载。
-- request -> JS -> DOM/Cookie/Storage 时间线。
-- value/script/source map artifact 查看。
-- 多轮对比和报告导出。
+- request -> JS -> DOM/Cookie/Storage 自动拼接时间线。
+- 跨 run 多轮对比和报告模板。
 
 ## P4 可选：Firefox Trace 自有 MCP
 

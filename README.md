@@ -32,8 +32,9 @@ Agent 和 MCP 是辅助层：Agent 先消费 Trace 已经收窄的结果，只�
 交付给实际使用者的产品手册见 [docs/PRODUCT_MANUAL.md](docs/PRODUCT_MANUAL.md)。
 当前待做清单见 [docs/TODO.md](docs/TODO.md)，后续不要把新 TODO 混进本文的大段规划里。
 当前提供本地 Web 控制台 v1，用于 runtime control、segment、preset/filter 和日志摘要；
-实际证据仍以 `TRACE_DIR` 下的 JSONL 与制品为准。启动入口见
-`tools/trace-console.sh` 和产品手册。
+另有静态 [Trace Explorer](viewer/index.html)，可直接打开、选择 `TRACE_DIR`，离线查看
+时间线、request/call 关联事件、制品和导出报告。实际证据仍以 `TRACE_DIR` 下的 JSONL
+与制品为准。启动入口见 `tools/trace-console.sh` 和产品手册。
 
 当前推荐只使用有头浏览器。launcher 默认启用 automation surface baseline：网页侧
 `navigator.webdriver=false`，有头远控提示 UI 隐藏，`about:support` 不暴露

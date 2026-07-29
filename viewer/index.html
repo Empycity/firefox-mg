@@ -1,0 +1,199 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Firefox Trace Explorer</title>
+<style>
+  :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: CanvasText; background: Canvas; }
+  header { min-height: 58px; border-bottom: 1px solid color-mix(in srgb, CanvasText 24%, transparent); display: flex; align-items: center; gap: 14px; padding: 10px 18px; }
+  h1 { font-size: 18px; font-weight: 680; margin: 0; }
+  .status { color: color-mix(in srgb, CanvasText 58%, transparent); font-size: 13px; }
+  .actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+  button, .file-button { font: inherit; font-size: 13px; border: 1px solid color-mix(in srgb, CanvasText 30%, transparent); border-radius: 6px; background: transparent; color: inherit; min-height: 32px; padding: 5px 10px; cursor: pointer; }
+  button:hover, .file-button:hover { background: color-mix(in srgb, CanvasText 9%, transparent); }
+  .file-button input { display: none; }
+  main { display: grid; grid-template-columns: minmax(240px, 300px) minmax(440px, 1fr) minmax(300px, 420px); min-height: calc(100vh - 58px); }
+  aside, section { min-width: 0; border-right: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
+  section:last-child { border-right: 0; }
+  .panel { padding: 14px; border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
+  .panel h2 { font-size: 13px; font-weight: 680; margin: 0 0 10px; }
+  .drop { border: 1px dashed color-mix(in srgb, CanvasText 36%, transparent); border-radius: 6px; min-height: 104px; display: grid; place-items: center; text-align: center; padding: 14px; color: color-mix(in srgb, CanvasText 65%, transparent); font-size: 13px; }
+  label { display: block; font-size: 12px; color: color-mix(in srgb, CanvasText 65%, transparent); margin: 9px 0 4px; }
+  input, select { width: 100%; min-height: 32px; border: 1px solid color-mix(in srgb, CanvasText 30%, transparent); border-radius: 4px; background: Canvas; color: CanvasText; padding: 5px 7px; font: inherit; font-size: 13px; }
+  .summary { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-left: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
+  .metric { min-height: 62px; padding: 9px; border-right: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
+  .metric b { display: block; font-size: 19px; font-weight: 680; }
+  .metric span { font-size: 11px; color: color-mix(in srgb, CanvasText 62%, transparent); }
+  .type-list, .artifact-list { display: grid; gap: 3px; max-height: 260px; overflow: auto; }
+  .type-list button, .artifact-list button { width: 100%; text-align: left; border: 0; min-height: 28px; padding: 4px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .type-list button.active { background: color-mix(in srgb, Highlight 18%, transparent); }
+  .event-list { max-height: calc(100vh - 220px); overflow: auto; }
+  .event { width: 100%; display: grid; grid-template-columns: 104px 1fr auto; gap: 8px; align-items: start; padding: 9px 14px; border: 0; border-bottom: 1px solid color-mix(in srgb, CanvasText 13%, transparent); border-radius: 0; text-align: left; }
+  .event:hover, .event.active { background: color-mix(in srgb, Highlight 14%, transparent); }
+  .event time { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: color-mix(in srgb, CanvasText 64%, transparent); }
+  .event strong { font-size: 13px; font-weight: 650; }
+  .event p { margin: 3px 0 0; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: color-mix(in srgb, CanvasText 68%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .event small { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: color-mix(in srgb, CanvasText 56%, transparent); }
+  .detail-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  pre { margin: 0; padding: 12px; overflow: auto; max-height: calc(100vh - 190px); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; background: color-mix(in srgb, CanvasText 5%, transparent); }
+  .empty { padding: 22px 14px; font-size: 13px; color: color-mix(in srgb, CanvasText 58%, transparent); }
+  @media (max-width: 1050px) { main { grid-template-columns: 250px 1fr; } main > section:last-child { grid-column: 1 / -1; border-top: 1px solid color-mix(in srgb, CanvasText 18%, transparent); } pre { max-height: 360px; } }
+  @media (max-width: 700px) { header { align-items: flex-start; flex-wrap: wrap; } .actions { margin-left: 0; } main { display: block; } aside, section { border-right: 0; border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); } .event-list { max-height: 420px; } }
+</style>
+<header>
+  <h1>Firefox Trace Explorer</h1>
+  <span class="status" id="status">Load a trace run directory or JSONL files.</span>
+  <div class="actions">
+    <label class="file-button">Open run directory<input id="directory" type="file" webkitdirectory multiple></label>
+    <label class="file-button">Open JSONL files<input id="files" type="file" accept=".jsonl,.json,.txt" multiple></label>
+    <button id="export-events" type="button">Export filtered JSONL</button>
+    <button id="export-report" type="button">Export report</button>
+  </div>
+</header>
+<main>
+  <aside>
+    <div class="panel">
+      <div class="drop" id="drop-zone">Drop a run directory's JSONL files here.</div>
+    </div>
+    <div class="panel">
+      <h2>Run Summary</h2>
+      <div class="summary" id="summary"></div>
+    </div>
+    <div class="panel">
+      <h2>Event Types</h2>
+      <div class="type-list" id="types"></div>
+    </div>
+    <div class="panel">
+      <h2>Artifacts</h2>
+      <div class="artifact-list" id="artifacts"></div>
+    </div>
+  </aside>
+  <section>
+    <div class="panel">
+      <h2>Timeline</h2>
+      <label for="query">Text, request ID, call ID, URL, or field</label>
+      <input id="query" type="search" placeholder="fetch_12, call_34, h5st...">
+      <label for="segment">Segment</label>
+      <select id="segment"><option value="">All segments</option></select>
+    </div>
+    <div class="event-list" id="events"><p class="empty">No events loaded.</p></div>
+  </section>
+  <section>
+    <div class="panel detail-head"><h2>Event Detail</h2><span class="status" id="detail-status"></span></div>
+    <pre id="detail">Select an event or artifact.</pre>
+  </section>
+</main>
+<script>
+(() => {
+  const state = { events: [], files: new Map(), selectedType: "", selectedSegment: "", query: "", selected: null };
+  const $ = (id) => document.getElementById(id);
+  const types = $("types"), events = $("events"), artifacts = $("artifacts"), summary = $("summary");
+
+  function eventType(event) { return event.type || event.schema || "unknown"; }
+  function eventTime(event) { return Number(event.ts_us || event.ts || 0); }
+  function displayTime(event) {
+    const ts = eventTime(event);
+    return ts ? new Date(ts > 1e14 ? ts / 1000 : ts).toISOString().replace("T", " ").replace("Z", "") : "-";
+  }
+  function eventIdentity(event) { return event.request_id || event.call_id || event.origin_call_id || event.socket_id || ""; }
+  function compact(event) {
+    const keys = ["url", "page_url", "method", "direction", "field", "name", "status", "size", "body_sha256"];
+    return keys.filter((key) => event[key] !== undefined && event[key] !== "").map((key) => `${key}=${String(event[key])}`).join("  ");
+  }
+  function safeText(value) { return String(value ?? "").toLowerCase(); }
+  function selectedEvents() {
+    return state.events.filter((item) => {
+      const event = item.event;
+      if (state.selectedType && eventType(event) !== state.selectedType) return false;
+      if (state.selectedSegment && (event.segment_id || "") !== state.selectedSegment) return false;
+      if (!state.query) return true;
+      return safeText(JSON.stringify(event)).includes(state.query);
+    });
+  }
+  function renderSummary() {
+    const all = state.events;
+    const requests = new Set(all.map(({ event }) => event.request_id).filter(Boolean));
+    const calls = new Set(all.flatMap(({ event }) => [event.call_id, event.origin_call_id]).filter(Boolean));
+    const segments = new Set(all.map(({ event }) => event.segment_id).filter(Boolean));
+    const degraded = all.filter(({ event }) => event.type === "trace.degraded").length;
+    const data = [[all.length, "events"], [requests.size, "requests"], [calls.size, "calls"], [segments.size, "segments"], [degraded, "degraded"]];
+    summary.innerHTML = data.map(([value, label]) => `<div class="metric"><b>${value}</b><span>${label}</span></div>`).join("");
+  }
+  function renderTypes() {
+    const counts = new Map();
+    for (const { event } of state.events) counts.set(eventType(event), (counts.get(eventType(event)) || 0) + 1);
+    const rows = [["", `All events (${state.events.length})`], ...[...counts.entries()].sort((a, b) => b[1] - a[1])];
+    types.innerHTML = rows.map(([type, label]) => `<button type="button" class="${state.selectedType === type ? "active" : ""}" data-type="${encodeURIComponent(type)}">${type ? `${type} (${label})` : label}</button>`).join("") || '<p class="empty">No event types.</p>';
+    types.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => { state.selectedType = decodeURIComponent(button.dataset.type); render(); }));
+  }
+  function artifactPaths() {
+    const paths = new Set();
+    for (const { event } of state.events) for (const key of ["artifact_path", "body_value_store_path", "value_store_path"]) if (event[key]) paths.add(event[key]);
+    return [...paths].sort();
+  }
+  function findArtifact(path) {
+    return [...state.files.entries()].find(([name]) => name === path || name.endsWith(`/${path}`));
+  }
+  function renderArtifacts() {
+    const paths = artifactPaths();
+    artifacts.innerHTML = paths.map((path) => `<button type="button" data-path="${encodeURIComponent(path)}">${path}${findArtifact(path) ? "" : " (not loaded)"}</button>`).join("") || '<p class="empty">No referenced artifacts.</p>';
+    artifacts.querySelectorAll("button").forEach((button) => button.addEventListener("click", async () => {
+      const path = decodeURIComponent(button.dataset.path), entry = findArtifact(path);
+      $("detail-status").textContent = path;
+      $("detail").textContent = entry ? await entry[1].text() : "Artifact file was not included in the selected directory.";
+    }));
+  }
+  function renderSegments() {
+    const value = state.selectedSegment, segments = [...new Set(state.events.map(({ event }) => event.segment_id).filter(Boolean))].sort();
+    $("segment").innerHTML = '<option value="">All segments</option>' + segments.map((segment) => `<option value="${segment}">${segment}</option>`).join("");
+    $("segment").value = value;
+  }
+  function renderEvents() {
+    const items = selectedEvents();
+    $("status").textContent = `${items.length} of ${state.events.length} events shown`;
+    events.innerHTML = items.slice(0, 5000).map((item, index) => {
+      const event = item.event, selected = state.selected === item ? "active" : "";
+      return `<button type="button" class="event ${selected}" data-index="${index}"><time>${displayTime(event)}</time><span><strong>${eventType(event)}</strong><p>${compact(event) || item.source}</p></span><small>${eventIdentity(event)}</small></button>`;
+    }).join("") || '<p class="empty">No matching events.</p>';
+    events.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => {
+      state.selected = items[Number(button.dataset.index)];
+      $("detail-status").textContent = state.selected.source;
+      $("detail").textContent = JSON.stringify(state.selected.event, null, 2);
+      renderEvents();
+    }));
+  }
+  function render() { renderSummary(); renderTypes(); renderArtifacts(); renderSegments(); renderEvents(); }
+  async function load(files) {
+    const list = [...files];
+    for (const file of list) state.files.set(file.webkitRelativePath || file.name, file);
+    const jsonl = list.filter((file) => /\.jsonl$/i.test(file.name));
+    const loaded = [];
+    for (const file of jsonl) {
+      const source = file.webkitRelativePath || file.name;
+      for (const [line, number] of (await file.text()).split(/\r?\n/).map((line, index) => [line, index + 1])) {
+        if (!line.trim()) continue;
+        try { loaded.push({ event: JSON.parse(line), source: `${source}:${number}` }); }
+        catch { loaded.push({ event: { type: "trace.parse_error", line: number, raw: line }, source: `${source}:${number}` }); }
+      }
+    }
+    state.events = loaded.sort((a, b) => eventTime(a.event) - eventTime(b.event));
+    state.selected = null;
+    $("detail").textContent = "Select an event or artifact.";
+    $("detail-status").textContent = "";
+    render();
+  }
+  function download(name, body, type) { const link = Object.assign(document.createElement("a"), { href: URL.createObjectURL(new Blob([body], { type })), download: name }); link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); }
+  $("directory").addEventListener("change", (event) => load(event.target.files));
+  $("files").addEventListener("change", (event) => load(event.target.files));
+  $("query").addEventListener("input", (event) => { state.query = safeText(event.target.value).trim(); renderEvents(); });
+  $("segment").addEventListener("change", (event) => { state.selectedSegment = event.target.value; renderEvents(); });
+  $("export-events").addEventListener("click", () => download("firefox-trace-filtered.jsonl", selectedEvents().map(({ event }) => JSON.stringify(event)).join("\n") + "\n", "application/x-ndjson"));
+  $("export-report").addEventListener("click", () => download("firefox-trace-report.json", JSON.stringify({ generated_at: new Date().toISOString(), events: selectedEvents().map(({ event }) => event), event_count: selectedEvents().length }, null, 2), "application/json"));
+  const drop = $("drop-zone");
+  ["dragenter", "dragover"].forEach((name) => drop.addEventListener(name, (event) => { event.preventDefault(); drop.style.background = "color-mix(in srgb, Highlight 15%, transparent)"; }));
+  ["dragleave", "drop"].forEach((name) => drop.addEventListener(name, (event) => { event.preventDefault(); drop.style.background = ""; }));
+  drop.addEventListener("drop", (event) => load(event.dataTransfer.files));
+  render();
+})();
+</script>

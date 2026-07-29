@@ -12,10 +12,12 @@
 - 落盘制品：`values/`、`scripts/`、`source_maps/`；
 - 离线辅助分析：`tools/trace_analyzer.py`；
 - 本地 Web 控制台 / Agent HTTP API：`tools/trace-console-server.py`；
+- 静态 Trace Explorer：`viewer/index.html`；
 - Gecko patch：`patches/gecko-firefox-trace.patch`。
 
 当前已有本地 Web 控制台 v1。它负责 trace start/stop、segment 切换、preset/filter/value
-参数配置和日志摘要；viewer/时间线/报告导出仍属于后续。
+参数配置和日志摘要。`viewer/index.html` 可作为静态文件直接打开，选择 trace run 目录后离线
+查看时间线、segment、request/call 关联事件、已选制品，并导出 filtered JSONL 或 JSON report。
 
 当前也没有本项目自带的 MCP server。仓库里没有 `mcp-server/`、Firefox RDP debugger
 adapter、断点工具或 Trace Query MCP 的可运行实现；这些在 README 里属于规划项。
@@ -140,6 +142,10 @@ Python 环境固定使用 `/opt/miniconda3/envs/firefox-trace/bin/python`。
 `tools/trace-console.sh`、`tools/trace-analyzer.sh`、`tools/trace-control.sh` 和
 `tools/run-trace-firefox.sh` 默认都走这个 conda 环境；如需临时替换，显式设置
 `FIREFOX_TRACE_PYTHON=/path/to/python`。
+
+静态 Explorer 不依赖 Python 或 HTTP 服务。直接打开 `viewer/index.html`，选择包含
+`firefox-*.jsonl`、`values/`、`scripts/` 的 trace run 目录；选择目录时浏览器会同时加载可用
+artifact，未选中的 artifact 在详情面板会显示缺失状态。
 
 打开：
 
@@ -662,7 +668,7 @@ P1 已完成：
 - keepalive/PFetch；
 - 完整 response body artifact；
 - WebSocket protocol/raw bytes 和控制帧；逻辑 send/recv frame 已实现，fixture 回归待完成；
-- 桌面控制台 / Web viewer；
+- run/campaign 管理、多轮对比和更深的报告模板；静态 viewer/时间线/制品预览与导出已实现；
 - opcode、收窄 dispatcher PC 的 vm_step、WASM / HTTP/WS；
 - 最后可选：Firefox Trace 自有 MCP，配套魔改 Firefox，提供页面操控、网络/脚本观察、断点/evaluate、trace start/stop 和日志查询；
 - 最后可选：外部浏览器操控 MCP 能力参考，例如 `js-reverse-mcp`。
