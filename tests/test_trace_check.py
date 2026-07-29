@@ -149,7 +149,7 @@ class TraceCheckTests(unittest.TestCase):
     def test_wasm_module_schema(self):
         with tempfile.TemporaryDirectory() as directory:
             trace_dir = Path(directory)
-            write_jsonl(trace_dir / "firefox-wasm-123.jsonl", [{
+            write_jsonl(trace_dir / "firefox-dom-123.jsonl", [{
                 "schema": "firefox_trace.wasm.v1", "type": "wasm.module",
                 "module_id": "a" * 40, "module_sha1": "a" * 40,
                 "bytecode_size": 8, "code_section_size": 0,
@@ -157,6 +157,25 @@ class TraceCheckTests(unittest.TestCase):
                 "bytecode_preview_hex": "0061736d01000000",
                 "bytecode_preview_truncated": False, "dump_requested": False,
                 "dump_stored": False,
+            }])
+            trace_check.check_wasm(trace_dir)
+
+    def test_wasm_dump_artifact_matches_module_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trace_dir = Path(directory)
+            payload = bytes.fromhex("0061736d01000000")
+            module_sha1 = hashlib.sha1(payload).hexdigest()
+            artifact = trace_dir / "wasm" / f"{module_sha1}.wasm"
+            artifact.parent.mkdir()
+            artifact.write_bytes(payload)
+            write_jsonl(trace_dir / "firefox-wasm-123.jsonl", [{
+                "schema": "firefox_trace.wasm.v1", "type": "wasm.module",
+                "module_id": module_sha1, "module_sha1": module_sha1,
+                "bytecode_size": len(payload), "code_section_size": 0,
+                "function_count": 0, "function_import_count": 0,
+                "bytecode_preview_hex": payload.hex(),
+                "bytecode_preview_truncated": False, "dump_requested": True,
+                "dump_stored": True, "artifact_path": f"wasm/{module_sha1}.wasm",
             }])
             trace_check.check_wasm(trace_dir)
 

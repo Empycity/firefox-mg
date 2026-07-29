@@ -1359,7 +1359,7 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_HTTP_RAW_EVENTS` | 整数 | `8` | 每个 HTTP channel 最大 raw chunk 事件数，`0` 表示不以事件数限制 |
 | `TRACE_HTTP_RAW_MAX_BYTES` | 整数 | `65536` | 每个 HTTP channel 最大累计采集字节数，上限 `4194304` |
 | `TRACE_HTTP_RAW_HEX_BYTES` | 整数 | `256` | 每个 chunk 的 `payload_hex` 最大原始字节数，上限 `4096` |
-| `TRACE_WASM` | `1` / `0` | `0` | 成功 WASM compile 的模块元数据与 bounded preview；也可运行时使用 `trace-control.sh ... config --module wasm=1` |
+| `TRACE_WASM` | `1` / `0` | `0` | 成功 WASM compile 的模块元数据与 bounded preview，写入 `firefox-wasm-*.jsonl`；也可运行时使用 `trace-control.sh ... config --module wasm=1` |
 | `TRACE_WASM_DUMP` | `1` / `0` | `0` | 请求在 `TRACE_WASM_DUMP_MAX_BYTES` 内将完整模块写入 `wasm/<sha1>.wasm` |
 | `TRACE_WASM_DUMP_MAX_BYTES` | 整数 | `1048576` | 单模块 dump 最大字节数，上限 `16777216` |
 | `TRACE_WASM_PREVIEW_BYTES` | 整数 | `64` | `wasm.module.bytecode_preview_hex` 最大原始字节数，上限 `4096` |

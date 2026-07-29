@@ -4110,7 +4110,7 @@ index dc6bdc8d4e..50b1082fcc 100644
      MOZ_DIAGNOSTIC_ASSERT(NS_FAILED(aRv));
      SafeRefPtr<InternalResponse> response =
 diff --git a/dom/ipc/ContentChild.cpp b/dom/ipc/ContentChild.cpp
-index dc0a572729..8a6255cd51 100644
+index dc0a572729..f33b0ccc89 100644
 --- a/dom/ipc/ContentChild.cpp
 +++ b/dom/ipc/ContentChild.cpp
 @@ -13,8 +13,10 @@
@@ -4139,7 +4139,7 @@ index dc0a572729..8a6255cd51 100644
  
  #include "ChildProfilerController.h"
  
-@@ -313,6 +323,728 @@ using namespace mozilla::net;
+@@ -313,6 +323,765 @@ using namespace mozilla::net;
  using namespace mozilla::widget;
  using mozilla::loader::PScriptCacheChild;
  
@@ -4743,6 +4743,9 @@ index dc0a572729..8a6255cd51 100644
 +  return FirefoxTraceRuntimeStateCached() == FirefoxTraceRuntimeStateActive;
 +}
 +
++extern "C" bool FirefoxTraceSendWasmArtifactToParent(
++    const char* aModuleId, const char* aData, size_t aLen);
++
 +extern "C" bool FirefoxTraceSendEventToParent(const char* aLine, size_t aLen) {
 +  if (!aLine || !aLen) {
 +    return false;
@@ -4793,6 +4796,25 @@ index dc0a572729..8a6255cd51 100644
 +  return true;
 +}
 +
++extern "C" bool FirefoxTraceQueueWasmArtifactToParent(
++    const char* aModuleId, const char* aData, size_t aLen) {
++  if (!aModuleId || !aModuleId[0] || !aData || !aLen) {
++    return false;
++  }
++  if (NS_IsMainThread()) {
++    return FirefoxTraceSendWasmArtifactToParent(aModuleId, aData, aLen);
++  }
++  nsCString moduleId(aModuleId);
++  nsCString data(aData, aLen);
++  NS_DispatchToMainThread(NS_NewRunnableFunction(
++      "FirefoxTraceQueuedWasmArtifact",
++      [moduleId = std::move(moduleId), data = std::move(data)]() {
++        Unused << FirefoxTraceSendWasmArtifactToParent(
++            moduleId.BeginReading(), data.BeginReading(), data.Length());
++      }));
++  return true;
++}
++
 +extern "C" bool FirefoxTraceSendValueToParent(const char* aValueId,
 +                                              const char* aArtifactKey,
 +                                              const char* aData,
@@ -4821,6 +4843,21 @@ index dc0a572729..8a6255cd51 100644
 +  nsDependentCSubstring data(aData, aLen);
 +  mozilla::Unused << child->SendFirefoxTraceJSValue(valueId, artifactKey, data);
 +  return true;
++}
++
++extern "C" bool FirefoxTraceSendWasmArtifactToParent(
++    const char* aModuleId, const char* aData, size_t aLen) {
++  if (!aModuleId || !aModuleId[0] || !aData || !aLen || !NS_IsMainThread()) {
++    return false;
++  }
++  mozilla::dom::ContentChild* child =
++      mozilla::dom::ContentChild::GetSingleton();
++  if (!child || !FirefoxTraceRuntimeAllowsArtifact()) {
++    return child != nullptr;
++  }
++  nsDependentCString moduleId(aModuleId);
++  nsDependentCSubstring data(aData, aLen);
++  return child->SendFirefoxTraceWasmArtifact(moduleId, data);
 +}
 +
 +extern "C" bool FirefoxTraceSendScriptSourceToParent(
@@ -4883,7 +4920,7 @@ index f22b544499..d73f14408d 100644
    virtual void OnChannelReceivedMessage(const Message& aMsg) override;
  
 diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
-index aa775fdf14..eef6c2a279 100644
+index aa775fdf14..a3344e3579 100644
 --- a/dom/ipc/ContentParent.cpp
 +++ b/dom/ipc/ContentParent.cpp
 @@ -26,6 +26,11 @@
@@ -4934,7 +4971,7 @@ index aa775fdf14..eef6c2a279 100644
  }
  
  void ContentParent::AsyncSendShutDownMessage() {
-@@ -5662,6 +5675,834 @@ mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
+@@ -5662,6 +5675,897 @@ mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
    return IPC_OK();
  }
  
@@ -5440,6 +5477,7 @@ index aa775fdf14..eef6c2a279 100644
 +  bool isWebSocket = aLine.Find("firefox_trace.websocket.v1") != kNotFound;
 +  bool isStorage = aLine.Find("firefox_trace.storage.v1") != kNotFound;
 +  bool isCookie = aLine.Find("firefox_trace.cookie.v1") != kNotFound;
++  bool isWasm = aLine.Find("firefox_trace.wasm.v1") != kNotFound;
 +  bool isScriptResource =
 +      aLine.Find("firefox_trace.script.v1") != kNotFound ||
 +      aLine.Find("\"type\":\"script.resource\"") != kNotFound ||
@@ -5492,6 +5530,16 @@ index aa775fdf14..eef6c2a279 100644
 +    if (cookieEnabled && strcmp(cookieEnabled, "0") == 0) {
 +      return IPC_OK();
 +    }
++  } else if (isWasm) {
++    const char* wasmEnabled = PR_GetEnv("FIREFOX_TRACE_WASM");
++    if (!wasmEnabled || !wasmEnabled[0]) {
++      wasmEnabled = PR_GetEnv("TRACE_WASM");
++    }
++    if (!wasmEnabled || !wasmEnabled[0] || strcmp(wasmEnabled, "0") == 0 ||
++        strcmp(wasmEnabled, "false") == 0 ||
++        strcmp(wasmEnabled, "off") == 0) {
++      return IPC_OK();
++    }
 +  } else if (isScriptResource) {
 +    const char* scriptEnabled = PR_GetEnv("FIREFOX_TRACE_SCRIPT_RESOURCE");
 +    if (!scriptEnabled || !scriptEnabled[0]) {
@@ -5526,19 +5574,25 @@ index aa775fdf14..eef6c2a279 100644
 +  if (!path.IsEmpty() && path.Last() != '/') {
 +    path.Append('/');
 +  }
-+  path.AppendPrintf(
-+      isXHR ? "firefox-xhr-%d.jsonl"
-+            : (isFetch ? "firefox-fetch-%d.jsonl"
-+                       : (isWebSocket ? "firefox-websocket-%d.jsonl"
-+                       : (isStorage
-+                              ? "firefox-storage-%d.jsonl"
-+                              : (isCookie
-+                                     ? "firefox-cookie-%d.jsonl"
-+                                     : (isScriptResource
-+                                            ? "firefox-script-%d.jsonl"
-+                                            : (isJS ? "firefox-js-%d.jsonl"
-+                                                    : "firefox-dom-%d.jsonl")))))),
-+      getpid());
++  const char* filename = "firefox-dom-%d.jsonl";
++  if (isXHR) {
++    filename = "firefox-xhr-%d.jsonl";
++  } else if (isFetch) {
++    filename = "firefox-fetch-%d.jsonl";
++  } else if (isWebSocket) {
++    filename = "firefox-websocket-%d.jsonl";
++  } else if (isStorage) {
++    filename = "firefox-storage-%d.jsonl";
++  } else if (isCookie) {
++    filename = "firefox-cookie-%d.jsonl";
++  } else if (isWasm) {
++    filename = "firefox-wasm-%d.jsonl";
++  } else if (isScriptResource) {
++    filename = "firefox-script-%d.jsonl";
++  } else if (isJS) {
++    filename = "firefox-js-%d.jsonl";
++  }
++  path.AppendPrintf(filename, getpid());
 +
 +  FILE* file = fopen(path.get(), "a");
 +  if (!file) {
@@ -5691,6 +5745,52 @@ index aa775fdf14..eef6c2a279 100644
 +  return IPC_OK();
 +}
 +
++mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceWasmArtifact(
++    const nsACString& aModuleId, const nsACString& aData) {
++  const char* enabled = PR_GetEnv("FIREFOX_TRACE_WASM");
++  if (!enabled || !enabled[0]) {
++    enabled = PR_GetEnv("TRACE_WASM");
++  }
++  if (!enabled || !enabled[0] || strcmp(enabled, "0") == 0 ||
++      strcmp(enabled, "false") == 0 || strcmp(enabled, "off") == 0 ||
++      !FirefoxTraceRuntimeAllowsArtifact() || aModuleId.Length() != 40) {
++    return IPC_OK();
++  }
++  for (uint32_t i = 0; i < aModuleId.Length(); ++i) {
++    char c = aModuleId.BeginReading()[i];
++    if (!((c >= 'a' && c <= 'f') || (c >= '0' && c <= '9'))) {
++      return IPC_OK();
++    }
++  }
++
++  const char* logDir = PR_GetEnv("FIREFOX_TRACE_LOG_DIR");
++  if (!logDir || !logDir[0]) {
++    logDir = PR_GetEnv("TRACE_LOG_DIR");
++  }
++  if (!logDir || !logDir[0]) {
++    logDir = "/tmp/firefox-trace";
++  }
++  mkdir(logDir, 0755);
++  nsAutoCString wasmDir(logDir);
++  if (!wasmDir.IsEmpty() && wasmDir.Last() != '/') {
++    wasmDir.Append('/');
++  }
++  wasmDir.Append("wasm");
++  mkdir(wasmDir.get(), 0755);
++
++  nsAutoCString path(wasmDir);
++  path.Append('/');
++  path.Append(aModuleId);
++  path.Append(".wasm");
++  FILE* file = fopen(path.get(), "wb");
++  if (!file) {
++    return IPC_OK();
++  }
++  fwrite(aData.BeginReading(), 1, aData.Length(), file);
++  fclose(file);
++  return IPC_OK();
++}
++
 +mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceJSScriptSource(
 +    const nsACString& aScriptSha256, const nsACString& aData) {
 +  const char* enabled = PR_GetEnv("FIREFOX_TRACE_ENABLE");
@@ -5770,10 +5870,10 @@ index aa775fdf14..eef6c2a279 100644
      const uint32_t& aGuardType, bool* aOutCrashed) {
    // Only one driver crash guard should be active at a time, per-process.
 diff --git a/dom/ipc/ContentParent.h b/dom/ipc/ContentParent.h
-index 57a215b06b..a7eedc2e8c 100644
+index 57a215b06b..e8b841e8a8 100644
 --- a/dom/ipc/ContentParent.h
 +++ b/dom/ipc/ContentParent.h
-@@ -1089,6 +1089,15 @@ class ContentParent final : public PContentParent,
+@@ -1089,6 +1089,17 @@ class ContentParent final : public PContentParent,
  
    mozilla::ipc::IPCResult RecvGraphicsError(const nsACString& aError);
  
@@ -5781,6 +5881,8 @@ index 57a215b06b..a7eedc2e8c 100644
 +  mozilla::ipc::IPCResult RecvFirefoxTraceJSValue(
 +      const nsACString& aValueId, const nsACString& aArtifactKey,
 +      const nsACString& aData);
++  mozilla::ipc::IPCResult RecvFirefoxTraceWasmArtifact(
++      const nsACString& aModuleId, const nsACString& aData);
 +  mozilla::ipc::IPCResult RecvFirefoxTraceRuntimeConfigApplied(
 +      const uint64_t& aVersion, const nsACString& aConfigHash);
 +  mozilla::ipc::IPCResult RecvFirefoxTraceJSScriptSource(
@@ -5790,7 +5892,7 @@ index 57a215b06b..a7eedc2e8c 100644
                                                      bool* aOutCrashed);
  
 diff --git a/dom/ipc/PContent.ipdl b/dom/ipc/PContent.ipdl
-index 7c3fd341d9..e930041fe8 100644
+index 7c3fd341d9..ee18bcebcc 100644
 --- a/dom/ipc/PContent.ipdl
 +++ b/dom/ipc/PContent.ipdl
 @@ -1075,6 +1075,10 @@ child:
@@ -5804,7 +5906,7 @@ index 7c3fd341d9..e930041fe8 100644
  both:
      // Update the "History Action Activation" timestamp for all parents in the
      // subtree beginning at `aTop`.
-@@ -1269,6 +1273,15 @@ parent:
+@@ -1269,6 +1273,16 @@ parent:
      // Graphics errors
      async GraphicsError(nsCString aError);
  
@@ -5815,12 +5917,13 @@ index 7c3fd341d9..e930041fe8 100644
 +    // their SHA-256 here so repeated values share one on-disk artifact.
 +    async FirefoxTraceJSValue(nsCString aValueId, nsCString aArtifactKey,
 +                              nsCString aData);
++    async FirefoxTraceWasmArtifact(nsCString aModuleId, nsCString aData);
 +    async FirefoxTraceJSScriptSource(nsCString aScriptSha256, nsCString aData);
 +
      // Driver crash guards. aGuardType must be a member of CrashGuardType.
      sync BeginDriverCrashGuard(uint32_t aGuardType) returns (bool crashDetected);
      sync EndDriverCrashGuard(uint32_t aGuardType);
-@@ -1902,6 +1915,9 @@ both:
+@@ -1902,6 +1916,9 @@ both:
      async FinalizeFocusOuter(MaybeDiscardedBrowsingContext aContext, bool aCanFocus,
                               CallerType aCallerType);
  parent:
@@ -12507,7 +12610,7 @@ index 81a10dba41..ff835cd0f3 100644
  
  #ifdef NIGHTLY_BUILD
 diff --git a/js/src/wasm/WasmCompile.cpp b/js/src/wasm/WasmCompile.cpp
-index b0c6281abf..56ee2c326f 100644
+index b0c6281abf..1ade548afd 100644
 --- a/js/src/wasm/WasmCompile.cpp
 +++ b/js/src/wasm/WasmCompile.cpp
 @@ -19,8 +19,18 @@
@@ -12529,15 +12632,23 @@ index b0c6281abf..56ee2c326f 100644
  
  #include "js/Conversions.h"
  #include "js/Equality.h"
-@@ -52,6 +62,248 @@ using namespace js::wasm;
+@@ -52,6 +62,238 @@ using namespace js::wasm;
  
  using mozilla::Atomic;
  
 +#if defined(__APPLE__)
 +extern "C" bool FirefoxTraceQueueEventToParent(const char* aLine, size_t aLen)
 +    __attribute__((weak_import));
++extern "C" bool FirefoxTraceQueueWasmArtifactToParent(const char* aModuleId,
++                                                       const char* aData,
++                                                       size_t aLen)
++    __attribute__((weak_import));
 +#elif defined(__GNUC__)
 +extern "C" bool FirefoxTraceQueueEventToParent(const char* aLine, size_t aLen)
++    __attribute__((weak));
++extern "C" bool FirefoxTraceQueueWasmArtifactToParent(const char* aModuleId,
++                                                       const char* aData,
++                                                       size_t aLen)
 +    __attribute__((weak));
 +#endif
 +
@@ -12566,10 +12677,6 @@ index b0c6281abf..56ee2c326f 100644
 +}
 +
 +bool FirefoxTraceWasmEnabled() {
-+  const char* enabled = getenv("FIREFOX_TRACE_ENABLE");
-+  if (!enabled || !enabled[0] || strcmp(enabled, "0") == 0) {
-+    return false;
-+  }
 +  if (!FirefoxTraceWasmRuntimeActive()) {
 +    return false;
 +  }
@@ -12701,32 +12808,18 @@ index b0c6281abf..56ee2c326f 100644
 +  bool dumpRequested = FirefoxTraceWasmEnvEnabled("TRACE_WASM_DUMP");
 +  uint32_t dumpLimit = FirefoxTraceWasmLimit("TRACE_WASM_DUMP_MAX_BYTES", 1024 * 1024,
 +                                              16 * 1024 * 1024);
-+  bool dumped = dumpRequested && aSource.length() <= dumpLimit;
++  bool dumped = false;
 +  char artifactPath[256] = "";
-+  if (dumped) {
-+    const char* logDir = getenv("FIREFOX_TRACE_LOG_DIR");
-+    if (!logDir || !logDir[0]) logDir = getenv("TRACE_LOG_DIR");
-+    if (!logDir || !logDir[0]) logDir = "/tmp/firefox-trace";
-+    char wasmDir[4096];
-+    snprintf(wasmDir, sizeof(wasmDir), "%s/wasm", logDir);
-+#ifndef XP_WIN
-+    mkdir(logDir, 0755);
-+    mkdir(wasmDir, 0755);
-+#endif
++  if (dumpRequested && aSource.length() <= dumpLimit && copied) {
 +    snprintf(artifactPath, sizeof(artifactPath), "wasm/%s.wasm", moduleId);
-+    char path[4096];
-+    snprintf(path, sizeof(path), "%s/%s", logDir, artifactPath);
-+    FILE* artifact = fopen(path, "wb");
-+    if (artifact) {
-+      if (copied) {
-+        dumped = fwrite(moduleBytes.begin(), 1, moduleBytes.length(), artifact) ==
-+                 moduleBytes.length();
-+      } else {
-+        dumped = false;
-+      }
-+      fclose(artifact);
-+    } else {
-+      dumped = false;
++#if defined(__APPLE__) || defined(__GNUC__)
++    dumped = FirefoxTraceQueueWasmArtifactToParent &&
++             FirefoxTraceQueueWasmArtifactToParent(
++                 moduleId, reinterpret_cast<const char*>(moduleBytes.begin()),
++                 moduleBytes.length());
++#endif
++    if (!dumped) {
++      artifactPath[0] = '\0';
 +    }
 +  }
 +
@@ -12778,7 +12871,7 @@ index b0c6281abf..56ee2c326f 100644
  uint32_t wasm::ObservedCPUFeatures() {
    enum Arch {
      X86 = 0x1,
-@@ -1027,7 +1279,11 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
+@@ -1027,7 +1269,11 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
      MOZ_RELEASE_ASSERT(envDecoder.done());
    }
  

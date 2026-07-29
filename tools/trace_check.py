@@ -169,7 +169,9 @@ def check_http_raw(trace_dir):
 
 
 def check_wasm(trace_dir):
-    events = json_lines(trace_dir, "firefox-wasm-*.jsonl")
+    # WASM events arrive through content-parent trace IPC. Scanning every event
+    # file also keeps captures produced before dedicated WASM routing usable.
+    events = json_lines(trace_dir, "firefox-*.jsonl")
     modules = [event for _, _, event in events if event.get("type") == "wasm.module"]
     if not modules:
         fail("no wasm.module event found")
@@ -180,6 +182,15 @@ def check_wasm(trace_dir):
             require_field(event, field, f"wasm module #{index}")
         if len(event["module_sha1"]) != 40:
             fail(f"wasm module #{index} module_sha1 is not a SHA-1 hex digest")
+        if event["dump_stored"]:
+            relative_path = require_field(event, "artifact_path", f"wasm module #{index}")
+            artifact = (trace_dir / relative_path).resolve()
+            if trace_dir.resolve() not in artifact.parents or not artifact.is_file():
+                fail(f"wasm module #{index} artifact is missing: {relative_path}")
+            if artifact.stat().st_size != event["bytecode_size"]:
+                fail(f"wasm module #{index} artifact size does not match bytecode_size")
+            if hashlib.sha1(artifact.read_bytes()).hexdigest() != event["module_sha1"]:
+                fail(f"wasm module #{index} artifact SHA-1 does not match module_sha1")
     print(f"wasm: validated {len(modules)} module events")
 
 

@@ -18,6 +18,7 @@ function compileFixture() {
 document.getElementById("compile").addEventListener("click", compileFixture);
 const params = new URLSearchParams(location.search);
 if (params.has("auto")) {
-  setTimeout(compileFixture, Number(params.get("delay")) || 0);
+  const delay = Number(params.get("delay")) || 0;
+  if (delay) setTimeout(compileFixture, delay); else compileFixture();
 }
 </script>
