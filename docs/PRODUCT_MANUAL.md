@@ -69,6 +69,7 @@ tools/run-trace-firefox.sh --trace-preset discover-light 'https://target.example
 | 独立 trace 目录 | 保存本轮所有日志和制品 | 每轮必须指定或接受默认 | `TRACE_DIR` | `manifest.json.trace_dir` |
 | campaign/run label | 多轮同一案例归档 | discover/target/deep 多轮联动 | `TRACE_CAMPAIGN_ID`、`TRACE_RUN_LABEL` | `manifest.json.campaign_id/run_label` |
 | 有头/无头 | 当前产品推荐有头 | 正式站点测试用有头 | `TRACE_HEADLESS=0` 默认 | `manifest.json.headless=false` |
+| smoke 等待 | 给已派生的 headless Firefox 留出落盘窗口 | 本地/CI fixture | `--trace-wait-seconds N` 或 `TRACE_WAIT_SECONDS=N` | launcher 进程在 N 秒后退出 |
 | automation surface | 压平页面可见自动化特征 | 正式站点默认 baseline | `TRACE_AUTOMATION_SURFACE=baseline|stock` | `manifest.json.automation_surface` |
 | preset defaults | 快速切换采集强度 | 每轮都应明确 preset | `--trace-preset discover-light` | `manifest.json.preset` |
 | runtime trace control | 先打开页面/登录/过滑块，目标触发前再采集 | 真实站点前置动作较多时 | `--trace-start paused`、`tools/trace-control.sh` | `trace-control.json`、`firefox-control.jsonl` |

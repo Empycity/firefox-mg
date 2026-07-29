@@ -14,6 +14,7 @@ Trace options:
   --trace-start active|paused|prewarm
   --trace-run-label LABEL
   --trace-automation-surface baseline|stock
+  --trace-wait-seconds N
 
 Environment:
   FIREFOX_BIN, TRACE_DIR, PROFILE_DIR, TRACE_HEADLESS=0|1,
@@ -48,6 +49,7 @@ TRACE_CAMPAIGN_ID="${TRACE_CAMPAIGN_ID:-campaign-$(date +%Y%m%d-%H%M%S)}"
 TRACE_RUN_LABEL="${TRACE_RUN_LABEL:-}"
 TRACE_AUTOMATION_SURFACE="${TRACE_AUTOMATION_SURFACE:-baseline}"
 TRACE_START="${TRACE_START:-active}"
+TRACE_WAIT_SECONDS="${TRACE_WAIT_SECONDS:-0}"
 TRACE_CONTROL_FILE="${TRACE_CONTROL_FILE:-$TRACE_DIR/trace-control.json}"
 FIREFOX_TRACE_PYTHON="${FIREFOX_TRACE_PYTHON:-/opt/miniconda3/envs/firefox-trace/bin/python}"
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -99,6 +101,14 @@ while [[ $# -gt 0 ]]; do
       TRACE_START="${1#--trace-start=}"
       shift
       ;;
+    --trace-wait-seconds)
+      TRACE_WAIT_SECONDS="${2:-}"
+      shift 2
+      ;;
+    --trace-wait-seconds=*)
+      TRACE_WAIT_SECONDS="${1#--trace-wait-seconds=}"
+      shift
+      ;;
     --)
       shift
       break
@@ -128,6 +138,11 @@ case "$TRACE_START" in
     exit 2
     ;;
 esac
+
+if [[ ! "$TRACE_WAIT_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "TRACE_WAIT_SECONDS must be a non-negative integer: $TRACE_WAIT_SECONDS" >&2
+  exit 2
+fi
 
 set_default() {
   local name="$1"
@@ -583,8 +598,16 @@ echo "TRACE_START=$TRACE_START"
 echo "TRACE_CONTROL_FILE=$TRACE_CONTROL_FILE"
 echo "TRACE_AUTOMATION_SURFACE=$TRACE_AUTOMATION_SURFACE"
 echo "FIREFOX_TRACE_AUTOMATION_SURFACE=$FIREFOX_TRACE_AUTOMATION_SURFACE"
+echo "TRACE_WAIT_SECONDS=$TRACE_WAIT_SECONDS"
 
 write_trace_control
 write_manifest "$(manifest_target_url "$@")"
+
+if [[ "$TRACE_WAIT_SECONDS" != "0" ]]; then
+  launcher_status=0
+  "$FIREFOX_BIN" "${args[@]}" "$@" || launcher_status=$?
+  sleep "$TRACE_WAIT_SECONDS"
+  exit "$launcher_status"
+fi
 
 exec "$FIREFOX_BIN" "${args[@]}" "$@"
