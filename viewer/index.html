@@ -65,6 +65,10 @@
       <div class="type-list" id="types"></div>
     </div>
     <div class="panel">
+      <h2>Runs</h2>
+      <div class="type-list" id="runs"></div>
+    </div>
+    <div class="panel">
       <h2>Artifacts</h2>
       <div class="artifact-list" id="artifacts"></div>
     </div>
@@ -76,6 +80,8 @@
       <input id="query" type="search" placeholder="fetch_12, call_34, h5st...">
       <label for="segment">Segment</label>
       <select id="segment"><option value="">All segments</option></select>
+      <label for="run">Run</label>
+      <select id="run"><option value="">All runs</option></select>
     </div>
     <div class="event-list" id="events"><p class="empty">No events loaded.</p></div>
   </section>
@@ -86,9 +92,10 @@
 </main>
 <script>
 (() => {
-  const state = { events: [], files: new Map(), selectedType: "", selectedSegment: "", query: "", selected: null };
+  const state = { events: [], files: new Map(), manifests: new Map(), selectedType: "", selectedSegment: "", selectedRun: "", query: "", selected: null };
   const $ = (id) => document.getElementById(id);
-  const types = $("types"), events = $("events"), artifacts = $("artifacts"), summary = $("summary");
+  const types = $("types"), runs = $("runs"), events = $("events"), artifacts = $("artifacts"), summary = $("summary");
+  function runKey(source) { const parts = source.split("/"); return parts.length > 1 ? parts.slice(0, -1).join("/") : "single-run"; }
 
   function eventType(event) { return event.type || event.schema || "unknown"; }
   function eventTime(event) { return Number(event.ts_us || event.ts || 0); }
@@ -108,6 +115,7 @@
       const event = item.event;
       if (state.selectedType && eventType(event) !== state.selectedType) return false;
       if (state.selectedSegment && (event.segment_id || "") !== state.selectedSegment) return false;
+      if (state.selectedRun && item.run !== state.selectedRun) return false;
       if (!state.query) return true;
       return safeText(JSON.stringify(event)).includes(state.query);
     });
@@ -116,10 +124,30 @@
     const all = state.events;
     const requests = new Set(all.map(({ event }) => event.request_id).filter(Boolean));
     const calls = new Set(all.flatMap(({ event }) => [event.call_id, event.origin_call_id]).filter(Boolean));
-    const segments = new Set(all.map(({ event }) => event.segment_id).filter(Boolean));
+    const segments = new Set(all.map(({ event }) => event.segment_id).filter(Boolean)); const runCount = new Set(all.map((item) => item.run)).size;
     const degraded = all.filter(({ event }) => event.type === "trace.degraded").length;
-    const data = [[all.length, "events"], [requests.size, "requests"], [calls.size, "calls"], [segments.size, "segments"], [degraded, "degraded"]];
+    const data = [[all.length, "events"], [requests.size, "requests"], [calls.size, "calls"], [segments.size, "segments"], [runCount, "runs"], [degraded, "degraded"]];
     summary.innerHTML = data.map(([value, label]) => `<div class="metric"><b>${value}</b><span>${label}</span></div>`).join("");
+  }
+  function renderRuns() {
+    const counts = new Map(); for (const item of state.events) counts.set(item.run, (counts.get(item.run) || 0) + 1);
+    runs.innerHTML = [...counts].sort().map(([run, count]) => { const manifest = state.manifests.get(run) || {}; const label = manifest.run_label || run; return `<button type="button" class="${state.selectedRun === run ? "active" : ""}" data-run="${encodeURIComponent(run)}">${esc(label)} (${count})</button>`; }).join("") || '<p class="empty">No runs.</p>';
+    runs.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => { state.selectedRun = decodeURIComponent(button.dataset.run); render(); }));
+    const value = state.selectedRun; $("run").innerHTML = '<option value="">All runs</option>' + [...counts].sort().map(([run, count]) => `<option value="${esc(run)}">${esc((state.manifests.get(run) || {}).run_label || run)} (${count})</option>`).join(""); $("run").value = value;
+  }
+  function campaignReport() {
+    const perRun = {};
+    for (const item of state.events) {
+      const run = perRun[item.run] ||= { manifest: state.manifests.get(item.run) || {}, event_count: 0, event_types: {}, requests: new Set(), calls: new Set(), segments: new Set(), degraded: 0 };
+      run.event_count++; run.event_types[eventType(item.event)] = (run.event_types[eventType(item.event)] || 0) + 1;
+      if (item.event.request_id) run.requests.add(item.event.request_id);
+      for (const id of [item.event.call_id, item.event.origin_call_id]) if (id) run.calls.add(id);
+      if (item.event.segment_id) run.segments.add(item.event.segment_id);
+      if (item.event.type === "trace.degraded") run.degraded++;
+    }
+    const names = Object.keys(perRun).sort(); const baseline = perRun[names[0]];
+    const runs = names.map((name) => { const run = perRun[name]; const added_types = Object.keys(run.event_types).filter((type) => !baseline || !baseline.event_types[type]); return { run: name, manifest: run.manifest, event_count: run.event_count, event_types: run.event_types, request_count: run.requests.size, call_count: run.calls.size, segments: [...run.segments], degraded_count: run.degraded, added_event_types_vs_first_run: added_types }; });
+    return { runs, comparison_baseline: names[0] || null };
   }
   function renderTypes() {
     const counts = new Map();
@@ -160,22 +188,25 @@
     events.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => {
       state.selected = items[Number(button.dataset.index)];
       $("detail-status").textContent = state.selected.source;
-      $("detail").textContent = JSON.stringify(state.selected.event, null, 2);
+      const ids = new Set([state.selected.event.request_id, state.selected.event.call_id, state.selected.event.origin_call_id].filter(Boolean));
+      const related = state.events.filter((other) => other !== state.selected && [other.event.request_id, other.event.call_id, other.event.origin_call_id, other.event.parent_call_id].some((id) => ids.has(id))).slice(0, 80).map((other) => ({ type: eventType(other.event), ts_us: other.event.ts_us, request_id: other.event.request_id, call_id: other.event.call_id, origin_call_id: other.event.origin_call_id, source: other.source }));
+      $("detail").textContent = JSON.stringify({ event: state.selected.event, related }, null, 2);
       renderEvents();
     }));
   }
-  function render() { renderSummary(); renderTypes(); renderArtifacts(); renderSegments(); renderEvents(); }
+  function render() { renderSummary(); renderTypes(); renderRuns(); renderArtifacts(); renderSegments(); renderEvents(); }
   async function load(files) {
     const list = [...files];
     for (const file of list) state.files.set(file.webkitRelativePath || file.name, file);
+    for (const file of list.filter((file) => file.name === "manifest.json")) { try { state.manifests.set(runKey(file.webkitRelativePath || file.name), JSON.parse(await file.text())); } catch {} }
     const jsonl = list.filter((file) => /\.jsonl$/i.test(file.name));
     const loaded = [];
     for (const file of jsonl) {
       const source = file.webkitRelativePath || file.name;
       for (const [line, number] of (await file.text()).split(/\r?\n/).map((line, index) => [line, index + 1])) {
         if (!line.trim()) continue;
-        try { loaded.push({ event: JSON.parse(line), source: `${source}:${number}` }); }
-        catch { loaded.push({ event: { type: "trace.parse_error", line: number, raw: line }, source: `${source}:${number}` }); }
+        try { loaded.push({ event: JSON.parse(line), source: `${source}:${number}`, run: runKey(source) }); }
+        catch { loaded.push({ event: { type: "trace.parse_error", line: number, raw: line }, source: `${source}:${number}`, run: runKey(source) }); }
       }
     }
     state.events = loaded.sort((a, b) => eventTime(a.event) - eventTime(b.event));
@@ -189,8 +220,9 @@
   $("files").addEventListener("change", (event) => load(event.target.files));
   $("query").addEventListener("input", (event) => { state.query = safeText(event.target.value).trim(); renderEvents(); });
   $("segment").addEventListener("change", (event) => { state.selectedSegment = event.target.value; renderEvents(); });
+  $("run").addEventListener("change", (event) => { state.selectedRun = event.target.value; render(); });
   $("export-events").addEventListener("click", () => download("firefox-trace-filtered.jsonl", selectedEvents().map(({ event }) => JSON.stringify(event)).join("\n") + "\n", "application/x-ndjson"));
-  $("export-report").addEventListener("click", () => download("firefox-trace-report.json", JSON.stringify({ generated_at: new Date().toISOString(), events: selectedEvents().map(({ event }) => event), event_count: selectedEvents().length }, null, 2), "application/json"));
+  $("export-report").addEventListener("click", () => download("firefox-trace-report.json", JSON.stringify({ generated_at: new Date().toISOString(), filters: { type: state.selectedType, segment: state.selectedSegment, run: state.selectedRun, query: state.query }, campaign: campaignReport(), events: selectedEvents().map(({ event, source, run }) => ({ event, source, run })), event_count: selectedEvents().length }, null, 2), "application/json"));
   const drop = $("drop-zone");
   ["dragenter", "dragover"].forEach((name) => drop.addEventListener(name, (event) => { event.preventDefault(); drop.style.background = "color-mix(in srgb, Highlight 15%, transparent)"; }));
   ["dragleave", "drop"].forEach((name) => drop.addEventListener(name, (event) => { event.preventDefault(); drop.style.background = ""; }));
