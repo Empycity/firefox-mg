@@ -102,6 +102,7 @@
     return keys.filter((key) => event[key] !== undefined && event[key] !== "").map((key) => `${key}=${String(event[key])}`).join("  ");
   }
   function safeText(value) { return String(value ?? "").toLowerCase(); }
+  function esc(value) { return String(value ?? "").replace(/[&<>\"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[char])); }
   function selectedEvents() {
     return state.events.filter((item) => {
       const event = item.event;
@@ -124,7 +125,7 @@
     const counts = new Map();
     for (const { event } of state.events) counts.set(eventType(event), (counts.get(eventType(event)) || 0) + 1);
     const rows = [["", `All events (${state.events.length})`], ...[...counts.entries()].sort((a, b) => b[1] - a[1])];
-    types.innerHTML = rows.map(([type, label]) => `<button type="button" class="${state.selectedType === type ? "active" : ""}" data-type="${encodeURIComponent(type)}">${type ? `${type} (${label})` : label}</button>`).join("") || '<p class="empty">No event types.</p>';
+    types.innerHTML = rows.map(([type, label]) => `<button type="button" class="${state.selectedType === type ? "active" : ""}" data-type="${encodeURIComponent(type)}">${type ? `${esc(type)} (${label})` : label}</button>`).join("") || '<p class="empty">No event types.</p>';
     types.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => { state.selectedType = decodeURIComponent(button.dataset.type); render(); }));
   }
   function artifactPaths() {
@@ -137,7 +138,7 @@
   }
   function renderArtifacts() {
     const paths = artifactPaths();
-    artifacts.innerHTML = paths.map((path) => `<button type="button" data-path="${encodeURIComponent(path)}">${path}${findArtifact(path) ? "" : " (not loaded)"}</button>`).join("") || '<p class="empty">No referenced artifacts.</p>';
+    artifacts.innerHTML = paths.map((path) => `<button type="button" data-path="${encodeURIComponent(path)}">${esc(path)}${findArtifact(path) ? "" : " (not loaded)"}</button>`).join("") || '<p class="empty">No referenced artifacts.</p>';
     artifacts.querySelectorAll("button").forEach((button) => button.addEventListener("click", async () => {
       const path = decodeURIComponent(button.dataset.path), entry = findArtifact(path);
       $("detail-status").textContent = path;
@@ -146,7 +147,7 @@
   }
   function renderSegments() {
     const value = state.selectedSegment, segments = [...new Set(state.events.map(({ event }) => event.segment_id).filter(Boolean))].sort();
-    $("segment").innerHTML = '<option value="">All segments</option>' + segments.map((segment) => `<option value="${segment}">${segment}</option>`).join("");
+    $("segment").innerHTML = '<option value="">All segments</option>' + segments.map((segment) => `<option value="${esc(segment)}">${esc(segment)}</option>`).join("");
     $("segment").value = value;
   }
   function renderEvents() {
@@ -154,7 +155,7 @@
     $("status").textContent = `${items.length} of ${state.events.length} events shown`;
     events.innerHTML = items.slice(0, 5000).map((item, index) => {
       const event = item.event, selected = state.selected === item ? "active" : "";
-      return `<button type="button" class="event ${selected}" data-index="${index}"><time>${displayTime(event)}</time><span><strong>${eventType(event)}</strong><p>${compact(event) || item.source}</p></span><small>${eventIdentity(event)}</small></button>`;
+      return `<button type="button" class="event ${selected}" data-index="${index}"><time>${esc(displayTime(event))}</time><span><strong>${esc(eventType(event))}</strong><p>${esc(compact(event) || item.source)}</p></span><small>${esc(eventIdentity(event))}</small></button>`;
     }).join("") || '<p class="empty">No matching events.</p>';
     events.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => {
       state.selected = items[Number(button.dataset.index)];
