@@ -953,3 +953,15 @@ PY
 ```
 
 当前结果均为 0。
+# 2026-07-29: WebSocket logical frame (in progress)
+
+- `dom/websocket/WebSocket.cpp` now emits `firefox_trace.websocket.v1` logical
+  send/recv frames only when `FIREFOX_TRACE_WS` / `TRACE_WS` is explicitly enabled.
+- Events use the existing content-main-thread IPC gateway and parent output path
+  `firefox-websocket-<pid>.jsonl`; Worker WebSocket frames are dispatched to the
+  content main thread before IPC.
+- `TRACE_WS_PREVIEW_BYTES` defaults to 512 and caps at 4096. Text emits escaped
+  previews, binary emits a hex prefix, and stream/Blob sends have no preview.
+- `tools/trace_check.py websocket TRACE_DIR` validates a live fixture directory.
+- Build and a persistent Firefox fixture run remain required before treating this
+  increment as fully verified.

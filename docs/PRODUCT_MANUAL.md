@@ -239,6 +239,7 @@ profile prefs、Marionette/RemoteAgent 端口、JIT/tier/opcode 这类底层执�
 | Fetch request body | clone InternalRequest body，不消费真实请求体 | 字段在 fetch POST body 时 | `TRACE_FETCH_REQUEST_BODY=preview|full`、`TRACE_FETCH_REQUEST_BODY_STORE=1` | `fetch.request`、`values/fetch_req_body_*` |
 | Fetch response headers | 看响应状态、headers、redirect | 默认可用 | `TRACE_FETCH_RESPONSE_HEADERS=preview|full` | `fetch.response` |
 | Fetch response body preview | 尝试读取响应 body 片段 | 需要看返回 token/配置时 | `TRACE_FETCH_RESPONSE_BODY=preview|full` | `fetch.response`、`fetch.body_chunk` |
+| WebSocket logical frame | 成功 send 与接收分发前的帧边界 | 页面使用 WebSocket 时 | `TRACE_WS=1`、`TRACE_WS_PREVIEW_BYTES=512` | `firefox-websocket-*.jsonl`、`websocket.frame` |
 | URL query 字段抽取 | 从完整 URL 抽目标字段 | 首轮默认使用 | `TRACE_QUERY_FIELDS=sign,token,...` | `query_fields`、`query_fields_meta` |
 | 字段 value_store | 请求字段完整落盘并算 sha256 | 要和 JS return/value 对齐时 | `TRACE_QUERY_FIELD_VALUE_STORE=1` | `values/qfv_*`、`sha256` |
 | URL 降载 | 长 URL 不全量写日志，但仍抽字段 | URL 巨大或日志爆量 | `TRACE_REQUEST_URL=preview|none` | `url_preview`、字段仍在 |
@@ -249,6 +250,13 @@ profile prefs、Marionette/RemoteAgent 端口、JIT/tier/opcode 这类底层执�
 - `origin_call_id` 能连到 JS boundary / target 事件；
 - `value_store_path` 和 `sha256` 可与 JS 侧值对齐；
 - body store 文件内容与目标请求实际字段一致。
+
+WebSocket 默认关闭。启用后，文本 frame 记录 escape 后的 bounded `preview`，二进制 frame
+记录 bounded `preview_hex`，Blob/stream send 只记录 `size` 和
+`preview_available=false`。使用 `tools/trace-control.sh TRACE_DIR config --module ws=1`
+可在下一个 segment 启用。测试用 echo 服务是 `tests/websocket_trace_server.py --port 8765`，
+页面是 `tests/websocket-trace.html?wsPort=8765`；采集后运行
+`tools/trace_check.py websocket TRACE_DIR`。
 
 ## 7. JS Trace 功能
 
@@ -467,7 +475,7 @@ MCP 目前只能作为外部能力参考或后续扩展方向。
 | 需要 evaluate 页面变量、storage、全局对象 | Trace 记录事实 | 是 |
 | 需要定位发起某个请求的 JS initiator | Trace 看 `origin_call_id`，MCP 查 initiator/断点补证 | 两者组合 |
 | 需要验证“改一个变量字段会不会变” | Trace 记录前后运行 | MCP 做单变量实验 |
-| 需要 WebSocket frame 或现成 DevTools 网络视图 | P1 仍缺完整 WS | 是 |
+| 需要 WebSocket logical frame | `TRACE_WS=1` 后看 `websocket.frame` | 需要协议级控制帧或 DevTools 视图时 |
 
 ### 12.1 外部 MCP 能力参考
 
@@ -649,7 +657,7 @@ P1 已完成：
 - Worker fetch；
 - keepalive/PFetch；
 - 完整 response body artifact；
-- WebSocket frame；
+- WebSocket protocol/raw bytes 和控制帧；逻辑 send/recv frame 已实现，fixture 回归待完成；
 - 桌面控制台 / Web viewer；
 - opcode、收窄 dispatcher PC 的 vm_step、WASM / HTTP/WS；
 - 最后可选：Firefox Trace 自有 MCP，配套魔改 Firefox，提供页面操控、网络/脚本观察、断点/evaluate、trace start/stop 和日志查询；

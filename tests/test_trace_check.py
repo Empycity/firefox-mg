@@ -94,6 +94,26 @@ class TraceCheckTests(unittest.TestCase):
             )
             trace_check.check_worker(trace_dir)
 
+    def test_websocket_requires_send_recv_and_frame_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trace_dir = Path(directory)
+            base = {
+                "schema": "firefox_trace.websocket.v1",
+                "type": "websocket.frame",
+                "socket_id": 7,
+                "url": "ws://fixture.invalid/echo",
+                "binary": False,
+                "size": 5,
+                "preview_available": True,
+                "preview_truncated": False,
+            }
+            write_jsonl(
+                trace_dir / "firefox-websocket-123.jsonl",
+                [dict(base, direction="send", preview="hello"),
+                 dict(base, direction="recv", preview="hello")],
+            )
+            trace_check.check_websocket(trace_dir)
+
 
 if __name__ == "__main__":
     unittest.main()

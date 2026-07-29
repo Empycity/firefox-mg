@@ -324,7 +324,12 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
   `keepalive`，主线程和 Worker PFetch 均复用 Fetch trace 起点；`tests/worker-trace.html`
   显式使用 `keepalive: true`。
 - 完整 response body artifact。
-- WebSocket frame。
+- `[已实现，待 fixture 回归]` WebSocket logical frame：`TRACE_WS=1` 或
+  `trace-control.sh TRACE_DIR config --module ws=1` 开启；发送成功后和接收分发前写入
+  `firefox-websocket-*.jsonl`。文本仅写 bounded preview，二进制只写 hex prefix，Blob/stream
+  send 只写长度和 `preview_available=false`；`tools/trace_check.py websocket TRACE_DIR`
+  验证 send/recv 和 schema。fixture：`tests/websocket-trace.html` 配合
+  `tests/websocket_trace_server.py --port 8765`。
 - HTTP packet/raw bytes trace。
 - 跨进程/跨 frame 请求链进一步统一。
 

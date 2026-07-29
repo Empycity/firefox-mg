@@ -109,10 +109,30 @@ def check_worker(trace_dir):
     print(f"worker: validated {len(suppressed)} suppression notices")
 
 
+def check_websocket(trace_dir):
+    frames = [
+        event
+        for _, _, event in json_lines(trace_dir, "firefox-websocket-*.jsonl")
+        if event.get("type") == "websocket.frame"
+    ]
+    if not frames:
+        fail("no websocket.frame event found")
+    directions = {event.get("direction") for event in frames}
+    missing = {"send", "recv"} - directions
+    if missing:
+        fail(f"websocket frames missing directions: {', '.join(sorted(missing))}")
+    required = ("schema", "socket_id", "url", "binary", "size",
+                "preview_available", "preview_truncated")
+    for index, event in enumerate(frames, 1):
+        for field in required:
+            require_field(event, field, f"websocket frame #{index}")
+    print(f"websocket: validated {len(frames)} frames")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "check", choices=("runtime", "boundary", "source-map", "worker")
+        "check", choices=("runtime", "boundary", "source-map", "worker", "websocket")
     )
     parser.add_argument("trace_dir", type=Path)
     args = parser.parse_args()
@@ -124,8 +144,10 @@ def main():
         check_boundary(args.trace_dir)
     elif args.check == "source-map":
         check_source_map(args.trace_dir)
-    else:
+    elif args.check == "worker":
         check_worker(args.trace_dir)
+    else:
+        check_websocket(args.trace_dir)
 
 
 if __name__ == "__main__":

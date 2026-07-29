@@ -4851,7 +4851,7 @@ index f22b544499..d73f14408d 100644
    virtual void OnChannelReceivedMessage(const Message& aMsg) override;
  
 diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
-index aa775fdf14..610fd50987 100644
+index aa775fdf14..eef6c2a279 100644
 --- a/dom/ipc/ContentParent.cpp
 +++ b/dom/ipc/ContentParent.cpp
 @@ -26,6 +26,11 @@
@@ -4902,7 +4902,7 @@ index aa775fdf14..610fd50987 100644
  }
  
  void ContentParent::AsyncSendShutDownMessage() {
-@@ -5662,6 +5675,821 @@ mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
+@@ -5662,6 +5675,834 @@ mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
    return IPC_OK();
  }
  
@@ -5405,6 +5405,7 @@ index aa775fdf14..610fd50987 100644
 +
 +  bool isXHR = aLine.Find("firefox_trace.xhr.v1") != kNotFound;
 +  bool isFetch = aLine.Find("firefox_trace.fetch.v1") != kNotFound;
++  bool isWebSocket = aLine.Find("firefox_trace.websocket.v1") != kNotFound;
 +  bool isStorage = aLine.Find("firefox_trace.storage.v1") != kNotFound;
 +  bool isCookie = aLine.Find("firefox_trace.cookie.v1") != kNotFound;
 +  bool isScriptResource =
@@ -5430,6 +5431,17 @@ index aa775fdf14..610fd50987 100644
 +      fetchEnabled = PR_GetEnv("TRACE_FETCH");
 +    }
 +    if (fetchEnabled && strcmp(fetchEnabled, "0") == 0) {
++      return IPC_OK();
++    }
++  } else if (isWebSocket) {
++    const char* websocketEnabled = PR_GetEnv("FIREFOX_TRACE_WS");
++    if (!websocketEnabled || !websocketEnabled[0]) {
++      websocketEnabled = PR_GetEnv("TRACE_WS");
++    }
++    if (!websocketEnabled || !websocketEnabled[0] ||
++        strcmp(websocketEnabled, "0") == 0 ||
++        strcmp(websocketEnabled, "false") == 0 ||
++        strcmp(websocketEnabled, "off") == 0) {
 +      return IPC_OK();
 +    }
 +  } else if (isStorage) {
@@ -5485,6 +5497,7 @@ index aa775fdf14..610fd50987 100644
 +  path.AppendPrintf(
 +      isXHR ? "firefox-xhr-%d.jsonl"
 +            : (isFetch ? "firefox-fetch-%d.jsonl"
++                       : (isWebSocket ? "firefox-websocket-%d.jsonl"
 +                       : (isStorage
 +                              ? "firefox-storage-%d.jsonl"
 +                              : (isCookie
@@ -5492,7 +5505,7 @@ index aa775fdf14..610fd50987 100644
 +                                     : (isScriptResource
 +                                            ? "firefox-script-%d.jsonl"
 +                                            : (isJS ? "firefox-js-%d.jsonl"
-+                                                    : "firefox-dom-%d.jsonl"))))),
++                                                    : "firefox-dom-%d.jsonl")))))),
 +      getpid());
 +
 +  FILE* file = fopen(path.get(), "a");
@@ -7068,6 +7081,246 @@ index cea49f3114..f317fa8bc3 100644
    virtual void LastRelease() {}
  
   private:
+diff --git a/dom/websocket/WebSocket.cpp b/dom/websocket/WebSocket.cpp
+index ea692b1f6e..298d3c63de 100644
+--- a/dom/websocket/WebSocket.cpp
++++ b/dom/websocket/WebSocket.cpp
+@@ -5,6 +5,14 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ #include "WebSocket.h"
++#include <algorithm>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#ifndef XP_WIN
++#  include <sys/stat.h>
++#  include <unistd.h>
++#endif
+ #include "ErrorList.h"
+ #include "mozilla/dom/WebSocketBinding.h"
+ #include "mozilla/net/WebSocketChannel.h"
+@@ -66,6 +74,7 @@
+ #include "nsIThreadRetargetableRequest.h"
+ #include "nsIWebSocketChannel.h"
+ #include "nsIWebSocketListener.h"
++#include "nsXULAppAPI.h"
+ #include "nsProxyRelease.h"
+ #include "nsIWebSocketImpl.h"
+ #include "nsIURIMutator.h"
+@@ -79,6 +88,191 @@ using namespace mozilla::net;
+ 
+ namespace mozilla::dom {
+ 
++#if defined(__APPLE__)
++extern "C" bool FirefoxTraceSendEventToParent(const char* aLine, size_t aLen)
++    __attribute__((weak_import));
++extern "C" bool FirefoxTraceRuntimeActive() __attribute__((weak_import));
++#elif defined(__GNUC__)
++extern "C" bool FirefoxTraceSendEventToParent(const char* aLine, size_t aLen)
++    __attribute__((weak));
++extern "C" bool FirefoxTraceRuntimeActive() __attribute__((weak));
++#endif
++
++namespace {
++
++bool FirefoxTraceWebSocketEnabled() {
++  const char* enabled = getenv("FIREFOX_TRACE_ENABLE");
++  if (!enabled || !enabled[0] || strcmp(enabled, "0") == 0) {
++    return false;
++  }
++  if (FirefoxTraceRuntimeActive && !FirefoxTraceRuntimeActive()) {
++    return false;
++  }
++  const char* websocketEnabled = getenv("FIREFOX_TRACE_WS");
++  if (!websocketEnabled || !websocketEnabled[0]) {
++    websocketEnabled = getenv("TRACE_WS");
++  }
++  return websocketEnabled && websocketEnabled[0] &&
++         strcmp(websocketEnabled, "0") != 0 &&
++         strcmp(websocketEnabled, "false") != 0 &&
++         strcmp(websocketEnabled, "off") != 0;
++}
++
++uint32_t FirefoxTraceWebSocketPreviewBytes() {
++  const char* value = getenv("FIREFOX_TRACE_WS_PREVIEW_BYTES");
++  if (!value || !value[0]) {
++    value = getenv("TRACE_WS_PREVIEW_BYTES");
++  }
++  if (!value || !value[0]) {
++    return 512;
++  }
++  char* end = nullptr;
++  unsigned long parsed = strtoul(value, &end, 10);
++  if (end == value) {
++    return 512;
++  }
++  return parsed > 4096 ? 4096 : static_cast<uint32_t>(parsed);
++}
++
++void FirefoxTraceWebSocketAppendJson(nsACString& aLine,
++                                     const nsACString& aValue) {
++  aLine.Append('"');
++  const char* value = aValue.BeginReading();
++  for (uint32_t i = 0; i < aValue.Length(); ++i) {
++    unsigned char c = static_cast<unsigned char>(value[i]);
++    switch (c) {
++      case '"':
++        aLine.AppendLiteral("\\\"");
++        break;
++      case '\\':
++        aLine.AppendLiteral("\\\\");
++        break;
++      case '\b':
++        aLine.AppendLiteral("\\b");
++        break;
++      case '\f':
++        aLine.AppendLiteral("\\f");
++        break;
++      case '\n':
++        aLine.AppendLiteral("\\n");
++        break;
++      case '\r':
++        aLine.AppendLiteral("\\r");
++        break;
++      case '\t':
++        aLine.AppendLiteral("\\t");
++        break;
++      default:
++        if (c < 0x20) {
++          aLine.AppendPrintf("\\u%04x", c);
++        } else {
++          aLine.Append(c);
++        }
++        break;
++    }
++  }
++  aLine.Append('"');
++}
++
++void FirefoxTraceWebSocketAppendHex(nsACString& aLine, const nsACString& aData,
++                                    uint32_t aCount) {
++  static const char kHex[] = "0123456789abcdef";
++  aLine.Append('"');
++  const char* data = aData.BeginReading();
++  for (uint32_t i = 0; i < aCount; ++i) {
++    unsigned char c = static_cast<unsigned char>(data[i]);
++    aLine.Append(kHex[(c >> 4) & 0x0f]);
++    aLine.Append(kHex[c & 0x0f]);
++  }
++  aLine.Append('"');
++}
++
++void FirefoxTraceWebSocketWriteLine(const nsACString& aLine) {
++  if (XRE_IsContentProcess()) {
++#if defined(__APPLE__) || defined(__GNUC__)
++    if (FirefoxTraceSendEventToParent) {
++      nsCString line(aLine);
++      if (NS_IsMainThread()) {
++        Unused << FirefoxTraceSendEventToParent(line.BeginReading(),
++                                                line.Length());
++      } else {
++        NS_DispatchToMainThread(NS_NewRunnableFunction(
++            "FirefoxTraceWebSocketFrame", [line = std::move(line)]() {
++              if (FirefoxTraceSendEventToParent) {
++                Unused << FirefoxTraceSendEventToParent(line.BeginReading(),
++                                                        line.Length());
++              }
++            }));
++      }
++    }
++#endif
++    return;
++  }
++
++  const char* logDir = getenv("FIREFOX_TRACE_LOG_DIR");
++  if (!logDir || !logDir[0]) {
++    logDir = getenv("TRACE_LOG_DIR");
++  }
++  if (!logDir || !logDir[0]) {
++    logDir = "/tmp/firefox-trace";
++  }
++#ifndef XP_WIN
++  mkdir(logDir, 0755);
++#endif
++  nsAutoCString path(logDir);
++  if (!path.IsEmpty() && path.Last() != '/') {
++    path.Append('/');
++  }
++  path.AppendPrintf("firefox-websocket-%d.jsonl", getpid());
++  FILE* file = fopen(path.get(), "a");
++  if (!file) {
++    return;
++  }
++  fwrite(aLine.BeginReading(), 1, aLine.Length(), file);
++  fputc('\n', file);
++  fclose(file);
++}
++
++void FirefoxTraceWebSocketFrame(const char* aDirection, uint32_t aSocketId,
++                                const nsAString& aURL, bool aBinary,
++                                uint32_t aSize, const nsACString& aData,
++                                bool aPreviewAvailable) {
++  if (!FirefoxTraceWebSocketEnabled()) {
++    return;
++  }
++
++  nsAutoCString url;
++  CopyUTF16toUTF8(aURL, url);
++  uint32_t previewLimit = FirefoxTraceWebSocketPreviewBytes();
++  uint32_t previewSize =
++      aPreviewAvailable ? std::min(aSize, previewLimit) : 0;
++  nsAutoCString line;
++  line.AppendLiteral("{\"schema\":\"firefox_trace.websocket.v1\",");
++  line.AppendLiteral("\"type\":\"websocket.frame\",\"direction\":");
++  FirefoxTraceWebSocketAppendJson(line, nsDependentCString(aDirection));
++  line.AppendPrintf(",\"socket_id\":%u,\"url\":", aSocketId);
++  FirefoxTraceWebSocketAppendJson(line, url);
++  line.AppendPrintf(",\"binary\":%s,\"size\":%u,"
++                    "\"preview_available\":%s,\"preview_truncated\":%s",
++                    aBinary ? "true" : "false", aSize,
++                    aPreviewAvailable ? "true" : "false",
++                    (!aPreviewAvailable || aSize > previewSize) ? "true"
++                                                               : "false");
++  if (aPreviewAvailable && previewSize) {
++    line.Append(aBinary ? ",\"preview_hex\":" : ",\"preview\":");
++    if (aBinary) {
++      FirefoxTraceWebSocketAppendHex(line, aData, previewSize);
++    } else {
++      nsDependentCSubstring preview(aData.BeginReading(), previewSize);
++      FirefoxTraceWebSocketAppendJson(line, preview);
++    }
++  }
++  line.Append('}');
++  FirefoxTraceWebSocketWriteLine(line);
++}
++
++}  // namespace
++
+ class WebSocketImpl;
+ 
+ // This class is responsible for proxying nsIObserver and nsIWebSocketImpl
+@@ -739,6 +933,9 @@ nsresult WebSocketImpl::DoOnMessageAvailable(const nsACString& aMsg,
+   }
+ 
+   if (readyState == WebSocket::OPEN) {
++    FirefoxTraceWebSocketFrame("recv", mChannel ? mChannel->Serial() : 0,
++                               mWebSocket->mEffectiveURL, isBinary,
++                               aMsg.Length(), aMsg, true);
+     // Dispatch New Message
+     nsresult rv = mWebSocket->CreateAndDispatchMessageEvent(aMsg, isBinary);
+     if (NS_FAILED(rv)) {
+@@ -2529,6 +2726,10 @@ void WebSocket::Send(nsIInputStream* aMsgStream, const nsACString& aMsgString,
+     return;
+   }
+ 
++  FirefoxTraceWebSocketFrame("send", mImpl->mChannel->Serial(), mEffectiveURL,
++                             aIsBinary, aMsgLength, aMsgString,
++                             !aMsgStream);
++
+   UpdateMustKeepAlive();
+ }
+ 
 diff --git a/dom/xhr/XMLHttpRequestMainThread.cpp b/dom/xhr/XMLHttpRequestMainThread.cpp
 index 1a8e264644..f013913167 100644
 --- a/dom/xhr/XMLHttpRequestMainThread.cpp

@@ -26,7 +26,7 @@ Config options:
   --primitive-metadata 0|1
   --value-store-min-bytes N
   --limit-events N
-  --module js|xhr|fetch|dom|cookie|storage|script=0|1
+  --module js|xhr|fetch|ws|dom|cookie|storage|script=0|1
   --set TRACE_NAME=VALUE
   --unset TRACE_NAME
 EOF
@@ -76,6 +76,7 @@ argv = sys.argv[4:]
 DEFAULT_MODULES = {
     "xhr": True,
     "fetch": True,
+    "ws": False,
     "js": True,
     "dom": True,
     "cookie": True,
@@ -86,6 +87,7 @@ DEFAULT_MODULES = {
 MODULE_ENV = {
     "xhr": "FIREFOX_TRACE_XHR",
     "fetch": "FIREFOX_TRACE_FETCH",
+    "ws": "FIREFOX_TRACE_WS",
     "js": "FIREFOX_TRACE_JS",
     "dom": "FIREFOX_TRACE_DOM",
     "cookie": "FIREFOX_TRACE_COOKIE",
