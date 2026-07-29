@@ -238,7 +238,7 @@ profile prefs、Marionette/RemoteAgent 端口、JIT/tier/opcode 这类底层执�
 | Fetch 生命周期 | `fetch.call/request/response/done/body_chunk` | 请求走 fetch 时 | `TRACE_FETCH_EVENTS=all` | `firefox-fetch-*.jsonl` |
 | Fetch request body | clone InternalRequest body，不消费真实请求体 | 字段在 fetch POST body 时 | `TRACE_FETCH_REQUEST_BODY=preview|full`、`TRACE_FETCH_REQUEST_BODY_STORE=1` | `fetch.request`、`values/fetch_req_body_*` |
 | Fetch response headers | 看响应状态、headers、redirect | 默认可用 | `TRACE_FETCH_RESPONSE_HEADERS=preview|full` | `fetch.response` |
-| Fetch response body preview | 尝试读取响应 body 片段 | 需要看返回 token/配置时 | `TRACE_FETCH_RESPONSE_BODY=preview|full` | `fetch.response`、`fetch.body_chunk` |
+| Fetch response body preview / artifact | 尝试读取响应 body；完整 clone 可写 artifact | 需要看返回 token/配置时 | `TRACE_FETCH_RESPONSE_BODY=preview|full`、`TRACE_FETCH_RESPONSE_BODY_STORE=1` | `fetch.response`、`fetch.body_chunk`、`values/fetch_body_*` |
 | WebSocket logical frame | 成功 send 与接收分发前的帧边界 | 页面使用 WebSocket 时 | `TRACE_WS=1`、`TRACE_WS_PREVIEW_BYTES=512` | `firefox-websocket-*.jsonl`、`websocket.frame` |
 | URL query 字段抽取 | 从完整 URL 抽目标字段 | 首轮默认使用 | `TRACE_QUERY_FIELDS=sign,token,...` | `query_fields`、`query_fields_meta` |
 | 字段 value_store | 请求字段完整落盘并算 sha256 | 要和 JS return/value 对齐时 | `TRACE_QUERY_FIELD_VALUE_STORE=1` | `values/qfv_*`、`sha256` |
@@ -250,6 +250,10 @@ profile prefs、Marionette/RemoteAgent 端口、JIT/tier/opcode 这类底层执�
 - `origin_call_id` 能连到 JS boundary / target 事件；
 - `value_store_path` 和 `sha256` 可与 JS 侧值对齐；
 - body store 文件内容与目标请求实际字段一致。
+
+若 `fetch.response` 的 `body_value_stored=true` 且 `body_value_truncated=false`，对应的
+`body_value_store_path` 是完整 clone 制品，`body_sha256` 可用于离线确认。运行
+`tools/trace_check.py fetch-body TRACE_DIR` 会验证路径、未截断状态和 SHA-256。
 
 WebSocket 默认关闭。启用后，文本 frame 记录 escape 后的 bounded `preview`，二进制 frame
 记录 bounded `preview_hex`，Blob/stream send 只记录 `size` 和

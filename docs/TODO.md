@@ -323,7 +323,11 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
 - `[已实现，待 fixture 回归]` keepalive/PFetch：`fetch.call/open/response` 已写
   `keepalive`，主线程和 Worker PFetch 均复用 Fetch trace 起点；`tests/worker-trace.html`
   显式使用 `keepalive: true`。
-- 完整 response body artifact。
+- `[已实现，待 fixture 回归]` 完整 Fetch response body artifact：
+  `TRACE_FETCH_RESPONSE_BODY=preview` 与 `TRACE_FETCH_RESPONSE_BODY_STORE=1`
+  会在 clone 完整且未截断时写 `values/fetch_body_*`，响应事件带
+  `body_value_store_path/body_sha256/body_value_truncated`；
+  `tools/trace_check.py fetch-body TRACE_DIR` 验证制品和 digest。
 - `[已实现，待 fixture 回归]` WebSocket logical frame：`TRACE_WS=1` 或
   `trace-control.sh TRACE_DIR config --module ws=1` 开启；发送成功后和接收分发前写入
   `firefox-websocket-*.jsonl`。文本仅写 bounded preview，二进制只写 hex prefix，Blob/stream

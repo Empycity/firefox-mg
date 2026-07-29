@@ -129,10 +129,36 @@ def check_websocket(trace_dir):
     print(f"websocket: validated {len(frames)} frames")
 
 
+def check_fetch_body(trace_dir):
+    responses = [
+        event
+        for _, _, event in json_lines(trace_dir, "firefox-fetch-*.jsonl")
+        if event.get("type") == "fetch.response"
+        and event.get("body_value_stored") is True
+    ]
+    if not responses:
+        fail("no complete stored fetch response artifact found")
+    for index, event in enumerate(responses, 1):
+        if event.get("body_value_truncated") is not False:
+            fail(f"fetch response #{index} stored a truncated body")
+        relative_path = require_field(
+            event, "body_value_store_path", f"fetch response #{index}"
+        )
+        if not relative_path:
+            fail(f"fetch response #{index} has an empty artifact path")
+        artifact = (trace_dir / relative_path).resolve()
+        if trace_dir.resolve() not in artifact.parents or not artifact.is_file():
+            fail(f"fetch response #{index} artifact is missing: {relative_path}")
+        expected_sha = require_field(event, "body_sha256", f"fetch response #{index}")
+        if sha256(artifact) != expected_sha:
+            fail(f"fetch response #{index} body_sha256 does not match {relative_path}")
+    print(f"fetch-body: validated {len(responses)} complete response artifacts")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "check", choices=("runtime", "boundary", "source-map", "worker", "websocket")
+        "check", choices=("runtime", "boundary", "source-map", "worker", "websocket", "fetch-body")
     )
     parser.add_argument("trace_dir", type=Path)
     args = parser.parse_args()
@@ -146,6 +172,8 @@ def main():
         check_source_map(args.trace_dir)
     elif args.check == "worker":
         check_worker(args.trace_dir)
+    elif args.check == "fetch-body":
+        check_fetch_body(args.trace_dir)
     else:
         check_websocket(args.trace_dir)
 

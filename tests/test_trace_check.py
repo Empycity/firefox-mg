@@ -114,6 +114,25 @@ class TraceCheckTests(unittest.TestCase):
             )
             trace_check.check_websocket(trace_dir)
 
+    def test_fetch_body_artifact_matches_response_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trace_dir = Path(directory)
+            payload = b'{"token":"traceFetchBodyToken"}\n'
+            artifact = trace_dir / "values" / "fetch_body_fixture.txt"
+            artifact.parent.mkdir()
+            artifact.write_bytes(payload)
+            write_jsonl(
+                trace_dir / "firefox-fetch-123.jsonl",
+                [{
+                    "type": "fetch.response",
+                    "body_value_stored": True,
+                    "body_value_truncated": False,
+                    "body_value_store_path": "values/fetch_body_fixture.txt",
+                    "body_sha256": hashlib.sha256(payload).hexdigest(),
+                }],
+            )
+            trace_check.check_fetch_body(trace_dir)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1326,7 +1326,8 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_FETCH_RESPONSE_BODY_MAX_BYTES` | 整数 | `65536` | Fetch response body 单次最多读取字节数，上限 2 MiB |
 | `TRACE_FETCH_RESPONSE_BODY_HEX_BYTES` | 整数 | `64` | `body_bytes_hex` 最多输出字节数 |
 | `TRACE_FETCH_RESPONSE_BODY_CHUNK_EVENTS` | 整数 | `4` | Fetch body chunk preview 最多输出事件数，0 表示不限制事件数但仍受 MAX_BYTES 限制 |
-| `TRACE_FETCH_RESPONSE_BODY_STORE` | `1` / `0` | `0` | response 阶段 clone preview 成功时，将读取片段写入 `values/fetch_body_<pid>_<seq>.txt` |
+| `TRACE_FETCH_RESPONSE_BODY_STORE` | `1` / `0` | `0` | response 阶段 clone 完整且未截断时写入 `values/fetch_body_<pid>_<seq>.txt`；事件带 artifact path 和 SHA-256 |
+| `TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES` | 整数 | `65536` | 完整 response artifact 的最大读取量，上限 `67108864`；超过上限不写 partial artifact |
 | `TRACE_FETCH_REQUEST_BODY` | `none` / `preview` / `full` | `none` | Fetch request body 预览；显式开启后克隆 InternalRequest body stream，避免消费真实请求体 |
 | `TRACE_FETCH_REQUEST_BODY_MAX_BYTES` | 整数 | `65536` | Fetch request body 最多读取字节数，上限 2 MiB |
 | `TRACE_FETCH_REQUEST_BODY_HEX_BYTES` | 整数 | `64` | Fetch request `body_bytes_hex` 最多输出字节数 |
