@@ -32,7 +32,7 @@ OPTION_FLAGS = {
     "limit_events": ("--limit-events", "FIREFOX_TRACE_JS_LIMIT_EVENTS"),
 }
 
-MODULES = ["js", "xhr", "fetch", "ws", "http_raw", "dom", "cookie", "storage", "script"]
+MODULES = ["js", "xhr", "fetch", "ws", "http_raw", "wasm", "dom", "cookie", "storage", "script"]
 
 RESTART_REQUIRED = [
     "TRACE_AUTOMATION_SURFACE",
@@ -107,6 +107,9 @@ HTML = r"""<!doctype html>
       <div class="buttons">
         <button onclick="newSegment()">New Segment</button>
         <button onclick="applyConfig()">Apply Config</button>
+        <button onclick="savePreset()">Save Template</button>
+        <button onclick="loadPreset()">Load Template</button>
+        <button onclick="deletePreset()">Delete Template</button>
         <button onclick="action('prewarm')">Prewarm</button>
         <button onclick="action('start')">Start</button>
         <button onclick="action('stop')">Stop</button>
@@ -192,8 +195,9 @@ HTML = r"""<!doctype html>
 </main>
 <script>
 const fields = ["profile","js_mode","script_contains","function_contains","script_sha256","target_match","query_fields","object_depth","object_keys","array_items","typed_array_bytes","value_metadata","primitive_metadata","value_store_min_bytes","limit_events"];
-const moduleNames = ["js","xhr","fetch","ws","http_raw","dom","cookie","storage","script"];
-document.getElementById("modules").innerHTML = moduleNames.map(m => `<label><input type="checkbox" id="mod_${m}" ${(m === "ws" || m === "http_raw") ? "" : "checked"}> ${m}</label>`).join("");
+const moduleNames = ["js","xhr","fetch","ws","http_raw","wasm","dom","cookie","storage","script"];
+const presetStorageKey = "firefox-trace.console-templates.v1";
+document.getElementById("modules").innerHTML = moduleNames.map(m => `<label><input type="checkbox" id="mod_${m}" ${(m === "ws" || m === "http_raw" || m === "wasm") ? "" : "checked"}> ${m}</label>`).join("");
 
 function traceDir() { return document.getElementById("traceDir").value.trim(); }
 function controlFile() { return document.getElementById("controlFile").value.trim(); }
@@ -239,6 +243,55 @@ function configBody() {
     preset: document.getElementById("preset").value || undefined,
     options, modules, env: c.env, unset: c.unset,
   });
+}
+function savedTemplates() {
+  try {
+    const value = JSON.parse(localStorage.getItem(presetStorageKey) || "{}");
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch (_) { return {}; }
+}
+function templateSnapshot() {
+  const config = configBody();
+  return {preset: config.preset || "", segment: config.segment || "", options: config.options, modules: config.modules, env: config.env, unset: config.unset};
+}
+function savePreset() {
+  const name = prompt("Template name");
+  if (!name || !name.trim()) return;
+  const templates = savedTemplates();
+  templates[name.trim()] = templateSnapshot();
+  localStorage.setItem(presetStorageKey, JSON.stringify(templates));
+  write("out", {ok: true, action: "template_saved", name: name.trim(), count: Object.keys(templates).length});
+}
+function chooseTemplate(action) {
+  const templates = savedTemplates();
+  const names = Object.keys(templates).sort();
+  if (!names.length) { write("out", {ok: false, error: "no saved templates"}); return null; }
+  const name = prompt(action + " template:\\n" + names.join("\\n"));
+  if (!name || !templates[name.trim()]) return null;
+  return {name: name.trim(), value: templates[name.trim()]};
+}
+function applyTemplate(template) {
+  document.getElementById("segment").value = template.segment || "";
+  document.getElementById("preset").value = template.preset || "";
+  for (const f of fields) document.getElementById(f).value = template.options && template.options[f] !== undefined ? template.options[f] : "";
+  for (const m of moduleNames) document.getElementById("mod_" + m).checked = !!(template.modules && template.modules[m]);
+  const env = template.env || {};
+  const unset = new Set(template.unset || []);
+  document.getElementById("customEnv").value = [...Object.keys(env).sort().map(k => k + "=" + env[k]), ...[...unset].sort().map(k => k + "=")].join("\\n");
+}
+function loadPreset() {
+  const chosen = chooseTemplate("Load");
+  if (!chosen) return;
+  applyTemplate(chosen.value);
+  write("out", {ok: true, action: "template_loaded", name: chosen.name});
+}
+function deletePreset() {
+  const chosen = chooseTemplate("Delete");
+  if (!chosen || !confirm("Delete template " + chosen.name + "?")) return;
+  const templates = savedTemplates();
+  delete templates[chosen.name];
+  localStorage.setItem(presetStorageKey, JSON.stringify(templates));
+  write("out", {ok: true, action: "template_deleted", name: chosen.name});
 }
 async function loadLatest() {
   try {

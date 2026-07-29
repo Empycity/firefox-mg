@@ -1923,10 +1923,10 @@ index b88350d050..7c77c54019 100644
    nsCOMPtr<nsIPrincipal> partitionedCookiePrincipal;
    switch (CookieCommons::CheckGlobalAndRetrieveCookiePrincipals(
 diff --git a/dom/fetch/Fetch.cpp b/dom/fetch/Fetch.cpp
-index 52cf33bfc8..e9b088cadd 100644
+index 52cf33bfc8..72af4abbed 100644
 --- a/dom/fetch/Fetch.cpp
 +++ b/dom/fetch/Fetch.cpp
-@@ -6,19 +6,37 @@
+@@ -6,19 +6,38 @@
  
  #include "Fetch.h"
  
@@ -1949,6 +1949,7 @@ index 52cf33bfc8..e9b088cadd 100644
  #include "mozilla/CycleCollectedJSContext.h"
  #include "mozilla/StaticPrefs_dom.h"
 +#include "mozilla/dom/ContentChild.h"
++#include "mozilla/dom/BrowsingContext.h"
  #include "mozilla/dom/Document.h"
  #include "mozilla/ipc/BackgroundChild.h"
  #include "mozilla/ipc/PBackgroundChild.h"
@@ -1964,7 +1965,7 @@ index 52cf33bfc8..e9b088cadd 100644
  #include "nsJSUtils.h"
  #include "nsNetUtil.h"
  #include "nsReadableUtils.h"
-@@ -61,8 +79,1532 @@
+@@ -61,8 +80,1546 @@
  
  namespace mozilla::dom {
  
@@ -3301,12 +3302,14 @@ index 52cf33bfc8..e9b088cadd 100644
 +  aRequest.GetMethod(method);
 +
 +  nsAutoCString pageURL;
++  BrowsingContext* browsingContext = nullptr;
 +  if (nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(aGlobal)) {
 +    if (Document* doc = window->GetExtantDoc()) {
 +      if (nsIURI* docURI = doc->GetDocumentURI()) {
 +        Unused << docURI->GetSpec(pageURL);
 +      }
 +    }
++    browsingContext = window->GetBrowsingContext();
 +  }
 +
 +  nsAutoCString callerURL;
@@ -3349,6 +3352,18 @@ index 52cf33bfc8..e9b088cadd 100644
 +  line.Append(aRequest.Keepalive() ? "true" : "false");
 +  line.AppendLiteral(",\"page_url\":");
 +  FirefoxTraceFetchAppendJsonString(line, pageURL);
++  line.AppendLiteral(",\"browsing_context_id\":");
++  if (browsingContext) {
++    line.AppendInt(browsingContext->Id());
++  } else {
++    line.AppendLiteral("null");
++  }
++  line.AppendLiteral(",\"top_level_browsing_context_id\":");
++  if (browsingContext && browsingContext->Top()) {
++    line.AppendInt(browsingContext->Top()->Id());
++  } else {
++    line.AppendLiteral("null");
++  }
 +  line.AppendLiteral(",\"origin_call_id\":");
 +  uint64_t originCallId = FirefoxTraceCurrentJSCallId();
 +  if (originCallId) {
@@ -3497,7 +3512,7 @@ index 52cf33bfc8..e9b088cadd 100644
  // Step 17.2.1.2 and 17.2.2 of
  // https://fetch.spec.whatwg.org/#concept-http-network-fetch
  // If stream is readable, then error stream with ...
-@@ -357,17 +1899,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -357,17 +1914,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
    RefPtr<FetchObserver> mFetchObserver;
    RefPtr<AbortSignalImpl> mSignalImpl;
    const bool mMozErrors;
@@ -3520,7 +3535,7 @@ index 52cf33bfc8..e9b088cadd 100644
  
    void OnResponseAvailableInternal(
        SafeRefPtr<InternalResponse> aResponse) override;
-@@ -376,6 +1921,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -376,6 +1936,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
  
    void OnResponseEnd(FetchDriverObserver::EndReason aReason,
                       JS::Handle<JS::Value> aReasonDetails) override {
@@ -3529,7 +3544,7 @@ index 52cf33bfc8..e9b088cadd 100644
      if (aReason == eAborted) {
        if (!aReasonDetails.isUndefined()) {
          mPromise->MaybeReject(aReasonDetails);
-@@ -510,6 +2057,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -510,6 +2072,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
    }
  
    SafeRefPtr<InternalRequest> internalRequest = request->GetInternalRequest();
@@ -3537,7 +3552,7 @@ index 52cf33bfc8..e9b088cadd 100644
  
    // Restore information of InterceptedHttpChannel if they are passed with the
    // Request. Since Request::Constructor would not copy these members.
-@@ -593,12 +2141,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -593,12 +2156,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
      }
  
      RefPtr<MainThreadFetchResolver> resolver = new MainThreadFetchResolver(
@@ -3553,7 +3568,7 @@ index 52cf33bfc8..e9b088cadd 100644
      fetch->SetDocument(doc);
      resolver->SetLoadGroup(loadGroup);
      aRv = fetch->Fetch(signalImpl, resolver);
-@@ -856,6 +2405,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
+@@ -856,6 +2420,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
    NS_ASSERT_OWNINGTHREAD(MainThreadFetchResolver);
    AssertIsOnMainThread();
  
@@ -4095,7 +4110,7 @@ index dc6bdc8d4e..50b1082fcc 100644
      MOZ_DIAGNOSTIC_ASSERT(NS_FAILED(aRv));
      SafeRefPtr<InternalResponse> response =
 diff --git a/dom/ipc/ContentChild.cpp b/dom/ipc/ContentChild.cpp
-index dc0a572729..d5901ceb3e 100644
+index dc0a572729..8a6255cd51 100644
 --- a/dom/ipc/ContentChild.cpp
 +++ b/dom/ipc/ContentChild.cpp
 @@ -13,8 +13,10 @@
@@ -4124,7 +4139,7 @@ index dc0a572729..d5901ceb3e 100644
  
  #include "ChildProfilerController.h"
  
-@@ -313,6 +323,711 @@ using namespace mozilla::net;
+@@ -313,6 +323,728 @@ using namespace mozilla::net;
  using namespace mozilla::widget;
  using mozilla::loader::PScriptCacheChild;
  
@@ -4759,6 +4774,23 @@ index dc0a572729..d5901ceb3e 100644
 +    return true;
 +  }
 +  return child->SendFirefoxTraceDOMEvent(line);
++}
++
++extern "C" bool FirefoxTraceQueueEventToParent(const char* aLine,
++                                                size_t aLen) {
++  if (!aLine || !aLen) {
++    return false;
++  }
++  if (NS_IsMainThread()) {
++    return FirefoxTraceSendEventToParent(aLine, aLen);
++  }
++  nsCString line(aLine, aLen);
++  NS_DispatchToMainThread(NS_NewRunnableFunction(
++      "FirefoxTraceQueuedEvent", [line = std::move(line)]() {
++        Unused << FirefoxTraceSendEventToParent(line.BeginReading(),
++                                                line.Length());
++      }));
++  return true;
 +}
 +
 +extern "C" bool FirefoxTraceSendValueToParent(const char* aValueId,
@@ -7322,7 +7354,7 @@ index ea692b1f6e..298d3c63de 100644
  }
  
 diff --git a/dom/xhr/XMLHttpRequestMainThread.cpp b/dom/xhr/XMLHttpRequestMainThread.cpp
-index 1a8e264644..f013913167 100644
+index 1a8e264644..2ef6fe3b46 100644
 --- a/dom/xhr/XMLHttpRequestMainThread.cpp
 +++ b/dom/xhr/XMLHttpRequestMainThread.cpp
 @@ -7,7 +7,16 @@
@@ -7342,15 +7374,17 @@ index 1a8e264644..f013913167 100644
  #  include <unistd.h>
  #endif
  #include "mozilla/AppShutdown.h"
-@@ -18,6 +27,7 @@
+@@ -17,7 +26,9 @@
+ #include "mozilla/Components.h"
  #include "mozilla/dom/AutoSuppressEventHandlingAndSuspend.h"
  #include "mozilla/dom/BlobBinding.h"
++#include "mozilla/dom/BrowsingContext.h"
  #include "mozilla/dom/BlobURLProtocolHandler.h"
 +#include "mozilla/dom/ContentChild.h"
  #include "mozilla/dom/DocGroup.h"
  #include "mozilla/dom/DOMString.h"
  #include "mozilla/dom/File.h"
-@@ -77,6 +87,7 @@
+@@ -77,6 +88,7 @@
  #include "nsXPCOM.h"
  #include "nsIDOMEventListener.h"
  #include "nsVariant.h"
@@ -7358,7 +7392,7 @@ index 1a8e264644..f013913167 100644
  #include "nsIScriptError.h"
  #include "nsICachingChannel.h"
  #include "nsICookieJarSettings.h"
-@@ -126,6 +137,1012 @@ namespace mozilla::dom {
+@@ -126,6 +138,1012 @@ namespace mozilla::dom {
  using EventType = XMLHttpRequest::EventType;
  using Events = XMLHttpRequest::Events;
  
@@ -8371,7 +8405,7 @@ index 1a8e264644..f013913167 100644
  // Maximum size that we'll grow an ArrayBuffer instead of doubling,
  // once doubling reaches this threshold
  const uint32_t XML_HTTP_REQUEST_ARRAYBUFFER_MAX_GROWTH = 32 * 1024 * 1024;
-@@ -1517,6 +2534,277 @@ bool XMLHttpRequestMainThread::InUploadPhase() const {
+@@ -1517,6 +2535,293 @@ bool XMLHttpRequestMainThread::InUploadPhase() const {
    return mState == XMLHttpRequest_Binding::OPENED;
  }
  
@@ -8438,6 +8472,22 @@ index 1a8e264644..f013913167 100644
 +  line.AppendInt(static_cast<uint32_t>(mState));
 +  line.AppendLiteral(",\"page_url\":");
 +  FirefoxTraceAppendJsonString(line, pageURL);
++  BrowsingContext* browsingContext = nullptr;
++  if (nsPIDOMWindowInner* owner = GetOwnerWindow()) {
++    browsingContext = owner->GetBrowsingContext();
++  }
++  line.AppendLiteral(",\"browsing_context_id\":");
++  if (browsingContext) {
++    line.AppendInt(browsingContext->Id());
++  } else {
++    line.AppendLiteral("null");
++  }
++  line.AppendLiteral(",\"top_level_browsing_context_id\":");
++  if (browsingContext && browsingContext->Top()) {
++    line.AppendInt(browsingContext->Top()->Id());
++  } else {
++    line.AppendLiteral("null");
++  }
 +  line.AppendLiteral(",\"origin_call_id\":");
 +  uint64_t originCallId = FirefoxTraceCurrentJSCallId();
 +  if (originCallId) {
@@ -8649,7 +8699,7 @@ index 1a8e264644..f013913167 100644
  // This case is hit when the async parameter is outright omitted, which
  // should set it to true (and the username and password to null).
  void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
-@@ -1664,6 +2952,13 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
+@@ -1664,6 +2969,13 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
    mAuthorRequestHeaders.Clear();
    ResetResponse();
  
@@ -8663,7 +8713,7 @@ index 1a8e264644..f013913167 100644
    // Gecko-specific
    mFlagHadUploadListenersOnSend = false;
    mFlagAborted = false;
-@@ -1679,7 +2974,10 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
+@@ -1679,7 +2991,10 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
    // Step 12
    if (mState != XMLHttpRequest_Binding::OPENED) {
      mState = XMLHttpRequest_Binding::OPENED;
@@ -8674,7 +8724,7 @@ index 1a8e264644..f013913167 100644
    }
  }
  
-@@ -2033,6 +3331,7 @@ XMLHttpRequestMainThread::OnStartRequest(nsIRequest* request) {
+@@ -2033,6 +3348,7 @@ XMLHttpRequestMainThread::OnStartRequest(nsIRequest* request) {
    if (mErrorLoad == ErrorType::eOK) {
      ChangeState(XMLHttpRequest_Binding::HEADERS_RECEIVED);
    }
@@ -8682,7 +8732,7 @@ index 1a8e264644..f013913167 100644
  
    ResetResponse();
  
-@@ -2540,6 +3839,11 @@ void XMLHttpRequestMainThread::ChangeStateToDoneInternal() {
+@@ -2540,6 +3856,11 @@ void XMLHttpRequestMainThread::ChangeStateToDoneInternal() {
  
    // Per spec, fire readystatechange=4/done before final error events.
    ChangeState(XMLHttpRequest_Binding::DONE, true);
@@ -8694,7 +8744,7 @@ index 1a8e264644..f013913167 100644
  
    // Per spec, if we failed in the upload phase, fire a final error
    // and loadend events for the upload after readystatechange=4/done.
-@@ -3024,6 +4328,12 @@ void XMLHttpRequestMainThread::Send(
+@@ -3024,6 +4345,12 @@ void XMLHttpRequestMainThread::Send(
      return;
    }
  
@@ -8707,7 +8757,7 @@ index 1a8e264644..f013913167 100644
    if (aData.IsNull()) {
      SendInternal(nullptr, false, aRv);
      return;
-@@ -3368,6 +4678,7 @@ void XMLHttpRequestMainThread::SetRequestHeader(const nsACString& aName,
+@@ -3368,6 +4695,7 @@ void XMLHttpRequestMainThread::SetRequestHeader(const nsACString& aName,
    } else {
      mAuthorRequestHeaders.MergeOrSet(aName, value);
    }
@@ -12456,6 +12506,291 @@ index 81a10dba41..ff835cd0f3 100644
            }
  
  #ifdef NIGHTLY_BUILD
+diff --git a/js/src/wasm/WasmCompile.cpp b/js/src/wasm/WasmCompile.cpp
+index b0c6281abf..56ee2c326f 100644
+--- a/js/src/wasm/WasmCompile.cpp
++++ b/js/src/wasm/WasmCompile.cpp
+@@ -19,8 +19,18 @@
+ #include "wasm/WasmCompile.h"
+ 
+ #include "mozilla/Maybe.h"
++#include "mozilla/SHA1.h"
+ 
+ #include <algorithm>
++#include <atomic>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#ifndef XP_WIN
++#  include <sys/stat.h>
++#  include <sys/time.h>
++#  include <unistd.h>
++#endif
+ 
+ #include "js/Conversions.h"
+ #include "js/Equality.h"
+@@ -52,6 +62,248 @@ using namespace js::wasm;
+ 
+ using mozilla::Atomic;
+ 
++#if defined(__APPLE__)
++extern "C" bool FirefoxTraceQueueEventToParent(const char* aLine, size_t aLen)
++    __attribute__((weak_import));
++#elif defined(__GNUC__)
++extern "C" bool FirefoxTraceQueueEventToParent(const char* aLine, size_t aLen)
++    __attribute__((weak));
++#endif
++
++namespace {
++
++std::atomic<uint64_t> sFirefoxTraceWasmModuleCount{0};
++
++bool FirefoxTraceWasmRuntimeActive() {
++  const char* controlPath = getenv("FIREFOX_TRACE_CONTROL_FILE");
++  if (!controlPath || !controlPath[0]) {
++    controlPath = getenv("TRACE_CONTROL_FILE");
++  }
++  if (!controlPath || !controlPath[0]) {
++    return true;
++  }
++  FILE* control = fopen(controlPath, "r");
++  if (!control) {
++    return true;
++  }
++  char contents[8193];
++  size_t size = fread(contents, 1, sizeof(contents) - 1, control);
++  fclose(control);
++  contents[size] = '\0';
++  return !strstr(contents, "\"enabled\": false") &&
++         !strstr(contents, "\"enabled\":false");
++}
++
++bool FirefoxTraceWasmEnabled() {
++  const char* enabled = getenv("FIREFOX_TRACE_ENABLE");
++  if (!enabled || !enabled[0] || strcmp(enabled, "0") == 0) {
++    return false;
++  }
++  if (!FirefoxTraceWasmRuntimeActive()) {
++    return false;
++  }
++  const char* wasm = getenv("FIREFOX_TRACE_WASM");
++  if (!wasm || !wasm[0]) {
++    wasm = getenv("TRACE_WASM");
++  }
++  return wasm && wasm[0] && strcmp(wasm, "0") != 0 &&
++         strcmp(wasm, "false") != 0 && strcmp(wasm, "off") != 0;
++}
++
++bool FirefoxTraceWasmEnvEnabled(const char* aName) {
++  const char* value = getenv(aName);
++  if (!value || !value[0]) {
++    char alias[256];
++    snprintf(alias, sizeof(alias), "FIREFOX_%s", aName);
++    value = getenv(alias);
++  }
++  return value && value[0] && strcmp(value, "0") != 0 &&
++         strcmp(value, "false") != 0 && strcmp(value, "off") != 0;
++}
++
++uint32_t FirefoxTraceWasmLimit(const char* aName, uint32_t aDefault,
++                               uint32_t aMaximum) {
++  const char* value = getenv(aName);
++  if (!value || !value[0]) {
++    char alias[256];
++    snprintf(alias, sizeof(alias), "FIREFOX_%s", aName);
++    value = getenv(alias);
++  }
++  if (!value || !value[0]) {
++    return aDefault;
++  }
++  char* end = nullptr;
++  unsigned long parsed = strtoul(value, &end, 10);
++  return end == value ? aDefault : std::min<uint32_t>(parsed, aMaximum);
++}
++
++uint64_t FirefoxTraceWasmNowUS() {
++#ifdef XP_WIN
++  return 0;
++#else
++  timeval tv;
++  gettimeofday(&tv, nullptr);
++  return static_cast<uint64_t>(tv.tv_sec) * 1000000ULL + tv.tv_usec;
++#endif
++}
++
++void FirefoxTraceWasmWriteLine(const char* aLine) {
++  if (!aLine || !aLine[0]) {
++    return;
++  }
++#if defined(__APPLE__) || defined(__GNUC__)
++  if (FirefoxTraceQueueEventToParent &&
++      FirefoxTraceQueueEventToParent(aLine, strlen(aLine))) {
++    return;
++  }
++#endif
++  const char* logDir = getenv("FIREFOX_TRACE_LOG_DIR");
++  if (!logDir || !logDir[0]) {
++    logDir = getenv("TRACE_LOG_DIR");
++  }
++  if (!logDir || !logDir[0]) {
++    logDir = "/tmp/firefox-trace";
++  }
++#ifndef XP_WIN
++  mkdir(logDir, 0755);
++#endif
++  char path[4096];
++  snprintf(path, sizeof(path), "%s/firefox-wasm-%d.jsonl", logDir, getpid());
++  FILE* file = fopen(path, "a");
++  if (!file) {
++    return;
++  }
++  fputs(aLine, file);
++  fputc('\n', file);
++  fclose(file);
++}
++
++void FirefoxTraceWasmAppendHex(char* aOut, size_t aCapacity,
++                               const uint8_t* aData, size_t aSize) {
++  static const char kHex[] = "0123456789abcdef";
++  if (!aOut || !aCapacity) {
++    return;
++  }
++  size_t length = 0;
++  for (size_t i = 0; aData && i < aSize && length + 2 < aCapacity; ++i) {
++    aOut[length++] = kHex[aData[i] >> 4];
++    aOut[length++] = kHex[aData[i] & 0x0f];
++  }
++  aOut[length] = '\0';
++}
++
++void FirefoxTraceWasmTraceModule(const BytecodeSource& aSource,
++                                 const ModuleMetadata& aMetadata) {
++  if (!FirefoxTraceWasmEnabled()) {
++    return;
++  }
++  uint32_t limit = FirefoxTraceWasmLimit("TRACE_WASM_MODULE_LIMIT", 32, 1024);
++  uint64_t index = sFirefoxTraceWasmModuleCount.fetch_add(1);
++  if (limit && index >= limit) {
++    if (index == limit) {
++      FirefoxTraceWasmWriteLine(
++          "{\"schema\":\"firefox_trace.wasm.v1\",\"type\":\"trace.degraded\","
++          "\"module\":\"wasm\",\"reason\":\"module_limit\"}");
++    }
++    return;
++  }
++
++  mozilla::SHA1Sum::Hash hash;
++  aSource.computeHash(&hash);
++  const auto* hashBytes = reinterpret_cast<const uint8_t*>(&hash);
++  char moduleId[mozilla::SHA1Sum::kHashSize * 2 + 1];
++  static const char kHex[] = "0123456789abcdef";
++  for (size_t i = 0; i < sizeof(hash); ++i) {
++    moduleId[i * 2] = kHex[hashBytes[i] >> 4];
++    moduleId[i * 2 + 1] = kHex[hashBytes[i] & 0x0f];
++  }
++  moduleId[sizeof(hash) * 2] = '\0';
++
++  uint32_t previewLimit = FirefoxTraceWasmLimit("TRACE_WASM_PREVIEW_BYTES", 64, 4096);
++  Bytes moduleBytes;
++  bool copied = moduleBytes.resize(aSource.length());
++  if (copied) {
++    aSource.copyTo(moduleBytes.begin());
++  }
++  uint32_t previewSize =
++      copied ? std::min<uint32_t>(moduleBytes.length(), previewLimit) : 0;
++  bool dumpRequested = FirefoxTraceWasmEnvEnabled("TRACE_WASM_DUMP");
++  uint32_t dumpLimit = FirefoxTraceWasmLimit("TRACE_WASM_DUMP_MAX_BYTES", 1024 * 1024,
++                                              16 * 1024 * 1024);
++  bool dumped = dumpRequested && aSource.length() <= dumpLimit;
++  char artifactPath[256] = "";
++  if (dumped) {
++    const char* logDir = getenv("FIREFOX_TRACE_LOG_DIR");
++    if (!logDir || !logDir[0]) logDir = getenv("TRACE_LOG_DIR");
++    if (!logDir || !logDir[0]) logDir = "/tmp/firefox-trace";
++    char wasmDir[4096];
++    snprintf(wasmDir, sizeof(wasmDir), "%s/wasm", logDir);
++#ifndef XP_WIN
++    mkdir(logDir, 0755);
++    mkdir(wasmDir, 0755);
++#endif
++    snprintf(artifactPath, sizeof(artifactPath), "wasm/%s.wasm", moduleId);
++    char path[4096];
++    snprintf(path, sizeof(path), "%s/%s", logDir, artifactPath);
++    FILE* artifact = fopen(path, "wb");
++    if (artifact) {
++      if (copied) {
++        dumped = fwrite(moduleBytes.begin(), 1, moduleBytes.length(), artifact) ==
++                 moduleBytes.length();
++      } else {
++        dumped = false;
++      }
++      fclose(artifact);
++    } else {
++      dumped = false;
++    }
++  }
++
++  char preview[8193];
++  FirefoxTraceWasmAppendHex(preview, sizeof(preview),
++                            copied ? moduleBytes.begin() : nullptr,
++                            previewSize);
++  char line[12288];
++  snprintf(line, sizeof(line),
++           "{\"schema\":\"firefox_trace.wasm.v1\",\"type\":\"wasm.module\",\"ts_us\":%llu,"
++           "\"module_id\":\"%s\",\"module_sha1\":\"%s\",\"bytecode_size\":%llu,"
++           "\"code_section_size\":%llu,\"function_count\":%llu,\"function_import_count\":%u,"
++           "\"bytecode_preview_hex\":\"%s\",\"bytecode_preview_truncated\":%s,"
++           "\"dump_requested\":%s,\"dump_stored\":%s,\"dump_truncated\":%s,\"artifact_path\":\"%s\"}",
++           static_cast<unsigned long long>(FirefoxTraceWasmNowUS()), moduleId, moduleId,
++           static_cast<unsigned long long>(aSource.length()),
++           static_cast<unsigned long long>(aSource.hasCodeSection() ? aSource.codeSpan().size() : 0),
++           static_cast<unsigned long long>(aMetadata.codeMeta->numFuncs()),
++           aMetadata.codeMeta->numFuncImports, preview,
++           !copied || aSource.length() > previewSize ? "true" : "false",
++           dumpRequested ? "true" : "false", dumped ? "true" : "false",
++           dumpRequested && aSource.length() > dumpLimit ? "true" : "false", artifactPath);
++  FirefoxTraceWasmWriteLine(line);
++
++  if (!FirefoxTraceWasmEnvEnabled("TRACE_WASM_INSN") || !aSource.hasCodeSection()) {
++    return;
++  }
++  uint32_t insnLimit = FirefoxTraceWasmLimit("TRACE_WASM_INSN_LIMIT", 256, 65536);
++  BytecodeSpan code = aSource.codeSpan();
++  uint32_t count = std::min<uint32_t>(code.size(), insnLimit);
++  for (uint32_t i = 0; i < count; ++i) {
++    char instruction[256];
++    snprintf(instruction, sizeof(instruction),
++             "{\"schema\":\"firefox_trace.wasm.v1\",\"type\":\"wasm.insn\","
++             "\"module_id\":\"%s\",\"code_section_offset\":%u,"
++             "\"raw_byte\":%u,\"semantic\":\"raw_code_section_byte\"}",
++             moduleId, i, code[i]);
++    FirefoxTraceWasmWriteLine(instruction);
++  }
++  if (count < code.size()) {
++    FirefoxTraceWasmWriteLine(
++        "{\"schema\":\"firefox_trace.wasm.v1\",\"type\":\"trace.degraded\","
++        "\"module\":\"wasm\",\"reason\":\"insn_limit\"}");
++  }
++}
++
++}  // namespace
++
+ uint32_t wasm::ObservedCPUFeatures() {
+   enum Arch {
+     X86 = 0x1,
+@@ -1027,7 +1279,11 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
+     MOZ_RELEASE_ASSERT(envDecoder.done());
+   }
+ 
+-  return mg.finishModule(bytecode, *moduleMeta, listener);
++  SharedModule module = mg.finishModule(bytecode, *moduleMeta, listener);
++  if (module) {
++    FirefoxTraceWasmTraceModule(bytecodeSource, *moduleMeta);
++  }
++  return module;
+ }
+ 
+ bool wasm::CompileCompleteTier2(const ShareableBytes* codeSection,
 diff --git a/netwerk/cookie/CookieService.cpp b/netwerk/cookie/CookieService.cpp
 index 2a21435d22..c785302116 100644
 --- a/netwerk/cookie/CookieService.cpp
@@ -13148,7 +13483,7 @@ index a0ca1365c9..855cf4febe 100644
      aRemoveCookieCallback(purgeList[i]);
    }
 diff --git a/netwerk/protocol/http/HttpChannelParent.cpp b/netwerk/protocol/http/HttpChannelParent.cpp
-index e43fe41337..b1df9407ce 100644
+index e43fe41337..2062f964f1 100644
 --- a/netwerk/protocol/http/HttpChannelParent.cpp
 +++ b/netwerk/protocol/http/HttpChannelParent.cpp
 @@ -8,6 +8,14 @@
@@ -13174,7 +13509,7 @@ index e43fe41337..b1df9407ce 100644
  #include "nsQueryObject.h"
  #include "nsIMultiPartChannel.h"
  #include "nsIViewSourceChannel.h"
-@@ -103,6 +112,48 @@ using namespace mozilla::ipc;
+@@ -103,6 +112,76 @@ using namespace mozilla::ipc;
  
  namespace mozilla::net {
  
@@ -13183,6 +13518,34 @@ index e43fe41337..b1df9407ce 100644
 +bool FirefoxTraceHttpRawEnabled() {
 +  const char* enabled = getenv("FIREFOX_TRACE_ENABLE");
 +  if (!enabled || !enabled[0] || strcmp(enabled, "0") == 0) return false;
++  // HttpChannelParent runs in the parent process, so it does not receive the
++  // content-process env update. Read the compact control record directly.
++  const char* controlPath = getenv("FIREFOX_TRACE_CONTROL_FILE");
++  if (!controlPath || !controlPath[0]) controlPath = getenv("TRACE_CONTROL_FILE");
++  if (controlPath && controlPath[0]) {
++    FILE* control = fopen(controlPath, "r");
++    if (control) {
++      char contents[8193];
++      size_t size = fread(contents, 1, sizeof(contents) - 1, control);
++      fclose(control);
++      contents[size] = '\0';
++      // Ignore the nested audit snapshot, which may describe the previous
++      // module state rather than the active configuration.
++      if (char* previousState = strstr(contents, "\"previous_state\"")) {
++        *previousState = '\0';
++      }
++      if (strstr(contents, "\"enabled\": false") ||
++          strstr(contents, "\"enabled\":false") ||
++          strstr(contents, "\"http_raw\": false") ||
++          strstr(contents, "\"http_raw\":false")) {
++        return false;
++      }
++      if (strstr(contents, "\"http_raw\": true") ||
++          strstr(contents, "\"http_raw\":true")) {
++        return true;
++      }
++    }
++  }
 +  const char* raw = getenv("FIREFOX_TRACE_HTTP_RAW");
 +  if (!raw || !raw[0]) raw = getenv("TRACE_HTTP_RAW");
 +  return raw && raw[0] && strcmp(raw, "0") != 0 && strcmp(raw, "false") != 0 && strcmp(raw, "off") != 0;
@@ -13223,7 +13586,7 @@ index e43fe41337..b1df9407ce 100644
  HttpChannelParent::HttpChannelParent(dom::BrowserParent* iframeEmbedding,
                                       nsILoadContext* aLoadContext,
                                       PBOverrideStatus aOverrideStatus)
-@@ -1526,6 +1577,46 @@ HttpChannelParent::OnDataAvailable(nsIRequest* aRequest,
+@@ -1526,6 +1605,60 @@ HttpChannelParent::OnDataAvailable(nsIRequest* aRequest,
      return rv;
    }
  
@@ -13245,6 +13608,20 @@ index e43fe41337..b1df9407ce 100644
 +      line.AppendLiteral(",\"offset\":"); line.AppendInt(aOffset);
 +      line.AppendLiteral(",\"source_count\":"); line.AppendInt(aCount);
 +      line.AppendLiteral(",\"captured_size\":"); line.AppendInt(capture);
++      BrowsingContext* browsingContext =
++          mBrowserParent ? mBrowserParent->GetBrowsingContext() : nullptr;
++      line.AppendLiteral(",\"browsing_context_id\":");
++      if (browsingContext) {
++        line.AppendInt(browsingContext->Id());
++      } else {
++        line.AppendLiteral("null");
++      }
++      line.AppendLiteral(",\"top_level_browsing_context_id\":");
++      if (browsingContext && browsingContext->Top()) {
++        line.AppendInt(browsingContext->Top()->Id());
++      } else {
++        line.AppendLiteral("null");
++      }
 +      line.AppendLiteral(",\"url\":\"");
 +      for (uint32_t i = 0; i < url.Length(); ++i) { char c = url[i]; if (c == '"' || c == '\\') line.Append('\\'); line.Append(c); }
 +      line.AppendLiteral("\",\"payload_hex\":\"");

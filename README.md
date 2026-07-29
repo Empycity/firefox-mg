@@ -1359,8 +1359,20 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_HTTP_RAW_EVENTS` | 整数 | `8` | 每个 HTTP channel 最大 raw chunk 事件数，`0` 表示不以事件数限制 |
 | `TRACE_HTTP_RAW_MAX_BYTES` | 整数 | `65536` | 每个 HTTP channel 最大累计采集字节数，上限 `4194304` |
 | `TRACE_HTTP_RAW_HEX_BYTES` | 整数 | `256` | 每个 chunk 的 `payload_hex` 最大原始字节数，上限 `4096` |
+| `TRACE_WASM` | `1` / `0` | `0` | 成功 WASM compile 的模块元数据与 bounded preview；也可运行时使用 `trace-control.sh ... config --module wasm=1` |
+| `TRACE_WASM_DUMP` | `1` / `0` | `0` | 请求在 `TRACE_WASM_DUMP_MAX_BYTES` 内将完整模块写入 `wasm/<sha1>.wasm` |
+| `TRACE_WASM_DUMP_MAX_BYTES` | 整数 | `1048576` | 单模块 dump 最大字节数，上限 `16777216` |
+| `TRACE_WASM_PREVIEW_BYTES` | 整数 | `64` | `wasm.module.bytecode_preview_hex` 最大原始字节数，上限 `4096` |
+| `TRACE_WASM_MODULE_LIMIT` | 整数 | `32` | 单进程 WASM module 事件最大数，上限 `1024` |
+| `TRACE_WASM_INSN` | `1` / `0` | `0` | 输出 bounded `wasm.insn` raw code-section byte 事件 |
+| `TRACE_WASM_INSN_LIMIT` | 整数 | `256` | 单模块 code-section byte 事件最大数，上限 `65536` |
 
 当前 Fetch 已实现轻量生命周期事件：`fetch.call` 记录 JS 调用入口、caller、page、query fields 和 body length；`fetch.request` 记录最终 Request 元数据，并可显式开启 request body clone preview/store；`fetch.response` 记录 status、response type、redirect、body size 和 response headers；`fetch.done` 记录结束原因。默认不读取、不 clone Request/Response body，日志写 `body_preview_enabled=false`。显式设置 `TRACE_FETCH_REQUEST_BODY=preview|full` 后，`fetch.request` 会克隆 InternalRequest body stream 后限量读取，失败会写 `body_preview_skipped`，不会消费真实上传 body。显式设置 `TRACE_FETCH_RESPONSE_BODY=preview|full` 后，`fetch.response` 会先尝试 trace-only body clone；如果 response 阶段 body 尚不可读，会写 `body_preview_skipped`。真实响应体可见性主要由 `fetch.body_chunk` 提供：它在 `FetchDriver::OnDataAvailable` 原本复制网络数据到 pipe 的同一轮旁路采样前 N 字节，输出 `body_preview/body_bytes_hex`，不额外读取 stream。XHR request body 需要显式设置 `TRACE_XHR_REQUEST_BODY=preview|full`；开启后 `xhr.body` 会记录 `request_body_size/captured_size/truncated/sha256`，可选写入 `values/xhr_req_body_*`，并从 JSON body 或 form-urlencoded body 中按 `TRACE_QUERY_FIELDS` 抽取 `body_fields/body_fields_meta`。WebSocket 默认关闭；开启后在 `firefox-websocket-*.jsonl` 写入 `websocket.frame` 的 send/recv 逻辑边界、socket id、URL、binary、size 和 bounded preview。二进制 preview 用 hex，Blob/stream send 仅记录大小并将 `preview_available=false`。真实站长 URL/query 日志过大时，可设置 `TRACE_REQUEST_URL=preview` 或 `none` 降低写盘量；这不会影响 `TRACE_QUERY_FIELDS` 从完整 URL 中提取字段。需要把请求中的目标参数与 JS return/value_store 做完整等值对齐时，使用 `TRACE_QUERY_FIELD_VALUE_STORE=1`，或短时间设置 `TRACE_QUERY_FIELD_VALUES=full`；默认 `preview` 只适合候选定位。
+
+`http.raw_chunk` 是 parent HTTP 已读响应块，事件含 frame/top-frame 标识，可与 XHR/Fetch
+的同名字段关联；它不是 TCP 包捕获。`wasm.module` 是成功编译的 WASM 模块元数据，optional
+dump 受单模块字节上限控制；`wasm.insn` 的 `semantic=raw_code_section_byte` 明确表示它是
+原始 code-section 字节，离线反汇编前不应当把它当成已解码 opcode。
 
 当前 Cookie 已实现 API 层和 storage 层两类事件：API 层的 `document.cookie` / CookieStore 事件用于关联页面、caller 和 `origin_call_id`；storage 层的 `cookie.lifecycle` 用于确认实际状态变化原因，包括 delete、overwrite、expired set delete、expired purge、quota eviction 和 removeAll。storage 层不保证有 JS 调用上下文，分析时按 `key/host/path/base_domain/origin_attributes_suffix` 与 API 层、JS trace、请求字段合并。
 

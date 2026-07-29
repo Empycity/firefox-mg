@@ -139,11 +139,26 @@ class TraceCheckTests(unittest.TestCase):
             write_jsonl(trace_dir / "firefox-http-raw-123.jsonl", [{
                 "schema": "firefox_trace.http.v1", "type": "http.raw_chunk",
                 "channel_id": 17, "offset": 0, "source_count": 4,
-                "captured_size": 4, "url": "http://fixture/raw",
+                "captured_size": 4, "browsing_context_id": 12,
+                "top_level_browsing_context_id": 12, "url": "http://fixture/raw",
                 "payload_hex": "74657374", "payload_hex_truncated": False,
                 "capture_truncated": False,
             }])
             trace_check.check_http_raw(trace_dir)
+
+    def test_wasm_module_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trace_dir = Path(directory)
+            write_jsonl(trace_dir / "firefox-wasm-123.jsonl", [{
+                "schema": "firefox_trace.wasm.v1", "type": "wasm.module",
+                "module_id": "a" * 40, "module_sha1": "a" * 40,
+                "bytecode_size": 8, "code_section_size": 0,
+                "function_count": 0, "function_import_count": 0,
+                "bytecode_preview_hex": "0061736d01000000",
+                "bytecode_preview_truncated": False, "dump_requested": False,
+                "dump_stored": False,
+            }])
+            trace_check.check_wasm(trace_dir)
 
 
 if __name__ == "__main__":

@@ -25,7 +25,7 @@ class TraceStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); db = root / "campaign.sqlite"
             first = write_run(root, "discover", {"type": "fetch.response", "request_id": "req_1", "query_fields": {"sign": "left;right"}, "origin_call_id": "call_1"}, 1)
-            second = write_run(root, "target", {"type": "js.call.enter", "call_id": "call_1", "script_sha256": "a" * 64}, 2)
+            second = write_run(root, "target", {"type": "js.call.enter", "call_id": "call_1", "script_sha256": "a" * 64, "value_preview": "left"}, 2)
             trace_store.import_run(first, db); trace_store.import_run(second, db)
             store = trace_store.connect(db)
             self.assertEqual(store.execute("SELECT count(*) FROM runs").fetchone()[0], 2)
@@ -37,7 +37,10 @@ class TraceStoreTests(unittest.TestCase):
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 trace_store.query(db, "split-field", "req_1:sign")
-            self.assertEqual([json.loads(line)["part"] for line in output.getvalue().splitlines()], ["left", "right"])
+            parts = [json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertEqual([part["part"] for part in parts], ["left", "right"])
+            self.assertEqual(parts[0]["strength"], "exact")
+            self.assertTrue(any(item["call_id"] == "call_1" for item in parts[0]["candidates"]))
 
 
 if __name__ == "__main__":

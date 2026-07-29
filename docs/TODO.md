@@ -339,7 +339,10 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
   URL、source/captured size 和 bounded hex prefix；`TRACE_HTTP_RAW_EVENTS/MAX_BYTES/HEX_BYTES`
   控制负载，耗尽时写一次 `trace.degraded module=http_raw`；
   `tools/trace_check.py http-raw TRACE_DIR` 验证 schema。
-- 跨进程/跨 frame 请求链进一步统一。
+- `[已实现]` 跨 frame 请求链：XHR/Fetch call 和 parent HTTP raw chunk 都写
+  `browsing_context_id` / `top_level_browsing_context_id`；将 frame、URL、时间和
+  parent `channel_id` 一起作为跨进程关联键。HTTP raw 读取控制文件的
+  `enabled/http_raw`，start/stop/config 不再只影响 content trace。
 
 验收：
 
@@ -361,10 +364,10 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
   `chain`、`field`、`value-sha` 都保留 run scope；artifact 表索引 values/scripts/source maps。
 - `[已实现]` analyzer 支持 `--store TRACE_STORE.sqlite [--run-id ID]`，Store 优先读取，原始
   JSONL 路径保持 fallback。
-- 通用分段参数归因：
-  - 自动从目标字段中按 `;`、`&`、`,`、`|`、`.`、JSON path 拆分；
-  - 对每个分段输出 exact / digest(source-string) / contains 三类证据；
-  - 标记证据强度，避免把 contains-only 误判成独立生成点；
+- `[已实现]` 通用分段参数归因：
+  - `split-field` 自动从目标字段按 `;`、`&`、`,`、`|`、`.` 或 JSON scalar path 拆分；
+  - 每个分段使用 SQLite 索引输出 `exact`、`digest(source-string)`、`contains` 三类候选；
+  - 输出最强证据等级，避免把 `contains` 单独误判成生成点；
   - 不写 JD/PDD 专用字段规则。
 - primitive metadata：
   - `[已实现]` 可配置地为 number/boolean 写轻量 metadata；
@@ -433,7 +436,14 @@ primitive metadata 验收：
   状态，因此 `trace-control start` 可以开启受限窗口，`stop` 也能在同一上限内生效。
   仅 script identity/tier-pin 仍属于 restart-required；PC window、opcode/vm limit 和 vm 参数
   经 runtime control 生效。
-- WASM dump/insn trace。
+- `[已实现]` WASM module dump / code-section byte trace：`TRACE_WASM=1` 时成功
+  compile 写 `wasm.module`（模块 SHA-1、大小、函数数、bounded hex preview）；
+  `TRACE_WASM_DUMP=1` 仅在 `TRACE_WASM_DUMP_MAX_BYTES` 内落盘完整 `.wasm`；
+  `TRACE_WASM_INSN=1` 写 bounded `wasm.insn` raw code-section byte，事件明确
+  `semantic=raw_code_section_byte`，避免把字节误标为已解码 opcode。模块/字节上限
+  分别为 `TRACE_WASM_MODULE_LIMIT` / `TRACE_WASM_INSN_LIMIT`，超限写
+  `trace.degraded`。fixture：`tests/wasm-trace.html`；校验：
+  `tools/trace_check.py wasm TRACE_DIR`。
 
 约束：
 
@@ -522,7 +532,8 @@ opcode window 验收：
 待做：
 
 - `[已实现]` run/campaign 管理与跨 run 对比报告（静态 Explorer + Run Store）。
-- trace preset 配置模板保存/加载。
+- `[已实现]` trace preset 配置模板保存/加载：控制台模板保存到浏览器
+  `localStorage`，不保存机器相关的 trace 路径或控制文件；可加载、删除，并在应用前查看。
 - `[已实现]` request -> JS -> DOM/Cookie/Storage 自动关联时间线：选中事件按 request/call/
   origin call/parent call 输出关联上下文。
 

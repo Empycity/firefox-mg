@@ -161,17 +161,32 @@ def check_http_raw(trace_dir):
     if not chunks:
         fail("no http.raw_chunk event found")
     for index, event in enumerate(chunks, 1):
-        for field in ("channel_id", "offset", "source_count", "captured_size", "url", "payload_hex", "payload_hex_truncated", "capture_truncated"):
+        for field in ("channel_id", "offset", "source_count", "captured_size", "browsing_context_id", "top_level_browsing_context_id", "url", "payload_hex", "payload_hex_truncated", "capture_truncated"):
             require_field(event, field, f"http raw chunk #{index}")
         if len(event["payload_hex"]) % 2:
             fail(f"http raw chunk #{index} payload_hex is not byte aligned")
     print(f"http-raw: validated {len(chunks)} raw chunks")
 
 
+def check_wasm(trace_dir):
+    events = json_lines(trace_dir, "firefox-wasm-*.jsonl")
+    modules = [event for _, _, event in events if event.get("type") == "wasm.module"]
+    if not modules:
+        fail("no wasm.module event found")
+    for index, event in enumerate(modules, 1):
+        for field in ("module_id", "module_sha1", "bytecode_size", "code_section_size",
+                      "function_count", "function_import_count", "bytecode_preview_hex",
+                      "bytecode_preview_truncated", "dump_requested", "dump_stored"):
+            require_field(event, field, f"wasm module #{index}")
+        if len(event["module_sha1"]) != 40:
+            fail(f"wasm module #{index} module_sha1 is not a SHA-1 hex digest")
+    print(f"wasm: validated {len(modules)} module events")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "check", choices=("runtime", "boundary", "source-map", "worker", "websocket", "fetch-body", "http-raw")
+        "check", choices=("runtime", "boundary", "source-map", "worker", "websocket", "fetch-body", "http-raw", "wasm")
     )
     parser.add_argument("trace_dir", type=Path)
     args = parser.parse_args()
@@ -189,6 +204,8 @@ def main():
         check_fetch_body(args.trace_dir)
     elif args.check == "http-raw":
         check_http_raw(args.trace_dir)
+    elif args.check == "wasm":
+        check_wasm(args.trace_dir)
     else:
         check_websocket(args.trace_dir)
 

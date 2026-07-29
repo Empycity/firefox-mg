@@ -95,6 +95,40 @@ def import_run(trace_dir, db_path):
 def emit(rows):
     for row in rows: print(json.dumps(json.loads(row["raw_json"]), ensure_ascii=False, sort_keys=True))
 
+def split_value(value):
+    """Split common transport encodings without a site-specific grammar."""
+    try:
+        decoded = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        decoded = None
+    if isinstance(decoded, (dict, list)):
+        return [part for _, part in scalars(decoded)]
+    return [part for part in SPLIT.split(value) if part]
+
+def evidence_rows(db, campaign_id, part):
+    """Return indexed candidate sources ordered by evidence strength and time."""
+    part_sha = hashlib.sha256(part.encode()).hexdigest()
+    rows = []
+    # Exact text and digest are intentionally separate: callers can retain a
+    # hash-only relation when a source value is redacted from its event.
+    for evidence, sql, args in (
+        ("exact", "SELECT e.*, f.name AS field_name FROM field_values f JOIN events e ON e.id=f.event_id WHERE e.run_id IN (SELECT run_id FROM runs WHERE campaign_id=?) AND f.value=?", (campaign_id, part)),
+        ("digest(source-string)", "SELECT e.*, f.name AS field_name FROM field_values f JOIN events e ON e.id=f.event_id WHERE e.run_id IN (SELECT run_id FROM runs WHERE campaign_id=?) AND f.sha256=?", (campaign_id, part_sha)),
+        ("contains", "SELECT e.*, f.name AS field_name FROM field_values f JOIN events e ON e.id=f.event_id WHERE e.run_id IN (SELECT run_id FROM runs WHERE campaign_id=?) AND instr(f.value, ?) > 0 AND f.value<>?", (campaign_id, part, part)),
+    ):
+        for row in db.execute(sql + " ORDER BY e.ts_us", args):
+            rows.append({
+                "evidence": evidence,
+                "event_type": row["event_type"],
+                "request_id": row["request_id"],
+                "call_id": row["call_id"],
+                "origin_call_id": row["origin_call_id"],
+                "script_url": row["script_url"],
+                "field": row["field_name"],
+                "ts_us": row["ts_us"],
+            })
+    return rows
+
 def query(db_path, command, value, run_id=None):
     db=connect(db_path); db.row_factory=sqlite3.Row; where=""; args=[]
     if run_id: where=" AND e.run_id=?"; args.append(run_id)
@@ -104,8 +138,17 @@ def query(db_path, command, value, run_id=None):
     elif command == "split-field":
         request_id, field=value.split(":",1); row=db.execute("SELECT value FROM field_values f JOIN events e ON e.id=f.event_id WHERE e.request_id=? AND lower(f.name)=lower(?) ORDER BY e.ts_us DESC LIMIT 1",(request_id,field)).fetchone()
         if not row: return
-        for part in filter(None, SPLIT.split(row[0])):
-            print(json.dumps({"part": part, "sha256": hashlib.sha256(part.encode()).hexdigest(), "evidence": "exact"}, ensure_ascii=False))
+        source_campaign = None
+        if run_id:
+            source = db.execute("SELECT campaign_id FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        else:
+            source = db.execute("SELECT r.campaign_id FROM events e JOIN runs r ON r.run_id=e.run_id WHERE e.request_id=? ORDER BY e.ts_us DESC LIMIT 1", (request_id,)).fetchone()
+        source_campaign = source[0] if source else None
+        for part in split_value(row[0]):
+            candidates = evidence_rows(db, source_campaign, part) if source_campaign else []
+            strengths = {candidate["evidence"] for candidate in candidates}
+            strength = "exact" if "exact" in strengths else "digest(source-string)" if "digest(source-string)" in strengths else "contains" if "contains" in strengths else "none"
+            print(json.dumps({"part": part, "sha256": hashlib.sha256(part.encode()).hexdigest(), "strength": strength, "candidates": candidates}, ensure_ascii=False))
         return
     else: sql="SELECT * FROM events e WHERE e.%s=?" % {"call":"call_id","request":"request_id"}[command]; args=[value]
     emit(db.execute(sql+" ORDER BY e.ts_us",args))

@@ -16,6 +16,7 @@ TRACE_DIR="$TRACE_DIR" \
 test -f "$TRACE_DIR/manifest.json"
 test -f "$TRACE_DIR/trace-control.json"
 "$ROOT_DIR/tools/trace-control.sh" "$TRACE_DIR" config --module ws=1 >/dev/null
+"$ROOT_DIR/tools/trace-control.sh" "$TRACE_DIR" config --module wasm=1 >/dev/null
 "$PYTHON_BIN" - "$TRACE_DIR/trace-control.json" <<'PY'
 import json
 import sys
@@ -23,6 +24,8 @@ import sys
 control = json.load(open(sys.argv[1], encoding="utf-8"))
 assert control["modules"]["ws"] is True
 assert control["env"]["FIREFOX_TRACE_WS"] == "1"
+assert control["modules"]["wasm"] is True
+assert control["env"]["FIREFOX_TRACE_WASM"] == "1"
 PY
 
 SECONDS=0

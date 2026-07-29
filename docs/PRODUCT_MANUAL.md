@@ -246,6 +246,8 @@ profile prefs、Marionette/RemoteAgent 端口、JIT/tier/opcode 这类底层执�
 | Fetch response headers | 看响应状态、headers、redirect | 默认可用 | `TRACE_FETCH_RESPONSE_HEADERS=preview|full` | `fetch.response` |
 | Fetch response body preview / artifact | 尝试读取响应 body；完整 clone 可写 artifact | 需要看返回 token/配置时 | `TRACE_FETCH_RESPONSE_BODY=preview|full`、`TRACE_FETCH_RESPONSE_BODY_STORE=1` | `fetch.response`、`fetch.body_chunk`、`values/fetch_body_*` |
 | WebSocket logical frame | 成功 send 与接收分发前的帧边界 | 页面使用 WebSocket 时 | `TRACE_WS=1`、`TRACE_WS_PREVIEW_BYTES=512` | `firefox-websocket-*.jsonl`、`websocket.frame` |
+| HTTP response raw chunk | parent HTTP channel 已读响应块的 bounded hex | 需要字节级响应证据时 | `TRACE_HTTP_RAW=1`、`TRACE_HTTP_RAW_EVENTS/MAX_BYTES/HEX_BYTES` | `firefox-http-raw-*.jsonl`、`http.raw_chunk` |
+| WASM module / byte trace | 成功 WASM compile 的模块身份、可选 dump 和 code-section byte | 页面使用 WASM 时 | `TRACE_WASM=1`、`TRACE_WASM_DUMP=1`、`TRACE_WASM_INSN=1` | `firefox-wasm-*.jsonl`、`wasm.module`、`wasm.insn` |
 | URL query 字段抽取 | 从完整 URL 抽目标字段 | 首轮默认使用 | `TRACE_QUERY_FIELDS=sign,token,...` | `query_fields`、`query_fields_meta` |
 | 字段 value_store | 请求字段完整落盘并算 sha256 | 要和 JS return/value 对齐时 | `TRACE_QUERY_FIELD_VALUE_STORE=1` | `values/qfv_*`、`sha256` |
 | URL 降载 | 长 URL 不全量写日志，但仍抽字段 | URL 巨大或日志爆量 | `TRACE_REQUEST_URL=preview|none` | `url_preview`、字段仍在 |
@@ -267,6 +269,19 @@ WebSocket 默认关闭。启用后，文本 frame 记录 escape 后的 bounded `
 可在下一个 segment 启用。测试用 echo 服务是 `tests/websocket_trace_server.py --port 8765`，
 页面是 `tests/websocket-trace.html?wsPort=8765`；采集后运行
 `tools/trace_check.py websocket TRACE_DIR`。
+
+HTTP raw 默认关闭，记录的是 `HttpChannelParent::OnDataAvailable` 已读到的 HTTP
+响应块，不是 TCP packet。事件包含 `channel_id`、offset、URL、bounded `payload_hex` 和
+`browsing_context_id/top_level_browsing_context_id`；与 XHR/Fetch 的同名 context 标识、URL
+及时间联合关联。parent 直接读取当前 `trace-control.json`，所以 `start`、`stop` 和
+`config --module http_raw=...` 会影响该模块。
+
+WASM 默认关闭。启用后 `wasm.module` 记录模块 SHA-1、模块/代码段大小、函数数和 bounded
+hex preview；`TRACE_WASM_DUMP=1` 在上限内请求落盘 `wasm/<sha1>.wasm`；
+`TRACE_WASM_INSN=1` 输出明确标注为 `raw_code_section_byte` 的字节事件，并非已解码的
+WASM opcode。模块与字节限额分别为 `TRACE_WASM_MODULE_LIMIT` 和
+`TRACE_WASM_INSN_LIMIT`。控制台或 `trace-control.sh TRACE_DIR config --module wasm=1`
+可启用模块，`tools/trace_check.py wasm TRACE_DIR` 验证输出结构。
 
 ## 7. JS Trace 功能
 
