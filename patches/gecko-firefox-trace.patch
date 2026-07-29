@@ -1923,7 +1923,7 @@ index b88350d050..7c77c54019 100644
    nsCOMPtr<nsIPrincipal> partitionedCookiePrincipal;
    switch (CookieCommons::CheckGlobalAndRetrieveCookiePrincipals(
 diff --git a/dom/fetch/Fetch.cpp b/dom/fetch/Fetch.cpp
-index 52cf33bfc8..d7c0be5974 100644
+index 52cf33bfc8..e9b088cadd 100644
 --- a/dom/fetch/Fetch.cpp
 +++ b/dom/fetch/Fetch.cpp
 @@ -6,19 +6,37 @@
@@ -1964,7 +1964,7 @@ index 52cf33bfc8..d7c0be5974 100644
  #include "nsJSUtils.h"
  #include "nsNetUtil.h"
  #include "nsReadableUtils.h"
-@@ -61,8 +79,1510 @@
+@@ -61,8 +79,1532 @@
  
  namespace mozilla::dom {
  
@@ -2346,6 +2346,23 @@ index 52cf33bfc8..d7c0be5974 100644
 +    return 65536;
 +  }
 +  return parsed > 2097152 ? 2097152 : static_cast<uint32_t>(parsed);
++}
++
++uint32_t FirefoxTraceFetchResponseBodyStoreMaxBytes() {
++  const char* value = getenv("FIREFOX_TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES");
++  if (!value || !value[0]) {
++    value = getenv("TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES");
++  }
++  if (!value || !value[0]) {
++    return FirefoxTraceFetchResponseBodyMaxBytes();
++  }
++  char* end = nullptr;
++  unsigned long parsed = strtoul(value, &end, 10);
++  if (end == value || parsed == 0) {
++    return FirefoxTraceFetchResponseBodyMaxBytes();
++  }
++  return parsed > 64 * 1024 * 1024 ? 64 * 1024 * 1024
++                                   : static_cast<uint32_t>(parsed);
 +}
 +
 +uint32_t FirefoxTraceFetchResponseBodyHexBytes() {
@@ -2750,6 +2767,9 @@ index 52cf33bfc8..d7c0be5974 100644
 +  }
 +
 +  uint32_t maxBytes = FirefoxTraceFetchResponseBodyMaxBytes();
++  if (FirefoxTraceFetchResponseBodyStoreEnabled()) {
++    maxBytes = std::max(maxBytes, FirefoxTraceFetchResponseBodyStoreMaxBytes());
++  }
 +  uint64_t toRead64 = std::min<uint64_t>(available, maxBytes);
 +  if (toRead64 > static_cast<uint64_t>(INT32_MAX)) {
 +    toRead64 = INT32_MAX;
@@ -2800,14 +2820,16 @@ index 52cf33bfc8..d7c0be5974 100644
 +    char relPath[512];
 +    snprintf(valueId, sizeof(valueId), "fetch_body_%d_%llu", getpid(),
 +             static_cast<unsigned long long>(valueSeq));
-+    bool stored = FirefoxTraceFetchWriteBodyValueStoreFile(
-+        valueId, data, relPath, sizeof(relPath));
++    bool stored = !truncated && FirefoxTraceFetchWriteBodyValueStoreFile(
++                                     valueId, data, relPath, sizeof(relPath));
 +    aLine.AppendLiteral(",\"body_value_id\":");
 +    FirefoxTraceFetchAppendJsonCString(aLine, valueId);
 +    aLine.AppendLiteral(",\"body_value_store_path\":");
 +    FirefoxTraceFetchAppendJsonCString(aLine, stored ? relPath : "");
 +    aLine.AppendLiteral(",\"body_value_stored\":");
 +    aLine.Append(stored ? "true" : "false");
++    aLine.AppendLiteral(",\"body_value_truncated\":");
++    aLine.Append(truncated ? "true" : "false");
 +  }
 +}
 +
@@ -3475,7 +3497,7 @@ index 52cf33bfc8..d7c0be5974 100644
  // Step 17.2.1.2 and 17.2.2 of
  // https://fetch.spec.whatwg.org/#concept-http-network-fetch
  // If stream is readable, then error stream with ...
-@@ -357,17 +1877,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -357,17 +1899,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
    RefPtr<FetchObserver> mFetchObserver;
    RefPtr<AbortSignalImpl> mSignalImpl;
    const bool mMozErrors;
@@ -3498,7 +3520,7 @@ index 52cf33bfc8..d7c0be5974 100644
  
    void OnResponseAvailableInternal(
        SafeRefPtr<InternalResponse> aResponse) override;
-@@ -376,6 +1899,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -376,6 +1921,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
  
    void OnResponseEnd(FetchDriverObserver::EndReason aReason,
                       JS::Handle<JS::Value> aReasonDetails) override {
@@ -3507,7 +3529,7 @@ index 52cf33bfc8..d7c0be5974 100644
      if (aReason == eAborted) {
        if (!aReasonDetails.isUndefined()) {
          mPromise->MaybeReject(aReasonDetails);
-@@ -510,6 +2035,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -510,6 +2057,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
    }
  
    SafeRefPtr<InternalRequest> internalRequest = request->GetInternalRequest();
@@ -3515,7 +3537,7 @@ index 52cf33bfc8..d7c0be5974 100644
  
    // Restore information of InterceptedHttpChannel if they are passed with the
    // Request. Since Request::Constructor would not copy these members.
-@@ -593,12 +2119,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -593,12 +2141,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
      }
  
      RefPtr<MainThreadFetchResolver> resolver = new MainThreadFetchResolver(
@@ -3531,7 +3553,7 @@ index 52cf33bfc8..d7c0be5974 100644
      fetch->SetDocument(doc);
      resolver->SetLoadGroup(loadGroup);
      aRv = fetch->Fetch(signalImpl, resolver);
-@@ -856,6 +2383,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
+@@ -856,6 +2405,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
    NS_ASSERT_OWNINGTHREAD(MainThreadFetchResolver);
    AssertIsOnMainThread();
  
