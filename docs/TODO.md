@@ -134,11 +134,13 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
 - 最新 smoke：`/private/tmp/firefox-trace-runtime-segments-smoke6`，
   `seg_003` 成功出现 `js_mode=target`、`target_match=true` 和 `js.value.store`。
 
-待补：
+已实现：
 
 - `config_applied` 确认机制已实现：切换配置后 UI/agent 等待 content 收到目标
   `control_version/config_hash`，再提示用户触发目标动作。Parent 的定时推送和 content 初始化
   推送不依赖下一条业务事件。
+
+待补：
 - start/config/new-segment 已有独立 `segment_id`；JS segment 切换会重置 event count、
   limit sentinel 和 boundary buffer。后续 viewer/analyzer 仍需按 `segment_id` 做更好的展示。
 - 模块级运行时开关：
@@ -215,11 +217,13 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
   - sink 级窗口；
   - 字段级窗口；
   - `complete_window`、`skipped_by_window`、`dropped_before_flush` 正确。
+  - `tools/trace_check.py boundary TRACE_DIR` 能验证 flush summary schema。
 - source map：
   - `source_map_url` / `source_map_resolved_url` 正确；
   - raw script `raw_size` 和真实文件大小一致；
   - `raw_sha256` 和真实文件 sha256 一致；
   - `tools/fetch_source_maps.py` 能落盘 map。
+  - `tools/trace_check.py source-map TRACE_DIR` 能验证 relation 和 raw artifact。
 - XHR/Fetch 字段回归：
   - URL query 字段；
   - XHR JSON/form body 字段；
@@ -272,8 +276,6 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
   `trace.degraded`。
 - worker JS trace 默认策略明确化：当前为非主线程 drop，后续需要 queue 到主线程或
   记录 suppressed。
-- `apply/prewarm` 生效确认：切换 target/deep 配置后，UI/agent 必须能确认 content 已应用
-  目标 `control_version/config_hash`，再提示用户触发目标动作。
 - bigint metadata 暂未实现；如果后续确实需要真实值字符串，再单独评估低副作用
   转换方式，不能为了 bigint 破坏真实站时序。
 
@@ -491,8 +493,6 @@ opcode window 验收：
 - request -> JS -> DOM/Cookie/Storage 时间线。
 - value/script/source map artifact 查看。
 - 多轮对比和报告导出。
-- `apply/prewarm` 生效确认：UI 等待 content 进程已收到目标 `control_version` 后，
-  再提示用户触发关键动作。
 
 ## P4 可选：Firefox Trace 自有 MCP
 

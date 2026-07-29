@@ -251,11 +251,12 @@ runtime segment/config 热切 smoke：
   - 刚切 segment 后首批事件可能仍按旧配置产生；控制台/UI 需要提供
     `apply/prewarm` 或等待 `control_version` 生效确认。
 
-当前待补：
+后续状态（2026-07-28）：
 
-- `apply/prewarm` 确认机制；
-- JS 模块启动级关闭已 build/smoke 通过；paused 热切换仍依赖 `apply/prewarm` ack；
-- PDD paused-flow 真实页复验。
+- `config_applied` ACK 已实现并通过 paused headless smoke；UI/agent 以匹配
+  `control_version/config_hash` 的 ACK 作为触发关键动作的门槛。
+- JS 模块启动级关闭已 build/smoke 通过。
+- PDD paused-flow 真实页复验仍待完成。
 
 ### Trace Console v1
 
@@ -302,8 +303,8 @@ runtime segment/config 热切 smoke：
 当前边界：
 
 - 控制台 v1 是控制面，不是 viewer；请求时间线、value/script artifact 查看和报告导出后续补。
-- 尚未实现 `apply/prewarm` 生效确认；切换到 target/deep 后仍建议等一次 status/summary
-  或稍等再触发关键动作。
+- `config_applied` ACK 已实现；切换到 target/deep 后应等待 `/api/status` 返回当前
+  `control_version/config_hash` 的 `config_applied.ready=true`，而不是依赖固定等待时间。
 
 真实页 JD paused-flow 验证：
 

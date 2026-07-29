@@ -3,6 +3,24 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TRACE_RUN_SUFFIX="${TRACE_RUN_SUFFIX:-$(date +%s)-$$}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  run-trace-firefox.sh [trace options] [Firefox options] URL
+
+Trace options:
+  --trace-preset discover-light|target-return|target-values|deep-causal|opcode-window|manual
+  --trace-start active|paused|prewarm
+  --trace-run-label LABEL
+  --trace-automation-surface baseline|stock
+
+Environment:
+  FIREFOX_BIN, TRACE_DIR, PROFILE_DIR, TRACE_HEADLESS=0|1,
+  TRACE_SCREENSHOT=PATH, TRACE_QUERY_FIELDS, and other TRACE_* settings.
+EOF
+}
+
 find_default_firefox_bin() {
   local candidate=""
   shopt -s nullglob
@@ -32,6 +50,10 @@ TRACE_AUTOMATION_SURFACE="${TRACE_AUTOMATION_SURFACE:-baseline}"
 TRACE_START="${TRACE_START:-active}"
 TRACE_CONTROL_FILE="${TRACE_CONTROL_FILE:-$TRACE_DIR/trace-control.json}"
 FIREFOX_TRACE_PYTHON="${FIREFOX_TRACE_PYTHON:-/opt/miniconda3/envs/firefox-trace/bin/python}"
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
 if [[ ! -x "$FIREFOX_TRACE_PYTHON" ]]; then
   echo "Firefox Trace python env not found: $FIREFOX_TRACE_PYTHON" >&2
   echo "Create it with: /opt/miniconda3/condabin/conda create -y -n firefox-trace python=3.11" >&2
@@ -41,6 +63,10 @@ fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
     --trace-preset)
       TRACE_PRESET="${2:-}"
       shift 2

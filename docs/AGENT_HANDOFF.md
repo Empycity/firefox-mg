@@ -172,8 +172,8 @@ tools/trace-control.sh "$TRACE_DIR" status
 - Parent 进程会通过 `FirefoxTraceRuntimeConfig` IPC 把 control config 推给 content 进程；
   JS trace 能在同一浏览器进程内从 boundary/discover 切到 target/value。
 - Parent/content 的 `FirefoxTraceRuntimeConfigApplied` ACK 协议与 console status 已接入，
-  但当前 paused smoke 未收到 ACK。`config_applied.ready=true` 仍是未来可用的判定条件，
-  目前不能作为热切换成功证据。
+  2026-07-28 paused headless smoke 已收到初始、`config --module js=0` 和 `start` 的
+  匹配 ACK。`config_applied.ready=true` 是切换目标配置后触发关键动作的生效门槛。
 - Parent 写 JSONL 前统一注入 `segment_id`、`control_version`、`config_hash`。
 - ContentChild/ContentParent 写入前仍有二次 gate，避免漏写。
 - 控制状态按 200ms 缓存刷新；每次刷新直接重读小控制文件，避免同秒/同大小 start/stop
@@ -879,7 +879,15 @@ python3 tools/trace_opcode_analyzer.py TRACE_DIR \
 
 ```bash
 cd /Users/empycity/Desktop/JS-tools/firefoxTrace
-git -C gecko-dev diff > patches/gecko-firefox-trace.patch
+git -C gecko-dev diff --binary > patches/gecko-firefox-trace.patch
+```
+
+P1 fixture 产物可用以下检查器做结构化验收：
+
+```bash
+python3 tools/trace_check.py runtime TRACE_DIR
+python3 tools/trace_check.py boundary TRACE_DIR
+python3 tools/trace_check.py source-map TRACE_DIR
 ```
 
 ## 下一步优先级
@@ -888,11 +896,10 @@ git -C gecko-dev diff > patches/gecko-firefox-trace.patch
 
 最高优先级：
 
-- P0：补 `apply/prewarm` 生效确认。UI/agent 切换 target/deep 或 module 开关后，
-  必须等 content 收到目标 `control_version/config_hash`，再提示用户触发关键动作。
-  最新 paused smoke 已证明仅依赖业务事件触发 Parent 推配置不可靠。
-- P1：对 paused 热切换补完后，重新做 JD/PDD smoke，再重新生成 Gecko patch。
-- P1：继续做当前 TODO 里的 source map、boundary window、automation surface 回归。
+- P1：补跑 source map、boundary window、automation surface 和 XHR/Fetch 字段回归，
+  并记录 `trace.degraded`。
+- P1：处理大 JS IPC send 的失败语义，并明确 worker JS trace 的 drop/suppressed 策略。
+- P1：完成回归后重新生成 binary Gecko patch、更新验证证据并提交。
 
 ## 当前已知边界
 
