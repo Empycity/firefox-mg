@@ -94,6 +94,41 @@ class TraceCheckTests(unittest.TestCase):
             )
             trace_check.check_worker(trace_dir)
 
+    def test_worker_fetch_requires_both_modes_and_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trace_dir = Path(directory)
+            payload = b'{"token":"worker"}\n'
+            artifact = trace_dir / "values" / "worker.json"
+            artifact.parent.mkdir()
+            artifact.write_bytes(payload)
+            digest = hashlib.sha256(payload).hexdigest()
+            events = []
+            for index, keepalive in enumerate((True, False), 1):
+                request_id = f"fetch_{index}"
+                events.extend(
+                    [
+                        {
+                            "type": "fetch.call",
+                            "request_id": request_id,
+                            "url": f"http://fixture/response?worker_mode={index}",
+                            "keepalive": keepalive,
+                        },
+                        {"type": "fetch.request", "request_id": request_id},
+                        {"type": "fetch.response", "request_id": request_id},
+                        {"type": "fetch.done", "request_id": request_id},
+                        {
+                            "type": "fetch.body_artifact",
+                            "request_id": request_id,
+                            "body_value_stored": True,
+                            "body_value_truncated": False,
+                            "body_value_store_path": "values/worker.json",
+                            "body_sha256": digest,
+                        },
+                    ]
+                )
+            write_jsonl(trace_dir / "firefox-fetch-123.jsonl", events)
+            trace_check.check_worker_fetch(trace_dir)
+
     def test_websocket_requires_send_recv_and_frame_schema(self):
         with tempfile.TemporaryDirectory() as directory:
             trace_dir = Path(directory)

@@ -109,6 +109,49 @@ def check_worker(trace_dir):
     print(f"worker: validated {len(suppressed)} suppression notices")
 
 
+def check_worker_fetch(trace_dir):
+    events = [
+        event
+        for _, _, event in json_lines(trace_dir, "firefox-fetch-*.jsonl")
+        if event.get("request_id")
+    ]
+    worker_calls = {
+        event["request_id"]: event
+        for event in events
+        if event.get("type") == "fetch.call"
+        and "worker_mode=" in event.get("url", "")
+    }
+    if len(worker_calls) < 2:
+        fail("expected keepalive and regular Worker fetch.call events")
+    if not {True, False} <= {event.get("keepalive") for event in worker_calls.values()}:
+        fail("Worker fetch calls do not include both keepalive modes")
+
+    required = {"fetch.call", "fetch.request", "fetch.response", "fetch.done"}
+    for request_id in worker_calls:
+        chain = [event for event in events if event["request_id"] == request_id]
+        missing = required - {event.get("type") for event in chain}
+        if missing:
+            fail(f"Worker {request_id} missing events: {', '.join(sorted(missing))}")
+        artifacts = [
+            event for event in chain
+            if event.get("type") == "fetch.body_artifact"
+            and event.get("body_value_stored") is True
+            and event.get("body_value_truncated") is False
+        ]
+        if not artifacts:
+            fail(f"Worker {request_id} has no complete response artifact")
+        for artifact in artifacts:
+            relative_path = require_field(
+                artifact, "body_value_store_path", f"Worker {request_id} artifact"
+            )
+            value_path = (trace_dir / relative_path).resolve()
+            if trace_dir.resolve() not in value_path.parents or not value_path.is_file():
+                fail(f"Worker {request_id} artifact is missing: {relative_path}")
+            if sha256(value_path) != artifact.get("body_sha256"):
+                fail(f"Worker {request_id} artifact digest does not match")
+    print(f"worker-fetch: validated {len(worker_calls)} complete Worker fetch chains")
+
+
 def check_websocket(trace_dir):
     frames = [
         event
@@ -133,7 +176,7 @@ def check_fetch_body(trace_dir):
     responses = [
         event
         for _, _, event in json_lines(trace_dir, "firefox-fetch-*.jsonl")
-        if event.get("type") == "fetch.response"
+        if event.get("type") in ("fetch.response", "fetch.body_artifact")
         and event.get("body_value_stored") is True
     ]
     if not responses:
@@ -197,7 +240,7 @@ def check_wasm(trace_dir):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "check", choices=("runtime", "boundary", "source-map", "worker", "websocket", "fetch-body", "http-raw", "wasm")
+        "check", choices=("runtime", "boundary", "source-map", "worker", "worker-fetch", "websocket", "fetch-body", "http-raw", "wasm")
     )
     parser.add_argument("trace_dir", type=Path)
     args = parser.parse_args()
@@ -211,6 +254,8 @@ def main():
         check_source_map(args.trace_dir)
     elif args.check == "worker":
         check_worker(args.trace_dir)
+    elif args.check == "worker-fetch":
+        check_worker_fetch(args.trace_dir)
     elif args.check == "fetch-body":
         check_fetch_body(args.trace_dir)
     elif args.check == "http-raw":

@@ -8,11 +8,15 @@ const workerSource = `
     function workerTraceValue(value) {
       return "worker-token-" + value;
     }
-    const response = await fetch("/fetch-response-body.json?worker_token=" + data, {
+    const keepaliveResponse = await fetch(
+      data.url + "?worker_token=" + data.token + "&worker_mode=keepalive", {
       keepalive: true,
-    });
-    const body = await response.json();
-    self.postMessage(workerTraceValue(body.token));
+      });
+    const keepaliveBody = await keepaliveResponse.json();
+    const regularResponse = await fetch(
+      data.url + "?worker_token=" + data.token + "&worker_mode=regular");
+    const regularBody = await regularResponse.json();
+    self.postMessage(workerTraceValue(keepaliveBody.token + "-" + regularBody.token));
   };
 `;
 const worker = new Worker(URL.createObjectURL(new Blob([workerSource], {
@@ -22,5 +26,8 @@ worker.onmessage = ({ data }) => {
   document.getElementById("out").textContent = data;
   worker.terminate();
 };
-worker.postMessage("smoke");
+worker.postMessage({
+  token: "smoke",
+  url: new URL("/fetch-response-body.json", location.href).href,
+});
 </script>

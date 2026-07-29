@@ -283,8 +283,8 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
 
 必须补：
 
-- bigint metadata 暂未实现；如果后续确实需要真实值字符串，再单独评估低副作用
-  转换方式，不能为了 bigint 破坏真实站时序。
+- BigInt 当前记录 `type=bigint`；真实十进制字符串属于可选增强，需单独评估低副作用
+  转换方式，避免为该信息破坏真实站时序。
 
 交付动作：
 
@@ -309,7 +309,7 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
 
 需要做：
 
-- `[待做]` 把 README 中过长的 Phase 规划压缩，详细路线迁移/引用 `docs/TODO.md`。
+- `[已处理]` README 的历史 Phase 规划已压缩为状态/路线入口，详细路线只引用 `docs/TODO.md`。
 - `[已处理]` AGENT_HANDOFF 的“下一步优先级”改为引用 `docs/TODO.md`。
 - `[已处理]` PRODUCT_MANUAL 的“当前版本边界”改为引用 `docs/TODO.md`，只保留用户侧说明。
 
@@ -317,24 +317,22 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
 
 待做：
 
-- `[已实现，待 fixture 回归]` Worker fetch：Worker 线程生成的 Fetch trace event 经 content
-  主线程 queue 再送 IPC；不直接触碰 `PContentChild`。`tests/worker-trace.html` 会发起本地
-  Fetch，需在持久 Firefox 终端确认 `fetch.call/open/response`。
-- `[已实现，待 fixture 回归]` keepalive/PFetch：`fetch.call/open/response` 已写
-  `keepalive`，主线程和 Worker PFetch 均复用 Fetch trace 起点；`tests/worker-trace.html`
-  显式使用 `keepalive: true`。
-- `[已实现，待 fixture 回归]` 完整 Fetch response body artifact：
+- `[已通过]` Worker fetch / keepalive PFetch：PFetch IPC 透传同一 `traceFetchId` 到父进程
+  `FetchService/FetchDriver`，因此 `fetch.call/request/response/done/body_artifact` 使用一致
+  request id；父进程直接写 SHA-256 去重的 `values/` 制品。`tests/worker-trace.html` 同时覆盖
+  `keepalive=true` 和普通 Worker fetch；`tools/trace_check.py worker-fetch TRACE_DIR` 验证两条完整链路。
+- `[已通过]` 完整 Fetch response body artifact：
   `TRACE_FETCH_RESPONSE_BODY=preview` 与 `TRACE_FETCH_RESPONSE_BODY_STORE=1`
-  会在 clone 完整且未截断时写 `values/fetch_body_*`，响应事件带
-  `body_value_store_path/body_sha256/body_value_truncated`；
+  会在传输完成后从 FetchDriver 的旁路采样写 `fetch.body_artifact` 与 `values/` 制品；
+  不读取页面 Response stream，事件带 `body_value_store_path/body_sha256/body_value_truncated`；
   `tools/trace_check.py fetch-body TRACE_DIR` 验证制品和 digest。
-- `[已实现，待 fixture 回归]` WebSocket logical frame：`TRACE_WS=1` 或
+- `[已通过]` WebSocket logical frame：`TRACE_WS=1` 或
   `trace-control.sh TRACE_DIR config --module ws=1` 开启；发送成功后和接收分发前写入
   `firefox-websocket-*.jsonl`。文本仅写 bounded preview，二进制只写 hex prefix，Blob/stream
   send 只写长度和 `preview_available=false`；`tools/trace_check.py websocket TRACE_DIR`
   验证 send/recv 和 schema。fixture：`tests/websocket-trace.html` 配合
   `tests/websocket_trace_server.py --port 8765`。
-- `[已实现，待 fixture 回归]` HTTP payload raw bytes：`TRACE_HTTP_RAW=1` 在 parent
+- `[已通过]` HTTP payload raw bytes：`TRACE_HTTP_RAW=1` 在 parent
   `HttpChannelParent::OnDataAvailable` 旁路记录 `http.raw_chunk`，包含 channel id、offset、
   URL、source/captured size 和 bounded hex prefix；`TRACE_HTTP_RAW_EVENTS/MAX_BYTES/HEX_BYTES`
   控制负载，耗尽时写一次 `trace.degraded module=http_raw`；
@@ -373,7 +371,7 @@ tools/trace-control.sh "$TRACE_DIR" start target-values
   - `[已实现]` 可配置地为 number/boolean 写轻量 metadata；
   - `[已实现]` 用于时间戳、开关位这类不会进入 string value_store 的字段；
   - `[已实现]` target/deep preset 默认开启，首轮 discover 不默认开启；
-  - `[待做]` bigint 如需真实值字符串，再单独评估低副作用转换方式。
+  - `[可选]` bigint 如需真实值字符串，再单独评估低副作用转换方式。
 - request -> JS call 自动拼链：
   - 从请求字段 sha256 回连 JS value metadata；
   - 从 `call_id/parent_call_id` 输出候选链；

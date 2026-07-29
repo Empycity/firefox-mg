@@ -679,10 +679,7 @@ P1 已完成：
 仍属 P2/P3 或后续，具体拆分以 [TODO.md](TODO.md) 为准：
 
 - 运行时 Trace 开关：浏览器先打开但 trace 暂停，目标触发前再 start；
-- Worker fetch；
-- keepalive/PFetch；
-- 完整 response body artifact；
-- WebSocket protocol/raw bytes 和控制帧；逻辑 send/recv frame 已实现，fixture 回归待完成；
+- WebSocket protocol/raw bytes 和控制帧；逻辑 send/recv frame 已通过本地 echo fixture；
 - run/campaign 管理、多轮对比和更深的报告模板；静态 viewer/时间线/制品预览与导出已实现；
 - opcode、收窄 dispatcher PC 的 vm_step、WASM / HTTP/WS；
 - 最后可选：Firefox Trace 自有 MCP，配套魔改 Firefox，提供页面操控、网络/脚本观察、断点/evaluate、trace start/stop 和日志查询；

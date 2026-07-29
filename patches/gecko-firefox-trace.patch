@@ -1923,7 +1923,7 @@ index b88350d050..7c77c54019 100644
    nsCOMPtr<nsIPrincipal> partitionedCookiePrincipal;
    switch (CookieCommons::CheckGlobalAndRetrieveCookiePrincipals(
 diff --git a/dom/fetch/Fetch.cpp b/dom/fetch/Fetch.cpp
-index 52cf33bfc8..72af4abbed 100644
+index 52cf33bfc8..d88a644362 100644
 --- a/dom/fetch/Fetch.cpp
 +++ b/dom/fetch/Fetch.cpp
 @@ -6,19 +6,38 @@
@@ -1965,7 +1965,7 @@ index 52cf33bfc8..72af4abbed 100644
  #include "nsJSUtils.h"
  #include "nsNetUtil.h"
  #include "nsReadableUtils.h"
-@@ -61,8 +80,1546 @@
+@@ -61,8 +80,1548 @@
  
  namespace mozilla::dom {
  
@@ -3284,6 +3284,8 @@ index 52cf33bfc8..72af4abbed 100644
 +  return "unknown";
 +}
 +
++}  // namespace
++
 +void FirefoxTraceFetchAppendRequestId(nsACString& aLine, uint64_t aFetchId) {
 +  aLine.AppendLiteral(",\"request_id\":\"fetch_");
 +  aLine.AppendInt(static_cast<uint64_t>(aFetchId));
@@ -3487,8 +3489,7 @@ index 52cf33bfc8..72af4abbed 100644
 +  FirefoxTraceWriteFetchLine(line);
 +}
 +
-+void FirefoxTraceFetchDoneEvent(uint64_t aFetchId,
-+                                FetchDriverObserver::EndReason aReason) {
++void FirefoxTraceFetchDoneEvent(uint64_t aFetchId, uint32_t aReason) {
 +  if (!aFetchId || !FirefoxTraceFetchEnabled() ||
 +      !FirefoxTraceFetchEventKindEnabled("done")) {
 +    return;
@@ -3504,7 +3505,8 @@ index 52cf33bfc8..72af4abbed 100644
 +  FirefoxTraceFetchAppendRequestId(line, aFetchId);
 +  line.AppendLiteral(",\"end_reason\":");
 +  FirefoxTraceFetchAppendJsonCString(
-+      line, FirefoxTraceFetchEndReasonName(aReason));
++      line, FirefoxTraceFetchEndReasonName(
++                static_cast<FetchDriverObserver::EndReason>(aReason)));
 +  line.Append('}');
 +  FirefoxTraceWriteFetchLine(line);
 +}
@@ -3512,7 +3514,67 @@ index 52cf33bfc8..72af4abbed 100644
  // Step 17.2.1.2 and 17.2.2 of
  // https://fetch.spec.whatwg.org/#concept-http-network-fetch
  // If stream is readable, then error stream with ...
-@@ -357,17 +1914,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -84,8 +1643,6 @@ void AbortStream(JSContext* aCx, ReadableStream* aReadableStream,
+   aReadableStream->ErrorNative(aCx, value, aRv);
+ }
+ 
+-}  // namespace
+-
+ class AbortSignalMainThread final : public AbortSignalImpl {
+  public:
+   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+@@ -218,6 +1775,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+   RefPtr<FetchObserver> mFetchObserver;
+   RefPtr<WeakWorkerRef> mWorkerRef;
+   bool mIsShutdown;
++  const uint64_t mTraceFetchId;
+ 
+   Atomic<bool> mNeedOnDataAvailable;
+ 
+@@ -225,7 +1783,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+   // Returns null if worker is shutting down.
+   static already_AddRefed<WorkerFetchResolver> Create(
+       WorkerPrivate* aWorkerPrivate, Promise* aPromise,
+-      AbortSignalImpl* aSignalImpl, FetchObserver* aObserver) {
++      AbortSignalImpl* aSignalImpl, FetchObserver* aObserver,
++      uint64_t aTraceFetchId) {
+     MOZ_ASSERT(aWorkerPrivate);
+     aWorkerPrivate->AssertIsOnWorkerThread();
+     RefPtr<PromiseWorkerProxy> proxy =
+@@ -241,7 +1800,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+     }
+ 
+     RefPtr<WorkerFetchResolver> r =
+-        new WorkerFetchResolver(proxy, signalProxy, aObserver);
++        new WorkerFetchResolver(proxy, signalProxy, aObserver, aTraceFetchId);
+ 
+     RefPtr<WeakWorkerRef> workerRef = WeakWorkerRef::Create(
+         aWorkerPrivate, [r]() { r->Shutdown(r->mWorkerRef->GetPrivate()); });
+@@ -279,6 +1838,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+     return mPromiseProxy;
+   }
+ 
++  uint64_t TraceFetchId() const { return mTraceFetchId; }
++
+   Promise* WorkerPromise(WorkerPrivate* aWorkerPrivate) const {
+     MOZ_ASSERT(aWorkerPrivate);
+     aWorkerPrivate->AssertIsOnWorkerThread();
+@@ -329,11 +1890,13 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+ 
+  private:
+   WorkerFetchResolver(PromiseWorkerProxy* aProxy,
+-                      AbortSignalProxy* aSignalProxy, FetchObserver* aObserver)
++                      AbortSignalProxy* aSignalProxy, FetchObserver* aObserver,
++                      uint64_t aTraceFetchId)
+       : mPromiseProxy(aProxy),
+         mSignalProxy(aSignalProxy),
+         mFetchObserver(aObserver),
+         mIsShutdown(false),
++        mTraceFetchId(aTraceFetchId),
+         mNeedOnDataAvailable(!!aObserver) {
+     MOZ_ASSERT(!NS_IsMainThread());
+     MOZ_ASSERT(mPromiseProxy);
+@@ -357,17 +1920,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
    RefPtr<FetchObserver> mFetchObserver;
    RefPtr<AbortSignalImpl> mSignalImpl;
    const bool mMozErrors;
@@ -3535,7 +3597,7 @@ index 52cf33bfc8..72af4abbed 100644
  
    void OnResponseAvailableInternal(
        SafeRefPtr<InternalResponse> aResponse) override;
-@@ -376,6 +1936,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -376,6 +1942,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
  
    void OnResponseEnd(FetchDriverObserver::EndReason aReason,
                       JS::Handle<JS::Value> aReasonDetails) override {
@@ -3544,7 +3606,18 @@ index 52cf33bfc8..72af4abbed 100644
      if (aReason == eAborted) {
        if (!aReasonDetails.isUndefined()) {
          mPromise->MaybeReject(aReasonDetails);
-@@ -510,6 +2072,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -452,7 +2020,9 @@ class MainThreadFetchRunnable : public Runnable {
+                               workerPrivate->MainThreadEventTarget(),
+                               workerPrivate->CookieJarSettings(),
+                               workerPrivate->GetPerformanceStorage(),
+-                              net::ClassificationFlags({0, 0}));
++                              net::ClassificationFlags({0, 0}),
++                              mResolver->TraceFetchId());
++      FirefoxTraceFetchRequestEvent(mResolver->TraceFetchId(), *mRequest);
+       nsAutoCString spec;
+       if (proxy->GetWorkerPrivate()->GetBaseURI()) {
+         proxy->GetWorkerPrivate()->GetBaseURI()->GetAsciiSpec(spec);
+@@ -510,6 +2080,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
    }
  
    SafeRefPtr<InternalRequest> internalRequest = request->GetInternalRequest();
@@ -3552,7 +3625,7 @@ index 52cf33bfc8..72af4abbed 100644
  
    // Restore information of InterceptedHttpChannel if they are passed with the
    // Request. Since Request::Constructor would not copy these members.
-@@ -593,12 +2156,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -593,12 +2164,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
      }
  
      RefPtr<MainThreadFetchResolver> resolver = new MainThreadFetchResolver(
@@ -3568,7 +3641,33 @@ index 52cf33bfc8..72af4abbed 100644
      fetch->SetDocument(doc);
      resolver->SetLoadGroup(loadGroup);
      aRv = fetch->Fetch(signalImpl, resolver);
-@@ -856,6 +2420,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
+@@ -703,6 +2275,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+ 
+     ipcArgs.hasCSPEventListener() = false;
+     ipcArgs.isWorkerRequest() = false;
++    ipcArgs.traceFetchId() = traceFetchId;
+ 
+     actor->DoFetchOp(ipcArgs);
+ 
+@@ -793,6 +2366,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+       ipcArgs.isOn3PCBExceptionList() = worker->IsOn3PCBExceptionList();
+ 
+       ipcArgs.isWorkerRequest() = true;
++      ipcArgs.traceFetchId() = traceFetchId;
+ 
+       actor->DoFetchOp(ipcArgs);
+ 
+@@ -808,7 +2382,8 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+     // We do not check if keepalive flag is set for ChromeWorkers
+     // See Bug 1898664
+     RefPtr<WorkerFetchResolver> resolver =
+-        WorkerFetchResolver::Create(worker, p, signalImpl, observer);
++        WorkerFetchResolver::Create(worker, p, signalImpl, observer,
++                                    traceFetchId);
+     if (!resolver) {
+       NS_WARNING("Could not keep the worker alive.");
+       aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
+@@ -856,6 +2431,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
    NS_ASSERT_OWNINGTHREAD(MainThreadFetchResolver);
    AssertIsOnMainThread();
  
@@ -3577,14 +3676,63 @@ index 52cf33bfc8..72af4abbed 100644
    if (aResponse->Type() != ResponseType::Error) {
      nsCOMPtr<nsIGlobalObject> go = mPromise->GetParentObject();
      nsCOMPtr<nsPIDOMWindowInner> inner = do_QueryInterface(go);
+@@ -1074,6 +2651,8 @@ void WorkerFetchResolver::OnResponseAvailableInternal(
+     SafeRefPtr<InternalResponse> aResponse) {
+   AssertIsOnMainThread();
+ 
++  FirefoxTraceFetchResponseEvent(mTraceFetchId, *aResponse);
++
+   MutexAutoLock lock(mPromiseProxy->Lock());
+   if (mPromiseProxy->CleanedUp()) {
+     return;
+@@ -1108,6 +2687,7 @@ void WorkerFetchResolver::OnDataAvailable() {
+ void WorkerFetchResolver::OnResponseEnd(FetchDriverObserver::EndReason aReason,
+                                         JS::Handle<JS::Value> aReasonDetails) {
+   AssertIsOnMainThread();
++  FirefoxTraceFetchDoneEvent(mTraceFetchId, aReason);
+   MutexAutoLock lock(mPromiseProxy->Lock());
+   if (mPromiseProxy->CleanedUp()) {
+     return;
+diff --git a/dom/fetch/Fetch.h b/dom/fetch/Fetch.h
+index 80b329149c..0c66c94361 100644
+--- a/dom/fetch/Fetch.h
++++ b/dom/fetch/Fetch.h
+@@ -40,6 +40,8 @@ class
+     BlobOrArrayBufferViewOrArrayBufferOrFormDataOrURLSearchParamsOrReadableStreamOrUSVString;
+ class BlobImpl;
+ class InternalRequest;
++class InternalResponse;
++class Request;
+ class
+     OwningBlobOrArrayBufferViewOrArrayBufferOrFormDataOrURLSearchParamsOrUSVString;
+ 
+@@ -55,6 +57,15 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+                                        CallerType aCallerType,
+                                        ErrorResult& aRv);
+ 
++// FirefoxTrace Fetch helpers shared with the PFetch parent-process path.
++uint64_t FirefoxTraceFetchEvent(nsIGlobalObject* aGlobal, JSContext* aCx,
++                                Request& aRequest);
++void FirefoxTraceFetchRequestEvent(uint64_t aFetchId,
++                                   InternalRequest& aRequest);
++void FirefoxTraceFetchResponseEvent(uint64_t aFetchId,
++                                    InternalResponse& aResponse);
++void FirefoxTraceFetchDoneEvent(uint64_t aFetchId, uint32_t aReason);
++
+ nsresult UpdateRequestReferrer(nsIGlobalObject* aGlobal,
+                                InternalRequest* aRequest);
+ 
 diff --git a/dom/fetch/FetchDriver.cpp b/dom/fetch/FetchDriver.cpp
-index 1b3431e32e..c6500fe112 100644
+index 1b3431e32e..68f3f8f296 100644
 --- a/dom/fetch/FetchDriver.cpp
 +++ b/dom/fetch/FetchDriver.cpp
-@@ -5,6 +5,14 @@
+@@ -5,6 +5,17 @@
   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
  
  #include "js/Value.h"
++#if defined(__APPLE__)
++#  include <CommonCrypto/CommonDigest.h>
++#endif
 +#include <algorithm>
 +#include <stdio.h>
 +#include <stdlib.h>
@@ -3596,7 +3744,7 @@ index 1b3431e32e..c6500fe112 100644
  #include "mozilla/DebugOnly.h"
  #include "mozilla/TaskQueue.h"
  #include "mozilla/dom/FetchDriver.h"
-@@ -28,6 +36,8 @@
+@@ -28,6 +39,8 @@
  #include "nsIInterfaceRequestorUtils.h"
  #include "nsIPipe.h"
  #include "nsIRedirectHistoryEntry.h"
@@ -3605,16 +3753,24 @@ index 1b3431e32e..c6500fe112 100644
  
  #include "nsContentPolicyUtils.h"
  #include "nsDataChannel.h"
-@@ -65,8 +75,227 @@
+@@ -65,8 +78,333 @@
  
  namespace mozilla::dom {
  
 +#if defined(__APPLE__)
 +extern "C" bool FirefoxTraceSendEventToParent(const char* aLine, size_t aLen)
 +    __attribute__((weak_import));
++extern "C" bool FirefoxTraceSendValueToParent(const char* aValueId,
++                                               const char* aArtifactKey,
++                                               const char* aData, size_t aLen)
++    __attribute__((weak_import));
 +extern "C" bool FirefoxTraceRuntimeActive() __attribute__((weak_import));
 +#elif defined(__GNUC__)
 +extern "C" bool FirefoxTraceSendEventToParent(const char* aLine, size_t aLen)
++    __attribute__((weak));
++extern "C" bool FirefoxTraceSendValueToParent(const char* aValueId,
++                                               const char* aArtifactKey,
++                                               const char* aData, size_t aLen)
 +    __attribute__((weak));
 +extern "C" bool FirefoxTraceRuntimeActive() __attribute__((weak));
 +#endif
@@ -3691,6 +3847,56 @@ index 1b3431e32e..c6500fe112 100644
 +    return 65536;
 +  }
 +  return parsed > 2097152 ? 2097152 : static_cast<uint32_t>(parsed);
++}
++
++bool FirefoxTraceFetchDriverResponseBodyStoreEnabled() {
++  const char* value = getenv("FIREFOX_TRACE_FETCH_RESPONSE_BODY_STORE");
++  if (!value || !value[0]) {
++    value = getenv("TRACE_FETCH_RESPONSE_BODY_STORE");
++  }
++  return value && value[0] && strcmp(value, "0") != 0 &&
++         strcmp(value, "false") != 0 && strcmp(value, "off") != 0;
++}
++
++uint32_t FirefoxTraceFetchDriverResponseBodyStoreMaxBytes() {
++  const char* value = getenv("FIREFOX_TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES");
++  if (!value || !value[0]) {
++    value = getenv("TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES");
++  }
++  if (!value || !value[0]) {
++    return 65536;
++  }
++  char* end = nullptr;
++  unsigned long parsed = strtoul(value, &end, 10);
++  if (end == value || parsed == 0) {
++    return 65536;
++  }
++  return parsed > 67108864 ? 67108864 : static_cast<uint32_t>(parsed);
++}
++
++void FirefoxTraceFetchDriverSHA256(const char* aData, size_t aLength,
++                                   char aOut[65]) {
++#if defined(__APPLE__)
++  unsigned char digest[CC_SHA256_DIGEST_LENGTH];
++  CC_SHA256(reinterpret_cast<const void*>(aData), static_cast<CC_LONG>(aLength),
++            digest);
++  static const char kHex[] = "0123456789abcdef";
++  for (size_t i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) {
++    aOut[i * 2] = kHex[(digest[i] >> 4) & 0x0f];
++    aOut[i * 2 + 1] = kHex[digest[i] & 0x0f];
++  }
++  aOut[64] = '\0';
++#else
++  uint64_t hash = 1469598103934665603ULL;
++  for (size_t i = 0; i < aLength; ++i) {
++    hash = (hash ^ static_cast<unsigned char>(aData[i])) * 1099511628211ULL;
++  }
++  snprintf(aOut, 65, "%016llx%016llx%016llx%016llx",
++           static_cast<unsigned long long>(hash),
++           static_cast<unsigned long long>(hash ^ 0x9e3779b97f4a7c15ULL),
++           static_cast<unsigned long long>(hash ^ 0xc2b2ae3d27d4eb4fULL),
++           static_cast<unsigned long long>(hash ^ 0x165667b19e3779f9ULL));
++#endif
 +}
 +
 +uint32_t FirefoxTraceFetchDriverResponseBodyHexBytes() {
@@ -3830,10 +4036,58 @@ index 1b3431e32e..c6500fe112 100644
 +  fclose(file);
 +}
 +
++bool FirefoxTraceFetchDriverWriteBodyArtifact(const char* aValueId,
++                                              const char* aArtifactKey,
++                                              const char* aData,
++                                              size_t aLength) {
++  if (!aValueId || !aValueId[0] || !aArtifactKey || !aArtifactKey[0] ||
++      !aData) {
++    return false;
++  }
++
++#if defined(__APPLE__) || defined(__GNUC__)
++  if (XRE_IsContentProcess() && FirefoxTraceSendValueToParent) {
++    return FirefoxTraceSendValueToParent(aValueId, aArtifactKey, aData,
++                                         aLength);
++  }
++#endif
++
++  const char* logDir = getenv("FIREFOX_TRACE_LOG_DIR");
++  if (!logDir || !logDir[0]) {
++    logDir = getenv("TRACE_LOG_DIR");
++  }
++  if (!logDir || !logDir[0]) {
++    logDir = "/tmp/firefox-trace";
++  }
++
++#ifndef XP_WIN
++  mkdir(logDir, 0755);
++#endif
++  nsAutoCString valuesDir(logDir);
++  if (!valuesDir.IsEmpty() && valuesDir.Last() != '/') {
++    valuesDir.Append('/');
++  }
++  valuesDir.AppendLiteral("values");
++#ifndef XP_WIN
++  mkdir(valuesDir.get(), 0755);
++#endif
++
++  valuesDir.Append('/');
++  valuesDir.Append(aArtifactKey);
++  valuesDir.AppendLiteral(".txt");
++  FILE* file = fopen(valuesDir.get(), "wb");
++  if (!file) {
++    return false;
++  }
++  size_t written = fwrite(aData, 1, aLength, file);
++  fclose(file);
++  return written == aLength;
++}
++
  void GetBlobURISpecFromChannel(nsIRequest* aRequest, nsCString& aBlobURISpec) {
    MOZ_ASSERT(aRequest);
  
-@@ -341,7 +570,8 @@ FetchDriver::FetchDriver(SafeRefPtr<InternalRequest> aRequest,
+@@ -341,7 +679,8 @@ FetchDriver::FetchDriver(SafeRefPtr<InternalRequest> aRequest,
                           nsIEventTarget* aMainThreadEventTarget,
                           nsICookieJarSettings* aCookieJarSettings,
                           PerformanceStorage* aPerformanceStorage,
@@ -3843,7 +4097,7 @@ index 1b3431e32e..c6500fe112 100644
      : mPrincipal(aPrincipal),
        mLoadGroup(aLoadGroup),
        mRequest(std::move(aRequest)),
-@@ -352,7 +582,8 @@ FetchDriver::FetchDriver(SafeRefPtr<InternalRequest> aRequest,
+@@ -352,7 +691,8 @@ FetchDriver::FetchDriver(SafeRefPtr<InternalRequest> aRequest,
        mNeedToObserveOnDataAvailable(false),
        mTrackingFlags(aTrackingFlags),
        mIsOn3PCBExceptionList(false),
@@ -3853,7 +4107,7 @@ index 1b3431e32e..c6500fe112 100644
  #ifdef DEBUG
        ,
        mResponseAvailableCalled(false),
-@@ -369,6 +600,73 @@ FetchDriver::FetchDriver(SafeRefPtr<InternalRequest> aRequest,
+@@ -369,6 +709,132 @@ FetchDriver::FetchDriver(SafeRefPtr<InternalRequest> aRequest,
        mTrackingFlags.thirdPartyFlags, false);
  }
  
@@ -3862,8 +4116,21 @@ index 1b3431e32e..c6500fe112 100644
 +                                                    uint64_t aOffset) {
 +  if (!mFirefoxTraceFetchId || !aBuffer || !aCount ||
 +      !FirefoxTraceFetchDriverEnabled() ||
-+      !FirefoxTraceFetchDriverResponseBodyEnabled() ||
-+      !FirefoxTraceFetchDriverBodyChunkEventEnabled()) {
++      !FirefoxTraceFetchDriverResponseBodyEnabled()) {
++    return;
++  }
++
++  if (FirefoxTraceFetchDriverResponseBodyStoreEnabled()) {
++    uint32_t limit = FirefoxTraceFetchDriverResponseBodyStoreMaxBytes();
++    if (mFirefoxTraceBodyArtifact.Length() > limit ||
++        aCount > limit - mFirefoxTraceBodyArtifact.Length()) {
++      mFirefoxTraceBodyArtifactTruncated = true;
++    } else {
++      mFirefoxTraceBodyArtifact.Append(aBuffer, aCount);
++    }
++  }
++
++  if (!FirefoxTraceFetchDriverBodyChunkEventEnabled()) {
 +    return;
 +  }
 +
@@ -3924,10 +4191,56 @@ index 1b3431e32e..c6500fe112 100644
 +  FirefoxTraceFetchDriverWriteLine(line);
 +}
 +
++void FetchDriver::FirefoxTraceFinishResponseBodyArtifact() {
++  if (!mFirefoxTraceFetchId || !FirefoxTraceFetchDriverEnabled() ||
++      !FirefoxTraceFetchDriverResponseBodyStoreEnabled() ||
++      mFirefoxTraceBodyArtifact.IsEmpty()) {
++    return;
++  }
++
++  char sha256[65];
++  FirefoxTraceFetchDriverSHA256(mFirefoxTraceBodyArtifact.BeginReading(),
++                                mFirefoxTraceBodyArtifact.Length(), sha256);
++  char valueId[128];
++  snprintf(valueId, sizeof(valueId), "fetch_body_%d_%llu", getpid(),
++           static_cast<unsigned long long>(mFirefoxTraceFetchId));
++  bool stored = !mFirefoxTraceBodyArtifactTruncated &&
++                FirefoxTraceFetchDriverWriteBodyArtifact(
++                    valueId, sha256, mFirefoxTraceBodyArtifact.BeginReading(),
++                    mFirefoxTraceBodyArtifact.Length());
++
++  nsAutoCString line;
++  line.AppendLiteral(
++      "{\"schema\":\"firefox_trace.fetch.v1\",\"type\":\"fetch.body_artifact\","
++      "\"ts_us\":");
++  line.AppendInt(static_cast<int64_t>(PR_Now()));
++  line.AppendLiteral(",\"pid\":");
++  line.AppendInt(static_cast<int64_t>(getpid()));
++  line.AppendLiteral(",\"request_id\":\"fetch_");
++  line.AppendInt(mFirefoxTraceFetchId);
++  line.AppendLiteral("\",\"body_value_id\":");
++  FirefoxTraceFetchDriverAppendJsonCString(line, valueId);
++  line.AppendLiteral(",\"body_value_store_path\":");
++  nsAutoCString path("values/");
++  path.Append(sha256);
++  path.AppendLiteral(".txt");
++  FirefoxTraceFetchDriverAppendJsonCString(line, stored ? path.get() : "");
++  line.AppendLiteral(",\"body_value_stored\":");
++  line.Append(stored ? "true" : "false");
++  line.AppendLiteral(",\"body_value_truncated\":");
++  line.Append(mFirefoxTraceBodyArtifactTruncated ? "true" : "false");
++  line.AppendLiteral(",\"body_size\":");
++  line.AppendInt(static_cast<uint64_t>(mFirefoxTraceBodyArtifact.Length()));
++  line.AppendLiteral(",\"body_sha256\":");
++  FirefoxTraceFetchDriverAppendJsonCString(line, sha256);
++  line.Append('}');
++  FirefoxTraceFetchDriverWriteLine(line);
++}
++
  FetchDriver::~FetchDriver() {
    AssertIsOnMainThread();
  
-@@ -1432,33 +1730,43 @@ class DataAvailableRunnable final : public Runnable {
+@@ -1432,33 +1898,43 @@ class DataAvailableRunnable final : public Runnable {
  
  struct SRIVerifierAndOutputHolder {
    SRIVerifierAndOutputHolder(SRICheckDataVerifier* aVerifier,
@@ -3984,7 +4297,7 @@ index 1b3431e32e..c6500fe112 100644
      if (NS_FAILED(rv)) {
        return rv;
      }
-@@ -1466,6 +1774,10 @@ nsresult CopySegmentToStreamAndSRI(nsIInputStream* aInStr, void* aClosure,
+@@ -1466,6 +1942,10 @@ nsresult CopySegmentToStreamAndSRI(nsIInputStream* aInStr, void* aClosure,
      aCount -= n;
      *aCountWritten += n;
    }
@@ -3995,7 +4308,7 @@ index 1b3431e32e..c6500fe112 100644
    return NS_OK;
  }
  
-@@ -1531,11 +1843,12 @@ FetchDriver::OnDataAvailable(nsIRequest* aRequest, nsIInputStream* aInputStream,
+@@ -1531,11 +2011,12 @@ FetchDriver::OnDataAvailable(nsIRequest* aRequest, nsIInputStream* aInputStream,
      MOZ_ASSERT(mSRIDataVerifier);
  
      SRIVerifierAndOutputHolder holder(mSRIDataVerifier.get(),
@@ -4012,11 +4325,22 @@ index 1b3431e32e..c6500fe112 100644
                                      aCount, &aRead);
    }
  
+@@ -1559,6 +2040,10 @@ FetchDriver::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
+   MOZ_DIAGNOSTIC_ASSERT(!mOnStopRequestCalled);
+   mOnStopRequestCalled = true;
+ 
++  if (NS_SUCCEEDED(aStatusCode)) {
++    FirefoxTraceFinishResponseBodyArtifact();
++  }
++
+   // main data loading is going to finish, breaking the reference cycle.
+   RefPtr<AlternativeDataStreamListener> altDataListener =
+       std::move(mAltDataListener);
 diff --git a/dom/fetch/FetchDriver.h b/dom/fetch/FetchDriver.h
-index aef2fb190e..73cf421fab 100644
+index aef2fb190e..f67d5edf78 100644
 --- a/dom/fetch/FetchDriver.h
 +++ b/dom/fetch/FetchDriver.h
-@@ -114,10 +114,14 @@ class FetchDriver final : public nsIChannelEventSink,
+@@ -114,10 +114,15 @@ class FetchDriver final : public nsIChannelEventSink,
                nsILoadGroup* aLoadGroup, nsIEventTarget* aMainThreadEventTarget,
                nsICookieJarSettings* aCookieJarSettings,
                PerformanceStorage* aPerformanceStorage,
@@ -4028,20 +4352,170 @@ index aef2fb190e..73cf421fab 100644
  
 +  void FirefoxTraceOnResponseBodySegment(const char* aBuffer, uint32_t aCount,
 +                                         uint64_t aOffset);
++  void FirefoxTraceFinishResponseBodyArtifact();
 +
    void SetDocument(Document* aDocument);
  
    void SetCSPEventListener(nsICSPEventListener* aCSPEventListener);
-@@ -221,6 +225,9 @@ class FetchDriver final : public nsIChannelEventSink,
+@@ -221,6 +226,11 @@ class FetchDriver final : public nsIChannelEventSink,
    nsCOMPtr<nsINetworkInterceptController> mInterceptController;
  
    uint64_t mAssociatedBrowsingContextID{0};
 +  uint64_t mFirefoxTraceFetchId{0};
 +  uint32_t mFirefoxTraceBodyCaptured{0};
 +  uint32_t mFirefoxTraceBodyChunkEvents{0};
++  nsCString mFirefoxTraceBodyArtifact;
++  bool mFirefoxTraceBodyArtifactTruncated{false};
  
    friend class AlternativeDataStreamListener;
  
+diff --git a/dom/fetch/FetchParent.cpp b/dom/fetch/FetchParent.cpp
+index 6f969246aa..4b065630cd 100644
+--- a/dom/fetch/FetchParent.cpp
++++ b/dom/fetch/FetchParent.cpp
+@@ -96,6 +96,7 @@ IPCResult FetchParent::RecvFetchOp(FetchOpArgs&& aArgs) {
+ 
+   mRequest = MakeSafeRefPtr<InternalRequest>(std::move(aArgs.request()));
+   mIsWorkerFetch = aArgs.isWorkerRequest();
++  mTraceFetchId = aArgs.traceFetchId();
+   mPrincipalInfo = std::move(aArgs.principalInfo());
+   mWorkerScript = aArgs.workerScript();
+   mClientInfo = Some(ClientInfo(aArgs.clientInfo()));
+@@ -182,7 +183,8 @@ IPCResult FetchParent::RecvFetchOp(FetchOpArgs&& aArgs) {
+                self->mBackgroundEventTarget, self->mID,
+                self->mIsThirdPartyContext,
+                MozPromiseRequestHolder<FetchServiceResponseEndPromise>(),
+-               self->mPromise, self->mIsOn3PCBExceptionList})));
++               self->mPromise, self->mIsOn3PCBExceptionList,
++               self->mTraceFetchId})));
+     } else {
+       MOZ_ASSERT(self->mRequest->GetKeepalive());
+       self->mResponsePromises =
+@@ -196,6 +198,7 @@ IPCResult FetchParent::RecvFetchOp(FetchOpArgs&& aArgs) {
+               self->mBackgroundEventTarget,
+               self->mID,
+               self->mIsThirdPartyContext,
++              self->mTraceFetchId,
+           })));
+     }
+ 
+diff --git a/dom/fetch/FetchParent.h b/dom/fetch/FetchParent.h
+index 0d41589e28..e8a3526672 100644
+--- a/dom/fetch/FetchParent.h
++++ b/dom/fetch/FetchParent.h
+@@ -100,6 +100,7 @@ class FetchParent final : public PFetchParent {
+   bool mIsThirdPartyContext{true};
+   bool mIsWorkerFetch{false};
+   bool mIsOn3PCBExceptionList{false};
++  uint64_t mTraceFetchId{0};
+ 
+   Atomic<bool> mIsDone{false};
+   Atomic<bool> mActorDestroyed{false};
+diff --git a/dom/fetch/FetchService.cpp b/dom/fetch/FetchService.cpp
+index 1734429e8e..1493429c25 100644
+--- a/dom/fetch/FetchService.cpp
++++ b/dom/fetch/FetchService.cpp
+@@ -22,6 +22,7 @@
+ #include "mozilla/ScopeExit.h"
+ #include "mozilla/UniquePtr.h"
+ #include "mozilla/dom/ClientInfo.h"
++#include "mozilla/dom/Fetch.h"
+ #include "mozilla/dom/FetchService.h"
+ #include "mozilla/dom/InternalRequest.h"
+ #include "mozilla/dom/InternalResponse.h"
+@@ -253,6 +254,13 @@ RefPtr<FetchServicePromises> FetchService::FetchInstance::Fetch() {
+     fetchService->IncrementKeepAliveRequestCount(origin);
+   }
+ 
++  uint64_t traceFetchId = 0;
++  if (mArgsType == FetchArgsType::WorkerFetch) {
++    traceFetchId = mArgs.as<WorkerFetchArgs>().mTraceFetchId;
++  } else if (mArgsType == FetchArgsType::MainThreadFetch) {
++    traceFetchId = mArgs.as<MainThreadFetchArgs>().mTraceFetchId;
++  }
++
+   // Create a FetchDriver instance
+   mFetchDriver = MakeRefPtr<FetchDriver>(
+       mRequest.clonePtr(),               // Fetch Request
+@@ -265,8 +273,8 @@ RefPtr<FetchServicePromises> FetchService::FetchInstance::Fetch() {
+       // tracking fetch to false, but for Keepalive
+       // requests from main thread this needs to be
+       // changed. See Bug 1892406
+-      net::ClassificationFlags({0, 0})  // TrackingFlags
+-  );
++      net::ClassificationFlags({0, 0}),  // TrackingFlags
++      traceFetchId);
+ 
+   if (mArgsType == FetchArgsType::WorkerFetch) {
+     auto& args = mArgs.as<WorkerFetchArgs>();
+@@ -290,6 +298,7 @@ RefPtr<FetchServicePromises> FetchService::FetchInstance::Fetch() {
+ 
+   mFetchDriver->EnableNetworkInterceptControl();
+   mPromises = MakeRefPtr<FetchServicePromises>();
++  FirefoxTraceFetchRequestEvent(traceFetchId, *mRequest);
+ 
+   // Call FetchDriver::Fetch to start fetching.
+   // Pass AbortSignalImpl as nullptr since we no need support AbortSignalImpl
+@@ -378,6 +387,16 @@ void FetchService::FetchInstance::OnResponseEnd(
+   FETCH_LOG(("FetchInstance::OnResponseEnd [%p] %s", this,
+              aReason == eAborted ? "eAborted" : "eNetworking"));
+ 
++  if (mArgsType == FetchArgsType::WorkerFetch) {
++    FirefoxTraceFetchDoneEvent(
++        mArgs.as<WorkerFetchArgs>().mTraceFetchId,
++        static_cast<uint32_t>(aReason));
++  } else if (mArgsType == FetchArgsType::MainThreadFetch) {
++    FirefoxTraceFetchDoneEvent(
++        mArgs.as<MainThreadFetchArgs>().mTraceFetchId,
++        static_cast<uint32_t>(aReason));
++  }
++
+   if (mRequest->GetKeepalive()) {
+     nsAutoCString origin;
+     MOZ_ASSERT(mPrincipal);
+@@ -387,6 +406,7 @@ void FetchService::FetchInstance::OnResponseEnd(
+   }
+ 
+   MOZ_ASSERT(mRequest);
++
+   if (mArgsType != FetchArgsType::NavigationPreload) {
+     FlushConsoleReport();
+     nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction(
+@@ -455,6 +475,14 @@ void FetchService::FetchInstance::OnResponseAvailableInternal(
+        this, body.get()));
+   MOZ_ASSERT(mRequest);
+ 
++  if (mArgsType == FetchArgsType::WorkerFetch) {
++    FirefoxTraceFetchResponseEvent(
++        mArgs.as<WorkerFetchArgs>().mTraceFetchId, *mResponse);
++  } else if (mArgsType == FetchArgsType::MainThreadFetch) {
++    FirefoxTraceFetchResponseEvent(
++        mArgs.as<MainThreadFetchArgs>().mTraceFetchId, *mResponse);
++  }
++
+   if (mArgsType != FetchArgsType::NavigationPreload && !mActorDying) {
+     nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction(
+         __func__,
+diff --git a/dom/fetch/FetchService.h b/dom/fetch/FetchService.h
+index e98aaa4d27..e1cd5ff582 100644
+--- a/dom/fetch/FetchService.h
++++ b/dom/fetch/FetchService.h
+@@ -121,6 +121,7 @@ class FetchService final : public nsIObserver {
+         mResponseEndPromiseHolder;
+     RefPtr<GenericPromise::Private> mFetchParentPromise;
+     bool mIsOn3PCBExceptionList;
++    uint64_t mTraceFetchId;
+   };
+ 
+   // Used for content process main thread fetch()
+@@ -138,6 +139,7 @@ class FetchService final : public nsIObserver {
+     nsCOMPtr<nsISerialEventTarget> mEventTarget;
+     nsID mActorID;
+     bool mIsThirdPartyContext{false};
++    uint64_t mTraceFetchId{0};
+   };
+ 
+   struct UnknownArgs {};
 diff --git a/dom/fetch/InternalResponse.cpp b/dom/fetch/InternalResponse.cpp
 index 3359f2aeae..a0f6247ddd 100644
 --- a/dom/fetch/InternalResponse.cpp
@@ -4109,6 +4583,18 @@ index dc6bdc8d4e..50b1082fcc 100644
    static SafeRefPtr<InternalResponse> NetworkError(nsresult aRv) {
      MOZ_DIAGNOSTIC_ASSERT(NS_FAILED(aRv));
      SafeRefPtr<InternalResponse> response =
+diff --git a/dom/fetch/PFetch.ipdl b/dom/fetch/PFetch.ipdl
+index a2e3b14d29..f6fd01976a 100644
+--- a/dom/fetch/PFetch.ipdl
++++ b/dom/fetch/PFetch.ipdl
+@@ -27,6 +27,7 @@ struct FetchOpArgs{
+   bool isThirdPartyContext;
+   bool isWorkerRequest;
+   bool isOn3PCBExceptionList;
++  uint64_t traceFetchId;
+ };
+ 
+ protocol PFetch {
 diff --git a/dom/ipc/ContentChild.cpp b/dom/ipc/ContentChild.cpp
 index dc0a572729..f33b0ccc89 100644
 --- a/dom/ipc/ContentChild.cpp
