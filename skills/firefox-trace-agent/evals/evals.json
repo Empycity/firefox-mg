@@ -1,0 +1,23 @@
+{
+  "skill_name": "firefox-trace-reverse",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "这里有一个 TRACE_DIR，帮我看目标 token 字段是谁生成的，并告诉我下一步该补环境还是纯算。",
+      "expected_output": "按 manifest、summary、request-fields、network、js、script、state/dom/bom 顺序分析，给出证据等级、producer 候选、依赖账本和下一步计划。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "给我解释 Firefox Trace Console UI 上 full-chain、discover-light、打开即记录、暂停记录、VM/WASM 限额这些默认选项。",
+      "expected_output": "解释 UI 默认值、每个选项作用、性能保护和对应输出日志。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "我的 trace 里只有请求字段，没有 JS producer，帮我设计下一轮最窄采集方案。",
+      "expected_output": "检查缺口，建议同一会话新分段、字段/脚本/函数过滤、target-values 或 deep-causal，并说明成功条件。",
+      "files": []
+    }
+  ]
+}

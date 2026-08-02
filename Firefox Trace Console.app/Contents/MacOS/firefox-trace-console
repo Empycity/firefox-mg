@@ -1,0 +1,14 @@
+#!/bin/zsh
+APP_MACOS_DIR="${0:A:h}"
+ROOT="${APP_MACOS_DIR}/../../.."
+LOG="/private/tmp/firefox-trace-desktop.log"
+if [[ -n "$FIREFOX_TRACE_PYTHON" && -x "$FIREFOX_TRACE_PYTHON" ]]; then
+  PY="$FIREFOX_TRACE_PYTHON"
+elif [[ -x "/opt/miniconda3/envs/firefox-trace/bin/python" ]]; then
+  PY="/opt/miniconda3/envs/firefox-trace/bin/python"
+else
+  PY="$(command -v python3)"
+fi
+export FIREFOX_TRACE_ROOT="$ROOT"
+cd "$ROOT" || exit 1
+exec "$PY" "$ROOT/tools/trace-desktop.py" >> "$LOG" 2>&1

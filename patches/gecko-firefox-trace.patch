@@ -1923,7 +1923,7 @@ index b88350d050..7c77c54019 100644
    nsCOMPtr<nsIPrincipal> partitionedCookiePrincipal;
    switch (CookieCommons::CheckGlobalAndRetrieveCookiePrincipals(
 diff --git a/dom/fetch/Fetch.cpp b/dom/fetch/Fetch.cpp
-index 52cf33bfc8..d88a644362 100644
+index 52cf33bfc8..b6693e8e78 100644
 --- a/dom/fetch/Fetch.cpp
 +++ b/dom/fetch/Fetch.cpp
 @@ -6,19 +6,38 @@
@@ -1936,6 +1936,9 @@ index 52cf33bfc8..d88a644362 100644
 +#include <stdio.h>
 +#include <stdlib.h>
 +#include <string.h>
++#if !defined(XP_WIN)
++#  include <strings.h>
++#endif
 +#if defined(__APPLE__)
 +#  include <CommonCrypto/CommonDigest.h>
 +#endif
@@ -1965,7 +1968,7 @@ index 52cf33bfc8..d88a644362 100644
  #include "nsJSUtils.h"
  #include "nsNetUtil.h"
  #include "nsReadableUtils.h"
-@@ -61,8 +80,1548 @@
+@@ -61,8 +80,1767 @@
  
  namespace mozilla::dom {
  
@@ -2297,14 +2300,17 @@ index 52cf33bfc8..d88a644362 100644
 +    value = getenv("TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES");
 +  }
 +  if (!value || !value[0]) {
-+    return 2097152;
++    return 0xffffffffu;
 +  }
 +  char* end = nullptr;
 +  unsigned long parsed = strtoul(value, &end, 10);
 +  if (end == value) {
-+    return 2097152;
++    return 0xffffffffu;
 +  }
-+  return parsed > 67108864 ? 67108864 : static_cast<uint32_t>(parsed);
++  if (parsed == 0) {
++    return 0xffffffffu;
++  }
++  return parsed > 0xffffffffu ? 0xffffffffu : static_cast<uint32_t>(parsed);
 +}
 +
 +const char* FirefoxTraceFetchResponseBodyMode() {
@@ -2354,16 +2360,17 @@ index 52cf33bfc8..d88a644362 100644
 +  if (!value || !value[0]) {
 +    value = getenv("TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES");
 +  }
++  // 0 or unset means "no trace-side cap" for the complete stored artifact.
++  // TRACE_FETCH_RESPONSE_BODY_MAX_BYTES still controls JSONL preview/chunk size.
 +  if (!value || !value[0]) {
-+    return FirefoxTraceFetchResponseBodyMaxBytes();
++    return 0xffffffffu;
 +  }
 +  char* end = nullptr;
 +  unsigned long parsed = strtoul(value, &end, 10);
 +  if (end == value || parsed == 0) {
-+    return FirefoxTraceFetchResponseBodyMaxBytes();
++    return 0xffffffffu;
 +  }
-+  return parsed > 64 * 1024 * 1024 ? 64 * 1024 * 1024
-+                                   : static_cast<uint32_t>(parsed);
++  return parsed > 0xffffffffu ? 0xffffffffu : static_cast<uint32_t>(parsed);
 +}
 +
 +uint32_t FirefoxTraceFetchResponseBodyHexBytes() {
@@ -2767,10 +2774,11 @@ index 52cf33bfc8..d88a644362 100644
 +    return;
 +  }
 +
++  // The response event is a lightweight clone preview.  Complete response
++  // artifacts are captured in FetchDriver::OnDataAvailable while bytes flow
++  // through the normal network pipe, so do not expand this clone read to the
++  // artifact store cap; doing so can duplicate very large bodies into memory.
 +  uint32_t maxBytes = FirefoxTraceFetchResponseBodyMaxBytes();
-+  if (FirefoxTraceFetchResponseBodyStoreEnabled()) {
-+    maxBytes = std::max(maxBytes, FirefoxTraceFetchResponseBodyStoreMaxBytes());
-+  }
 +  uint64_t toRead64 = std::min<uint64_t>(available, maxBytes);
 +  if (toRead64 > static_cast<uint64_t>(INT32_MAX)) {
 +    toRead64 = INT32_MAX;
@@ -2834,8 +2842,14 @@ index 52cf33bfc8..d88a644362 100644
 +  }
 +}
 +
++bool FirefoxTraceFetchFirstConfiguredBodyField(const nsACString& aBody,
++                                               nsACString& aFieldName);
++void FirefoxTraceFetchAppendConfiguredBodyFields(nsACString& aLine,
++                                                 const nsACString& aBody);
++
 +void FirefoxTraceFetchAppendRequestBodyPreview(nsACString& aLine,
-+                                               InternalRequest& aRequest) {
++                                               InternalRequest& aRequest,
++                                               nsACString* aMatchedField = nullptr) {
 +  const char* mode = FirefoxTraceFetchRequestBodyMode();
 +  if (!FirefoxTraceFetchRequestBodyEnabled()) {
 +    aLine.AppendLiteral(",\"body_preview_enabled\":false");
@@ -2916,6 +2930,10 @@ index 52cf33bfc8..d88a644362 100644
 +  aLine.AppendInt(available);
 +  aLine.AppendLiteral(",\"body_sha256\":");
 +  FirefoxTraceFetchAppendJsonCString(aLine, sha256);
++  FirefoxTraceFetchAppendConfiguredBodyFields(aLine, data);
++  if (aMatchedField) {
++    Unused << FirefoxTraceFetchFirstConfiguredBodyField(data, *aMatchedField);
++  }
 +
 +  uint32_t hexBytes = FirefoxTraceFetchRequestBodyHexBytes();
 +  if (hexBytes) {
@@ -2941,6 +2959,106 @@ index 52cf33bfc8..d88a644362 100644
 +    aLine.AppendLiteral(",\"body_value_stored\":");
 +    aLine.Append(stored ? "true" : "false");
 +  }
++}
++
++const char* FirefoxTraceFetchRequestHeadersMode() {
++  const char* mode = getenv("FIREFOX_TRACE_FETCH_REQUEST_HEADERS");
++  if (!mode || !mode[0]) {
++    mode = getenv("TRACE_FETCH_REQUEST_HEADERS");
++  }
++  if (!mode || !mode[0]) {
++    return "preview";
++  }
++  if (!strcmp(mode, "1")) {
++    return "preview";
++  }
++  return mode;
++}
++
++bool FirefoxTraceFetchRequestHeadersEnabled() {
++  const char* mode = FirefoxTraceFetchRequestHeadersMode();
++  return strcmp(mode, "0") != 0 && strcmp(mode, "none") != 0 &&
++         strcmp(mode, "off") != 0;
++}
++
++const char* FirefoxTraceFetchConfiguredHeaderFields() {
++  const char* configured = getenv("FIREFOX_TRACE_HEADER_FIELDS");
++  if (!configured || !configured[0]) {
++    configured = getenv("TRACE_HEADER_FIELDS");
++  }
++  return configured && configured[0] ? configured : nullptr;
++}
++
++bool FirefoxTraceFetchHeaderFieldEnabled(const char* aConfigured,
++                                         const nsACString& aName) {
++  if (!aConfigured || !aConfigured[0]) {
++    return false;
++  }
++  const char* p = aConfigured;
++  while (*p) {
++    while (*p == ',' || *p == ';' || *p == ' ' || *p == '	' ||
++           *p == '
+' || *p == '
+') {
++      ++p;
++    }
++    const char* start = p;
++    while (*p && *p != ',' && *p != ';') {
++      ++p;
++    }
++    const char* end = p;
++    while (end > start &&
++           (end[-1] == ' ' || end[-1] == '	' || end[-1] == '
+' ||
++            end[-1] == '
+')) {
++      --end;
++    }
++    if (end > start && aName.Length() == static_cast<uint32_t>(end - start) &&
++        !strncasecmp(aName.BeginReading(), start, end - start)) {
++      return true;
++    }
++  }
++  return false;
++}
++
++void FirefoxTraceFetchAppendConfiguredRequestHeaders(nsACString& aLine,
++                                                     InternalRequest& aRequest) {
++  const char* configured = FirefoxTraceFetchConfiguredHeaderFields();
++  if (!configured || !FirefoxTraceFetchRequestHeadersEnabled()) {
++    return;
++  }
++  const char* mode = FirefoxTraceFetchRequestHeadersMode();
++  bool full = !strcmp(mode, "full");
++  nsTArray<InternalHeaders::Entry> entries;
++  aRequest.Headers()->GetEntries(entries);
++  aLine.AppendLiteral(","headers_enabled":true,"headers_mode":");
++  FirefoxTraceFetchAppendJsonCString(aLine, mode);
++  aLine.AppendLiteral(","headers":{");
++  bool first = true;
++  for (const auto& entry : entries) {
++    if (!FirefoxTraceFetchHeaderFieldEnabled(configured, entry.mName)) {
++      continue;
++    }
++    nsAutoCString value(entry.mValue);
++    bool valueTruncated = false;
++    if (!full) {
++      FirefoxTraceFetchTruncatePreview(value);
++      valueTruncated = !value.Equals(entry.mValue);
++    }
++    if (!first) {
++      aLine.Append(',');
++    }
++    first = false;
++    FirefoxTraceFetchAppendJsonString(aLine, entry.mName);
++    aLine.AppendLiteral(":{"value":");
++    FirefoxTraceFetchAppendJsonString(aLine, value);
++    if (valueTruncated) {
++      aLine.AppendLiteral(","truncated":true");
++    }
++    aLine.Append('}');
++  }
++  aLine.Append('}');
 +}
 +
 +void FirefoxTraceFetchAppendResponseHeaders(nsACString& aLine,
@@ -3041,8 +3159,116 @@ index 52cf33bfc8..d88a644362 100644
 +  return true;
 +}
 +
-+const char* FirefoxTraceFetchConfiguredFields() {
-+  const char* configured = getenv("FIREFOX_TRACE_QUERY_FIELDS");
++bool FirefoxTraceFetchJSONIsSpace(char aChar) {
++  return aChar == ' ' || aChar == '\t' || aChar == '\n' || aChar == '\r';
++}
++
++bool FirefoxTraceFetchExtractFormParam(const nsACString& aBody,
++                                       const char* aName,
++                                       nsACString& aValue) {
++  const nsCString flatBody(PromiseFlatCString(aBody));
++  nsAutoCString needle;
++  needle.Append(aName);
++  needle.Append('=');
++
++  int32_t pos = 0;
++  uint32_t valueStart = 0;
++  if (StringBeginsWith(flatBody, needle)) {
++    valueStart = needle.Length();
++  } else {
++    needle.Insert('&', 0);
++    pos = flatBody.Find(needle);
++    if (pos < 0) {
++      return false;
++    }
++    valueStart = static_cast<uint32_t>(pos) + needle.Length();
++  }
++
++  int32_t end = flatBody.FindChar('&', valueStart);
++  if (end < 0) {
++    aValue.Assign(Substring(flatBody, valueStart));
++  } else {
++    aValue.Assign(Substring(flatBody, valueStart,
++                            static_cast<uint32_t>(end) - valueStart));
++  }
++  return true;
++}
++
++bool FirefoxTraceFetchExtractJSONField(const nsACString& aBody,
++                                       const char* aName,
++                                       nsACString& aValue) {
++  const nsCString flatBody(PromiseFlatCString(aBody));
++  nsAutoCString needle;
++  needle.Append('"');
++  needle.Append(aName);
++  needle.Append('"');
++
++  int32_t pos = flatBody.Find(needle);
++  if (pos < 0) {
++    return false;
++  }
++  uint32_t p = static_cast<uint32_t>(pos) + needle.Length();
++  while (p < flatBody.Length() && FirefoxTraceFetchJSONIsSpace(flatBody[p])) {
++    ++p;
++  }
++  if (p >= flatBody.Length() || flatBody[p] != ':') {
++    return false;
++  }
++  ++p;
++  while (p < flatBody.Length() && FirefoxTraceFetchJSONIsSpace(flatBody[p])) {
++    ++p;
++  }
++  if (p >= flatBody.Length()) {
++    return false;
++  }
++
++  if (flatBody[p] == '"') {
++    ++p;
++    nsAutoCString out;
++    bool escaped = false;
++    for (; p < flatBody.Length(); ++p) {
++      char c = flatBody[p];
++      if (escaped) {
++        out.Append(c);
++        escaped = false;
++        continue;
++      }
++      if (c == '\\') {
++        escaped = true;
++        continue;
++      }
++      if (c == '"') {
++        aValue.Assign(out);
++        return true;
++      }
++      out.Append(c);
++    }
++    return false;
++  }
++
++  uint32_t start = p;
++  while (p < flatBody.Length() && flatBody[p] != ',' && flatBody[p] != '}' &&
++         flatBody[p] != ']' && !FirefoxTraceFetchJSONIsSpace(flatBody[p])) {
++    ++p;
++  }
++  if (p <= start) {
++    return false;
++  }
++  aValue.Assign(Substring(flatBody, start, p - start));
++  return true;
++}
++
++const char* FirefoxTraceFetchConfiguredFields(bool aBody = false) {
++  const char* configured =
++      aBody ? getenv("FIREFOX_TRACE_BODY_FIELDS")
++            : getenv("FIREFOX_TRACE_QUERY_FIELDS");
++  if (!configured || !configured[0]) {
++    configured = aBody ? getenv("TRACE_BODY_FIELDS")
++                       : getenv("TRACE_QUERY_FIELDS");
++  }
++  if (!configured || !configured[0]) {
++    configured = getenv("FIREFOX_TRACE_QUERY_FIELDS");
++  }
 +  if (!configured || !configured[0]) {
 +    configured = getenv("TRACE_QUERY_FIELDS");
 +  }
@@ -3051,15 +3277,15 @@ index 52cf33bfc8..d88a644362 100644
 +
 +bool FirefoxTraceFetchFirstConfiguredFieldMatch(
 +    const std::function<bool(const char*, nsACString&)>& aExtract,
-+    nsACString& aFieldName) {
-+  const char* configured = FirefoxTraceFetchConfiguredFields();
++    nsACString& aFieldName, bool aBody = false) {
++  const char* configured = FirefoxTraceFetchConfiguredFields(aBody);
 +  if (!configured || !configured[0]) {
 +    return false;
 +  }
 +
 +  uint32_t fieldCount = 0;
 +  const char* p = configured;
-+  while (*p && fieldCount < 64) {
++  while (*p) {
 +    while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t' || *p == '\n' ||
 +           *p == '\r') {
 +      ++p;
@@ -3094,7 +3320,20 @@ index 52cf33bfc8..d88a644362 100644
 +      [&aURL](const char* aName, nsACString& aValue) {
 +        return FirefoxTraceFetchExtractQueryParam(aURL, aName, aValue);
 +      },
-+      aFieldName);
++      aFieldName, false);
++}
++
++bool FirefoxTraceFetchFirstConfiguredBodyField(const nsACString& aBody,
++                                               nsACString& aFieldName) {
++  if (aBody.IsEmpty()) {
++    return false;
++  }
++  return FirefoxTraceFetchFirstConfiguredFieldMatch(
++      [&aBody](const char* aName, nsACString& aValue) {
++        return FirefoxTraceFetchExtractFormParam(aBody, aName, aValue) ||
++               FirefoxTraceFetchExtractJSONField(aBody, aName, aValue);
++      },
++      aFieldName, true);
 +}
 +
 +void FirefoxTraceFetchBuildFieldFlushReason(nsACString& aReason,
@@ -3109,7 +3348,7 @@ index 52cf33bfc8..d88a644362 100644
 +
 +void FirefoxTraceFetchAppendConfiguredQueryFields(nsACString& aLine,
 +                                                  const nsACString& aURL) {
-+  const char* configured = FirefoxTraceFetchConfiguredFields();
++  const char* configured = FirefoxTraceFetchConfiguredFields(false);
 +  if (!configured || !configured[0]) {
 +    return;
 +  }
@@ -3124,7 +3363,7 @@ index 52cf33bfc8..d88a644362 100644
 +                   strcmp(valueMode, "0") == 0;
 +  bool valueFull = strcmp(valueMode, "full") == 0;
 +  const char* p = configured;
-+  while (*p && fieldCount < 64) {
++  while (*p) {
 +    while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t' || *p == '\n' ||
 +           *p == '\r') {
 +      ++p;
@@ -3175,6 +3414,81 @@ index 52cf33bfc8..d88a644362 100644
 +  aLine.Append('}');
 +  if (!meta.IsEmpty()) {
 +    aLine.AppendLiteral(",\"query_fields_meta\":{");
++    aLine.Append(meta);
++    aLine.Append('}');
++  }
++}
++
++void FirefoxTraceFetchAppendConfiguredBodyFields(nsACString& aLine,
++                                                 const nsACString& aBody) {
++  const char* configured = FirefoxTraceFetchConfiguredFields(true);
++  if (!configured || !configured[0] || aBody.IsEmpty()) {
++    return;
++  }
++
++  aLine.AppendLiteral(",\"body_fields\":{");
++  nsAutoCString meta;
++  bool wroteAny = false;
++  uint32_t fieldCount = 0;
++  const char* valueMode = FirefoxTraceFetchQueryFieldValueMode();
++  bool valueNone = strcmp(valueMode, "none") == 0 ||
++                   strcmp(valueMode, "off") == 0 ||
++                   strcmp(valueMode, "0") == 0;
++  bool valueFull = strcmp(valueMode, "full") == 0;
++  const char* p = configured;
++  while (*p) {
++    while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t' || *p == '\n' ||
++           *p == '\r') {
++      ++p;
++    }
++    const char* start = p;
++    while (*p && *p != ',' && *p != ';') {
++      ++p;
++    }
++    const char* end = p;
++    while (end > start &&
++           (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' ||
++            end[-1] == '\r')) {
++      --end;
++    }
++    if (end > start) {
++      nsAutoCString fieldName;
++      fieldName.Assign(start, static_cast<uint32_t>(end - start));
++      nsAutoCString fieldValue;
++      if (FirefoxTraceFetchExtractFormParam(aBody, fieldName.get(),
++                                             fieldValue) ||
++          FirefoxTraceFetchExtractJSONField(aBody, fieldName.get(),
++                                            fieldValue)) {
++        nsAutoCString outputValue(fieldValue);
++        bool truncated = false;
++        if (!valueNone && !valueFull) {
++          FirefoxTraceFetchTruncatePreview(outputValue);
++          truncated = !outputValue.Equals(fieldValue);
++        }
++        if (wroteAny) {
++          aLine.Append(',');
++        }
++        FirefoxTraceFetchAppendJsonString(aLine, fieldName);
++        aLine.Append(':');
++        if (valueNone) {
++          aLine.AppendLiteral("null");
++        } else {
++          FirefoxTraceFetchAppendJsonString(aLine, outputValue);
++        }
++        if (valueNone || truncated ||
++            FirefoxTraceFetchQueryFieldValueStoreEnabled()) {
++          FirefoxTraceFetchAppendQueryFieldMetadata(meta, fieldName,
++                                                    fieldValue, truncated,
++                                                    valueNone);
++        }
++        wroteAny = true;
++      }
++      ++fieldCount;
++    }
++  }
++  aLine.Append('}');
++  if (!meta.IsEmpty()) {
++    aLine.AppendLiteral(",\"body_fields_meta\":{");
 +    aLine.Append(meta);
 +    aLine.Append('}');
 +  }
@@ -3346,6 +3660,7 @@ index 52cf33bfc8..d88a644362 100644
 +  FirefoxTraceFetchAppendJsonString(line, method);
 +  FirefoxTraceFetchAppendRequestURLField(line, "url", url);
 +  FirefoxTraceFetchAppendConfiguredQueryFields(line, url);
++  FirefoxTraceFetchAppendConfiguredRequestHeaders(line, aRequest);
 +  nsAutoCString matchedQueryField;
 +  Unused << FirefoxTraceFetchFirstConfiguredQueryField(url, matchedQueryField);
 +  line.AppendLiteral(",\"body_length\":");
@@ -3417,6 +3732,7 @@ index 52cf33bfc8..d88a644362 100644
 +  FirefoxTraceFetchAppendJsonString(line, method);
 +  FirefoxTraceFetchAppendRequestURLField(line, "url", url);
 +  FirefoxTraceFetchAppendConfiguredQueryFields(line, url);
++  FirefoxTraceFetchAppendConfiguredRequestHeaders(line, aRequest);
 +  line.AppendLiteral(",\"body_length\":");
 +  line.AppendInt(aRequest.BodyLength());
 +  line.AppendLiteral(",\"mode\":");
@@ -3435,8 +3751,16 @@ index 52cf33bfc8..d88a644362 100644
 +  line.Append(aRequest.GetKeepalive() ? "true" : "false");
 +  line.AppendLiteral(",\"referrer\":");
 +  FirefoxTraceFetchAppendJsonString(line, referrer);
-+  FirefoxTraceFetchAppendRequestBodyPreview(line, aRequest);
++  nsAutoCString matchedBodyField;
++  FirefoxTraceFetchAppendRequestBodyPreview(line, aRequest,
++                                            &matchedBodyField);
 +  line.Append('}');
++  if (FirefoxTraceFlushJSBoundaryBuffer) {
++    nsAutoCString flushReason;
++    FirefoxTraceFetchBuildFieldFlushReason(flushReason, "fetch.request",
++                                           matchedBodyField);
++    FirefoxTraceFlushJSBoundaryBuffer(flushReason.get());
++  }
 +  FirefoxTraceWriteFetchLine(line);
 +}
 +
@@ -3514,7 +3838,7 @@ index 52cf33bfc8..d88a644362 100644
  // Step 17.2.1.2 and 17.2.2 of
  // https://fetch.spec.whatwg.org/#concept-http-network-fetch
  // If stream is readable, then error stream with ...
-@@ -84,8 +1643,6 @@ void AbortStream(JSContext* aCx, ReadableStream* aReadableStream,
+@@ -84,8 +1862,6 @@ void AbortStream(JSContext* aCx, ReadableStream* aReadableStream,
    aReadableStream->ErrorNative(aCx, value, aRv);
  }
  
@@ -3523,7 +3847,7 @@ index 52cf33bfc8..d88a644362 100644
  class AbortSignalMainThread final : public AbortSignalImpl {
   public:
    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-@@ -218,6 +1775,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -218,6 +1994,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
    RefPtr<FetchObserver> mFetchObserver;
    RefPtr<WeakWorkerRef> mWorkerRef;
    bool mIsShutdown;
@@ -3531,7 +3855,7 @@ index 52cf33bfc8..d88a644362 100644
  
    Atomic<bool> mNeedOnDataAvailable;
  
-@@ -225,7 +1783,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -225,7 +2002,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
    // Returns null if worker is shutting down.
    static already_AddRefed<WorkerFetchResolver> Create(
        WorkerPrivate* aWorkerPrivate, Promise* aPromise,
@@ -3541,7 +3865,7 @@ index 52cf33bfc8..d88a644362 100644
      MOZ_ASSERT(aWorkerPrivate);
      aWorkerPrivate->AssertIsOnWorkerThread();
      RefPtr<PromiseWorkerProxy> proxy =
-@@ -241,7 +1800,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -241,7 +2019,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
      }
  
      RefPtr<WorkerFetchResolver> r =
@@ -3550,7 +3874,7 @@ index 52cf33bfc8..d88a644362 100644
  
      RefPtr<WeakWorkerRef> workerRef = WeakWorkerRef::Create(
          aWorkerPrivate, [r]() { r->Shutdown(r->mWorkerRef->GetPrivate()); });
-@@ -279,6 +1838,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -279,6 +2057,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
      return mPromiseProxy;
    }
  
@@ -3559,7 +3883,7 @@ index 52cf33bfc8..d88a644362 100644
    Promise* WorkerPromise(WorkerPrivate* aWorkerPrivate) const {
      MOZ_ASSERT(aWorkerPrivate);
      aWorkerPrivate->AssertIsOnWorkerThread();
-@@ -329,11 +1890,13 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -329,11 +2109,13 @@ class WorkerFetchResolver final : public FetchDriverObserver {
  
   private:
    WorkerFetchResolver(PromiseWorkerProxy* aProxy,
@@ -3574,7 +3898,7 @@ index 52cf33bfc8..d88a644362 100644
          mNeedOnDataAvailable(!!aObserver) {
      MOZ_ASSERT(!NS_IsMainThread());
      MOZ_ASSERT(mPromiseProxy);
-@@ -357,17 +1920,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -357,17 +2139,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
    RefPtr<FetchObserver> mFetchObserver;
    RefPtr<AbortSignalImpl> mSignalImpl;
    const bool mMozErrors;
@@ -3597,7 +3921,7 @@ index 52cf33bfc8..d88a644362 100644
  
    void OnResponseAvailableInternal(
        SafeRefPtr<InternalResponse> aResponse) override;
-@@ -376,6 +1942,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -376,6 +2161,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
  
    void OnResponseEnd(FetchDriverObserver::EndReason aReason,
                       JS::Handle<JS::Value> aReasonDetails) override {
@@ -3606,7 +3930,7 @@ index 52cf33bfc8..d88a644362 100644
      if (aReason == eAborted) {
        if (!aReasonDetails.isUndefined()) {
          mPromise->MaybeReject(aReasonDetails);
-@@ -452,7 +2020,9 @@ class MainThreadFetchRunnable : public Runnable {
+@@ -452,7 +2239,9 @@ class MainThreadFetchRunnable : public Runnable {
                                workerPrivate->MainThreadEventTarget(),
                                workerPrivate->CookieJarSettings(),
                                workerPrivate->GetPerformanceStorage(),
@@ -3617,7 +3941,7 @@ index 52cf33bfc8..d88a644362 100644
        nsAutoCString spec;
        if (proxy->GetWorkerPrivate()->GetBaseURI()) {
          proxy->GetWorkerPrivate()->GetBaseURI()->GetAsciiSpec(spec);
-@@ -510,6 +2080,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -510,6 +2299,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
    }
  
    SafeRefPtr<InternalRequest> internalRequest = request->GetInternalRequest();
@@ -3625,7 +3949,7 @@ index 52cf33bfc8..d88a644362 100644
  
    // Restore information of InterceptedHttpChannel if they are passed with the
    // Request. Since Request::Constructor would not copy these members.
-@@ -593,12 +2164,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -593,12 +2383,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
      }
  
      RefPtr<MainThreadFetchResolver> resolver = new MainThreadFetchResolver(
@@ -3641,7 +3965,7 @@ index 52cf33bfc8..d88a644362 100644
      fetch->SetDocument(doc);
      resolver->SetLoadGroup(loadGroup);
      aRv = fetch->Fetch(signalImpl, resolver);
-@@ -703,6 +2275,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -703,6 +2494,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
  
      ipcArgs.hasCSPEventListener() = false;
      ipcArgs.isWorkerRequest() = false;
@@ -3649,7 +3973,7 @@ index 52cf33bfc8..d88a644362 100644
  
      actor->DoFetchOp(ipcArgs);
  
-@@ -793,6 +2366,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -793,6 +2585,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
        ipcArgs.isOn3PCBExceptionList() = worker->IsOn3PCBExceptionList();
  
        ipcArgs.isWorkerRequest() = true;
@@ -3657,7 +3981,7 @@ index 52cf33bfc8..d88a644362 100644
  
        actor->DoFetchOp(ipcArgs);
  
-@@ -808,7 +2382,8 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -808,7 +2601,8 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
      // We do not check if keepalive flag is set for ChromeWorkers
      // See Bug 1898664
      RefPtr<WorkerFetchResolver> resolver =
@@ -3667,7 +3991,7 @@ index 52cf33bfc8..d88a644362 100644
      if (!resolver) {
        NS_WARNING("Could not keep the worker alive.");
        aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
-@@ -856,6 +2431,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
+@@ -856,6 +2650,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
    NS_ASSERT_OWNINGTHREAD(MainThreadFetchResolver);
    AssertIsOnMainThread();
  
@@ -3676,7 +4000,7 @@ index 52cf33bfc8..d88a644362 100644
    if (aResponse->Type() != ResponseType::Error) {
      nsCOMPtr<nsIGlobalObject> go = mPromise->GetParentObject();
      nsCOMPtr<nsPIDOMWindowInner> inner = do_QueryInterface(go);
-@@ -1074,6 +2651,8 @@ void WorkerFetchResolver::OnResponseAvailableInternal(
+@@ -1074,6 +2870,8 @@ void WorkerFetchResolver::OnResponseAvailableInternal(
      SafeRefPtr<InternalResponse> aResponse) {
    AssertIsOnMainThread();
  
@@ -3685,7 +4009,7 @@ index 52cf33bfc8..d88a644362 100644
    MutexAutoLock lock(mPromiseProxy->Lock());
    if (mPromiseProxy->CleanedUp()) {
      return;
-@@ -1108,6 +2687,7 @@ void WorkerFetchResolver::OnDataAvailable() {
+@@ -1108,6 +2906,7 @@ void WorkerFetchResolver::OnDataAvailable() {
  void WorkerFetchResolver::OnResponseEnd(FetchDriverObserver::EndReason aReason,
                                          JS::Handle<JS::Value> aReasonDetails) {
    AssertIsOnMainThread();
@@ -3723,7 +4047,7 @@ index 80b329149c..0c66c94361 100644
                                 InternalRequest* aRequest);
  
 diff --git a/dom/fetch/FetchDriver.cpp b/dom/fetch/FetchDriver.cpp
-index 1b3431e32e..68f3f8f296 100644
+index 1b3431e32e..873d6ed699 100644
 --- a/dom/fetch/FetchDriver.cpp
 +++ b/dom/fetch/FetchDriver.cpp
 @@ -5,6 +5,17 @@
@@ -3753,7 +4077,7 @@ index 1b3431e32e..68f3f8f296 100644
  
  #include "nsContentPolicyUtils.h"
  #include "nsDataChannel.h"
-@@ -65,8 +78,333 @@
+@@ -65,8 +78,335 @@
  
  namespace mozilla::dom {
  
@@ -3863,15 +4187,17 @@ index 1b3431e32e..68f3f8f296 100644
 +  if (!value || !value[0]) {
 +    value = getenv("TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES");
 +  }
++  // 0 or unset means "no trace-side cap".  This governs complete response
++  // artifacts, not the lightweight body_chunk preview budget.
 +  if (!value || !value[0]) {
-+    return 65536;
++    return 0xffffffffu;
 +  }
 +  char* end = nullptr;
 +  unsigned long parsed = strtoul(value, &end, 10);
 +  if (end == value || parsed == 0) {
-+    return 65536;
++    return 0xffffffffu;
 +  }
-+  return parsed > 67108864 ? 67108864 : static_cast<uint32_t>(parsed);
++  return parsed > 0xffffffffu ? 0xffffffffu : static_cast<uint32_t>(parsed);
 +}
 +
 +void FirefoxTraceFetchDriverSHA256(const char* aData, size_t aLength,
@@ -4087,7 +4413,7 @@ index 1b3431e32e..68f3f8f296 100644
  void GetBlobURISpecFromChannel(nsIRequest* aRequest, nsCString& aBlobURISpec) {
    MOZ_ASSERT(aRequest);
  
-@@ -341,7 +679,8 @@ FetchDriver::FetchDriver(SafeRefPtr<InternalRequest> aRequest,
+@@ -341,7 +681,8 @@ FetchDriver::FetchDriver(SafeRefPtr<InternalRequest> aRequest,
                           nsIEventTarget* aMainThreadEventTarget,
                           nsICookieJarSettings* aCookieJarSettings,
                           PerformanceStorage* aPerformanceStorage,
@@ -4097,7 +4423,7 @@ index 1b3431e32e..68f3f8f296 100644
      : mPrincipal(aPrincipal),
        mLoadGroup(aLoadGroup),
        mRequest(std::move(aRequest)),
-@@ -352,7 +691,8 @@ FetchDriver::FetchDriver(SafeRefPtr<InternalRequest> aRequest,
+@@ -352,7 +693,8 @@ FetchDriver::FetchDriver(SafeRefPtr<InternalRequest> aRequest,
        mNeedToObserveOnDataAvailable(false),
        mTrackingFlags(aTrackingFlags),
        mIsOn3PCBExceptionList(false),
@@ -4107,7 +4433,7 @@ index 1b3431e32e..68f3f8f296 100644
  #ifdef DEBUG
        ,
        mResponseAvailableCalled(false),
-@@ -369,6 +709,132 @@ FetchDriver::FetchDriver(SafeRefPtr<InternalRequest> aRequest,
+@@ -369,6 +711,132 @@ FetchDriver::FetchDriver(SafeRefPtr<InternalRequest> aRequest,
        mTrackingFlags.thirdPartyFlags, false);
  }
  
@@ -4240,7 +4566,7 @@ index 1b3431e32e..68f3f8f296 100644
  FetchDriver::~FetchDriver() {
    AssertIsOnMainThread();
  
-@@ -1432,33 +1898,43 @@ class DataAvailableRunnable final : public Runnable {
+@@ -1432,33 +1900,43 @@ class DataAvailableRunnable final : public Runnable {
  
  struct SRIVerifierAndOutputHolder {
    SRIVerifierAndOutputHolder(SRICheckDataVerifier* aVerifier,
@@ -4297,7 +4623,7 @@ index 1b3431e32e..68f3f8f296 100644
      if (NS_FAILED(rv)) {
        return rv;
      }
-@@ -1466,6 +1942,10 @@ nsresult CopySegmentToStreamAndSRI(nsIInputStream* aInStr, void* aClosure,
+@@ -1466,6 +1944,10 @@ nsresult CopySegmentToStreamAndSRI(nsIInputStream* aInStr, void* aClosure,
      aCount -= n;
      *aCountWritten += n;
    }
@@ -4308,7 +4634,7 @@ index 1b3431e32e..68f3f8f296 100644
    return NS_OK;
  }
  
-@@ -1531,11 +2011,12 @@ FetchDriver::OnDataAvailable(nsIRequest* aRequest, nsIInputStream* aInputStream,
+@@ -1531,11 +2013,12 @@ FetchDriver::OnDataAvailable(nsIRequest* aRequest, nsIInputStream* aInputStream,
      MOZ_ASSERT(mSRIDataVerifier);
  
      SRIVerifierAndOutputHolder holder(mSRIDataVerifier.get(),
@@ -4325,7 +4651,7 @@ index 1b3431e32e..68f3f8f296 100644
                                      aCount, &aRead);
    }
  
-@@ -1559,6 +2040,10 @@ FetchDriver::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
+@@ -1559,6 +2042,10 @@ FetchDriver::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
    MOZ_DIAGNOSTIC_ASSERT(!mOnStopRequestCalled);
    mOnStopRequestCalled = true;
  
@@ -5406,7 +5732,7 @@ index f22b544499..d73f14408d 100644
    virtual void OnChannelReceivedMessage(const Message& aMsg) override;
  
 diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
-index aa775fdf14..a3344e3579 100644
+index aa775fdf14..82a6903025 100644
 --- a/dom/ipc/ContentParent.cpp
 +++ b/dom/ipc/ContentParent.cpp
 @@ -26,6 +26,11 @@
@@ -5457,7 +5783,7 @@ index aa775fdf14..a3344e3579 100644
  }
  
  void ContentParent::AsyncSendShutDownMessage() {
-@@ -5662,6 +5675,897 @@ mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
+@@ -5662,6 +5675,909 @@ mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
    return IPC_OK();
  }
  
@@ -6118,6 +6444,8 @@ index aa775fdf14..a3344e3579 100644
 +      aValueId.Length() >= 15 && strncmp(valueId, "fetch_req_body_", 15) == 0;
 +  bool isXHRRequestBodyValue =
 +      aValueId.Length() >= 13 && strncmp(valueId, "xhr_req_body_", 13) == 0;
++  bool isXHRResponseBodyValue =
++      aValueId.Length() >= 14 && strncmp(valueId, "xhr_resp_body_", 14) == 0;
 +  if (isQueryFieldValue) {
 +    const char* storeEnabled = PR_GetEnv("FIREFOX_TRACE_QUERY_FIELD_VALUE_STORE");
 +    if (!storeEnabled || !storeEnabled[0]) {
@@ -6150,6 +6478,16 @@ index aa775fdf14..a3344e3579 100644
 +    const char* storeEnabled = PR_GetEnv("FIREFOX_TRACE_XHR_REQUEST_BODY_STORE");
 +    if (!storeEnabled || !storeEnabled[0]) {
 +      storeEnabled = PR_GetEnv("TRACE_XHR_REQUEST_BODY_STORE");
++    }
++    if (!storeEnabled || !storeEnabled[0] || strcmp(storeEnabled, "0") == 0 ||
++        strcmp(storeEnabled, "false") == 0 || strcmp(storeEnabled, "off") == 0) {
++      return IPC_OK();
++    }
++  } else if (isXHRResponseBodyValue) {
++    const char* storeEnabled =
++        PR_GetEnv("FIREFOX_TRACE_XHR_RESPONSE_BODY_STORE");
++    if (!storeEnabled || !storeEnabled[0]) {
++      storeEnabled = PR_GetEnv("TRACE_XHR_RESPONSE_BODY_STORE");
 +    }
 +    if (!storeEnabled || !storeEnabled[0] || strcmp(storeEnabled, "0") == 0 ||
 +        strcmp(storeEnabled, "false") == 0 || strcmp(storeEnabled, "off") == 0) {
@@ -7943,7 +8281,7 @@ index ea692b1f6e..298d3c63de 100644
  }
  
 diff --git a/dom/xhr/XMLHttpRequestMainThread.cpp b/dom/xhr/XMLHttpRequestMainThread.cpp
-index 1a8e264644..2ef6fe3b46 100644
+index 1a8e264644..d153688c95 100644
 --- a/dom/xhr/XMLHttpRequestMainThread.cpp
 +++ b/dom/xhr/XMLHttpRequestMainThread.cpp
 @@ -7,7 +7,16 @@
@@ -7981,7 +8319,7 @@ index 1a8e264644..2ef6fe3b46 100644
  #include "nsIScriptError.h"
  #include "nsICachingChannel.h"
  #include "nsICookieJarSettings.h"
-@@ -126,6 +138,1012 @@ namespace mozilla::dom {
+@@ -126,6 +138,1107 @@ namespace mozilla::dom {
  using EventType = XMLHttpRequest::EventType;
  using Events = XMLHttpRequest::Events;
  
@@ -8007,6 +8345,7 @@ index 1a8e264644..2ef6fe3b46 100644
 +std::atomic<uint64_t> sFirefoxTraceNextXHRId{1};
 +std::atomic<uint64_t> sFirefoxTraceNextXHRQueryValueId{1};
 +std::atomic<uint64_t> sFirefoxTraceNextXHRRequestBodyValueId{1};
++std::atomic<uint64_t> sFirefoxTraceNextXHRResponseBodyValueId{1};
 +
 +bool FirefoxTraceXHREnabled() {
 +  const char* enabled = getenv("FIREFOX_TRACE_ENABLE");
@@ -8292,14 +8631,17 @@ index 1a8e264644..2ef6fe3b46 100644
 +    value = getenv("TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES");
 +  }
 +  if (!value || !value[0]) {
-+    return 2097152;
++    return 0xffffffffu;
 +  }
 +  char* end = nullptr;
 +  unsigned long parsed = strtoul(value, &end, 10);
 +  if (end == value) {
-+    return 2097152;
++    return 0xffffffffu;
 +  }
-+  return parsed > 67108864 ? 67108864 : static_cast<uint32_t>(parsed);
++  if (parsed == 0) {
++    return 0xffffffffu;
++  }
++  return parsed > 0xffffffffu ? 0xffffffffu : static_cast<uint32_t>(parsed);
 +}
 +
 +const char* FirefoxTraceXHRRequestBodyMode() {
@@ -8361,6 +8703,56 @@ index 1a8e264644..2ef6fe3b46 100644
 +  }
 +  return value && value[0] && strcmp(value, "0") != 0 &&
 +         strcmp(value, "false") != 0 && strcmp(value, "off") != 0;
++}
++
++const char* FirefoxTraceXHRResponseBodyMode() {
++  const char* mode = getenv("FIREFOX_TRACE_XHR_RESPONSE_BODY");
++  if (!mode || !mode[0]) {
++    mode = getenv("TRACE_XHR_RESPONSE_BODY");
++  }
++  if (!mode || !mode[0]) {
++    mode = getenv("TRACE_NETWORK_BODY");
++  }
++  if (!mode || !mode[0]) {
++    return "none";
++  }
++  if (!strcmp(mode, "1")) {
++    return "full";
++  }
++  return mode;
++}
++
++bool FirefoxTraceXHRResponseBodyEnabled() {
++  const char* mode = FirefoxTraceXHRResponseBodyMode();
++  return strcmp(mode, "none") != 0 && strcmp(mode, "off") != 0 &&
++         strcmp(mode, "0") != 0 && strcmp(mode, "false") != 0;
++}
++
++bool FirefoxTraceXHRResponseBodyStoreEnabled() {
++  const char* value = getenv("FIREFOX_TRACE_XHR_RESPONSE_BODY_STORE");
++  if (!value || !value[0]) {
++    value = getenv("TRACE_XHR_RESPONSE_BODY_STORE");
++  }
++  return value && value[0] && strcmp(value, "0") != 0 &&
++         strcmp(value, "false") != 0 && strcmp(value, "off") != 0;
++}
++
++uint32_t FirefoxTraceXHRResponseBodyStoreMaxBytes() {
++  const char* value = getenv("FIREFOX_TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES");
++  if (!value || !value[0]) {
++    value = getenv("TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES");
++  }
++  // 0 or unset means "no trace-side cap". XHR has already materialized
++  // responseText in memory, so the trace layer should not silently drop it.
++  if (!value || !value[0]) {
++    return 0xffffffffu;
++  }
++  char* end = nullptr;
++  unsigned long parsed = strtoul(value, &end, 10);
++  if (end == value || parsed == 0) {
++    return 0xffffffffu;
++  }
++  return parsed > 0xffffffffu ? 0xffffffffu : static_cast<uint32_t>(parsed);
 +}
 +
 +const char* FirefoxTraceQueryFieldValueMode() {
@@ -8434,6 +8826,38 @@ index 1a8e264644..2ef6fe3b46 100644
 +      1, std::memory_order_relaxed);
 +  snprintf(aValueId, aValueIdLen, "xhr_req_body_%d_%llu", getpid(),
 +           static_cast<unsigned long long>(valueSeq));
++  return FirefoxTraceWriteQueryFieldValueStoreFile(aValueId, aValue, aRelPath,
++                                                   aRelPathLen);
++}
++
++bool FirefoxTraceWriteXHRResponseBodyStoreFile(const nsACString& aValue,
++                                               const char* aSha256,
++                                               char* aValueId,
++                                               size_t aValueIdLen,
++                                               char* aRelPath,
++                                               size_t aRelPathLen) {
++  if (!aValueId || !aValueIdLen || !aRelPath || !aRelPathLen) {
++    return false;
++  }
++  uint64_t valueSeq = sFirefoxTraceNextXHRResponseBodyValueId.fetch_add(
++      1, std::memory_order_relaxed);
++  snprintf(aValueId, aValueIdLen, "xhr_resp_body_%d_%llu", getpid(),
++           static_cast<unsigned long long>(valueSeq));
++  if (aSha256 && aSha256[0]) {
++    snprintf(aRelPath, aRelPathLen, "values/%s.txt", aSha256);
++  } else {
++    snprintf(aRelPath, aRelPathLen, "values/%s.txt", aValueId);
++  }
++
++#if defined(__APPLE__) || defined(__GNUC__)
++  const nsCString flatValue(PromiseFlatCString(aValue));
++  if (FirefoxTraceSendValueToParent &&
++      FirefoxTraceSendValueToParent(aValueId, aSha256 ? aSha256 : "",
++                                    flatValue.get(), flatValue.Length())) {
++    return true;
++  }
++#endif
++
 +  return FirefoxTraceWriteQueryFieldValueStoreFile(aValueId, aValue, aRelPath,
 +                                                   aRelPathLen);
 +}
@@ -8670,8 +9094,17 @@ index 1a8e264644..2ef6fe3b46 100644
 +  return true;
 +}
 +
-+const char* FirefoxTraceConfiguredFields() {
-+  const char* configured = getenv("FIREFOX_TRACE_QUERY_FIELDS");
++const char* FirefoxTraceConfiguredFields(bool aBody = false) {
++  const char* configured =
++      aBody ? getenv("FIREFOX_TRACE_BODY_FIELDS")
++            : getenv("FIREFOX_TRACE_QUERY_FIELDS");
++  if (!configured || !configured[0]) {
++    configured = aBody ? getenv("TRACE_BODY_FIELDS")
++                       : getenv("TRACE_QUERY_FIELDS");
++  }
++  if (!configured || !configured[0]) {
++    configured = getenv("FIREFOX_TRACE_QUERY_FIELDS");
++  }
 +  if (!configured || !configured[0]) {
 +    configured = getenv("TRACE_QUERY_FIELDS");
 +  }
@@ -8680,15 +9113,15 @@ index 1a8e264644..2ef6fe3b46 100644
 +
 +bool FirefoxTraceFirstConfiguredFieldMatch(
 +    const std::function<bool(const char*, nsACString&)>& aExtract,
-+    nsACString& aFieldName) {
-+  const char* configured = FirefoxTraceConfiguredFields();
++    nsACString& aFieldName, bool aBody = false) {
++  const char* configured = FirefoxTraceConfiguredFields(aBody);
 +  if (!configured || !configured[0]) {
 +    return false;
 +  }
 +
 +  uint32_t fieldCount = 0;
 +  const char* p = configured;
-+  while (*p && fieldCount < 64) {
++  while (*p) {
 +    while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t' || *p == '\n' ||
 +           *p == '\r') {
 +      ++p;
@@ -8723,7 +9156,7 @@ index 1a8e264644..2ef6fe3b46 100644
 +      [&aURL](const char* aName, nsACString& aValue) {
 +        return FirefoxTraceExtractQueryParam(aURL, aName, aValue);
 +      },
-+      aFieldName);
++      aFieldName, false);
 +}
 +
 +bool FirefoxTraceFirstConfiguredBodyField(const nsACString& aBody,
@@ -8736,7 +9169,7 @@ index 1a8e264644..2ef6fe3b46 100644
 +        return FirefoxTraceExtractFormParam(aBody, aName, aValue) ||
 +               FirefoxTraceExtractJSONField(aBody, aName, aValue);
 +      },
-+      aFieldName);
++      aFieldName, true);
 +}
 +
 +void FirefoxTraceBuildFieldFlushReason(nsACString& aReason,
@@ -8754,7 +9187,7 @@ index 1a8e264644..2ef6fe3b46 100644
 +  if (aBody.IsEmpty()) {
 +    return;
 +  }
-+  const char* configured = FirefoxTraceConfiguredFields();
++  const char* configured = FirefoxTraceConfiguredFields(true);
 +  if (!configured || !configured[0]) {
 +    return;
 +  }
@@ -8769,7 +9202,7 @@ index 1a8e264644..2ef6fe3b46 100644
 +                   strcmp(valueMode, "0") == 0;
 +  bool valueFull = strcmp(valueMode, "full") == 0;
 +  const char* p = configured;
-+  while (*p && fieldCount < 64) {
++  while (*p) {
 +    while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t' || *p == '\n' ||
 +           *p == '\r') {
 +      ++p;
@@ -8830,7 +9263,7 @@ index 1a8e264644..2ef6fe3b46 100644
 +
 +void FirefoxTraceAppendConfiguredQueryFields(nsACString& aLine,
 +                                             const nsACString& aURL) {
-+  const char* configured = FirefoxTraceConfiguredFields();
++  const char* configured = FirefoxTraceConfiguredFields(false);
 +  if (!configured || !configured[0]) {
 +    return;
 +  }
@@ -8845,7 +9278,7 @@ index 1a8e264644..2ef6fe3b46 100644
 +                   strcmp(valueMode, "0") == 0;
 +  bool valueFull = strcmp(valueMode, "full") == 0;
 +  const char* p = configured;
-+  while (*p && fieldCount < 64) {
++  while (*p) {
 +    while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t' || *p == '\n' ||
 +           *p == '\r') {
 +      ++p;
@@ -8994,7 +9427,7 @@ index 1a8e264644..2ef6fe3b46 100644
  // Maximum size that we'll grow an ArrayBuffer instead of doubling,
  // once doubling reaches this threshold
  const uint32_t XML_HTTP_REQUEST_ARRAYBUFFER_MAX_GROWTH = 32 * 1024 * 1024;
-@@ -1517,6 +2535,293 @@ bool XMLHttpRequestMainThread::InUploadPhase() const {
+@@ -1517,6 +2630,340 @@ bool XMLHttpRequestMainThread::InUploadPhase() const {
    return mState == XMLHttpRequest_Binding::OPENED;
  }
  
@@ -9249,15 +9682,22 @@ index 1a8e264644..2ef6fe3b46 100644
 +  nsAutoCString responseKind;
 +  FirefoxTraceXHRResponseTypeName(mResponseType, responseKind);
 +  nsAutoCString responsePreview;
++  nsAutoCString responseBody;
++  bool responseTextAvailable = false;
 +  bool responsePreviewEnabled = FirefoxTraceXHRPreviewKindEnabled("response");
-+  if (responsePreviewEnabled &&
-+      (mResponseType == XMLHttpRequestResponseType::_empty ||
-+       mResponseType == XMLHttpRequestResponseType::Text ||
-+       mResponseType == XMLHttpRequestResponseType::Json)) {
++  bool textResponseType = mResponseType == XMLHttpRequestResponseType::_empty ||
++                          mResponseType == XMLHttpRequestResponseType::Text ||
++                          mResponseType == XMLHttpRequestResponseType::Json;
++  if ((responsePreviewEnabled || FirefoxTraceXHRResponseBodyEnabled()) &&
++      textResponseType) {
 +    nsAutoString responseText;
 +    if (mResponseText.GetAsString(responseText)) {
-+      CopyUTF16toUTF8(responseText, responsePreview);
-+      FirefoxTraceTruncatePreview(responsePreview);
++      CopyUTF16toUTF8(responseText, responseBody);
++      responseTextAvailable = true;
++      if (responsePreviewEnabled) {
++        responsePreview.Assign(responseBody);
++        FirefoxTraceTruncatePreview(responsePreview);
++      }
 +    }
 +  }
 +
@@ -9281,6 +9721,46 @@ index 1a8e264644..2ef6fe3b46 100644
 +  } else {
 +    line.AppendLiteral(",\"response_preview_enabled\":false");
 +  }
++  if (FirefoxTraceXHRResponseBodyEnabled()) {
++    line.AppendLiteral(",\"response_body_mode\":");
++    FirefoxTraceAppendJsonCString(line, FirefoxTraceXHRResponseBodyMode());
++    if (!textResponseType) {
++      line.AppendLiteral(",\"response_body_skipped\":\"unsupported_response_type\"");
++    } else if (!responseTextAvailable) {
++      line.AppendLiteral(",\"response_body_skipped\":\"response_text_unavailable\"");
++    } else {
++      const nsCString flatBody(PromiseFlatCString(responseBody));
++      char sha256[65];
++      FirefoxTraceComputeSHA256Hex(flatBody.get(), flatBody.Length(), sha256);
++      line.AppendLiteral(",\"response_body_size\":");
++      line.AppendInt(static_cast<uint64_t>(flatBody.Length()));
++      line.AppendLiteral(",\"response_body_sha256\":");
++      FirefoxTraceAppendJsonCString(line, sha256);
++      if (FirefoxTraceXHRResponseBodyStoreEnabled()) {
++        uint32_t storeMax = FirefoxTraceXHRResponseBodyStoreMaxBytes();
++        bool tooLarge = flatBody.Length() > storeMax;
++        char valueId[128] = "";
++        char relPath[512] = "";
++        bool stored =
++            !tooLarge &&
++            FirefoxTraceWriteXHRResponseBodyStoreFile(
++                responseBody, sha256, valueId, sizeof(valueId), relPath,
++                sizeof(relPath));
++        line.AppendLiteral(",\"response_body_value_id\":");
++        FirefoxTraceAppendJsonCString(line, valueId);
++        line.AppendLiteral(",\"response_body_store_path\":");
++        FirefoxTraceAppendJsonCString(line, stored ? relPath : "");
++        line.AppendLiteral(",\"response_body_stored\":");
++        line.Append(stored ? "true" : "false");
++        line.AppendLiteral(",\"response_body_truncated\":");
++        line.Append(tooLarge ? "true" : "false");
++        if (tooLarge) {
++          line.AppendLiteral(",\"response_body_store_limit\":");
++          line.AppendInt(static_cast<uint64_t>(storeMax));
++        }
++      }
++    }
++  }
 +  line.Append('}');
 +  FirefoxTraceWriteXHRLine(line);
 +}
@@ -9288,7 +9768,7 @@ index 1a8e264644..2ef6fe3b46 100644
  // This case is hit when the async parameter is outright omitted, which
  // should set it to true (and the username and password to null).
  void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
-@@ -1664,6 +2969,13 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
+@@ -1664,6 +3111,13 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
    mAuthorRequestHeaders.Clear();
    ResetResponse();
  
@@ -9302,7 +9782,7 @@ index 1a8e264644..2ef6fe3b46 100644
    // Gecko-specific
    mFlagHadUploadListenersOnSend = false;
    mFlagAborted = false;
-@@ -1679,7 +2991,10 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
+@@ -1679,7 +3133,10 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
    // Step 12
    if (mState != XMLHttpRequest_Binding::OPENED) {
      mState = XMLHttpRequest_Binding::OPENED;
@@ -9313,7 +9793,7 @@ index 1a8e264644..2ef6fe3b46 100644
    }
  }
  
-@@ -2033,6 +3348,7 @@ XMLHttpRequestMainThread::OnStartRequest(nsIRequest* request) {
+@@ -2033,6 +3490,7 @@ XMLHttpRequestMainThread::OnStartRequest(nsIRequest* request) {
    if (mErrorLoad == ErrorType::eOK) {
      ChangeState(XMLHttpRequest_Binding::HEADERS_RECEIVED);
    }
@@ -9321,7 +9801,7 @@ index 1a8e264644..2ef6fe3b46 100644
  
    ResetResponse();
  
-@@ -2540,6 +3856,11 @@ void XMLHttpRequestMainThread::ChangeStateToDoneInternal() {
+@@ -2540,6 +3998,11 @@ void XMLHttpRequestMainThread::ChangeStateToDoneInternal() {
  
    // Per spec, fire readystatechange=4/done before final error events.
    ChangeState(XMLHttpRequest_Binding::DONE, true);
@@ -9333,7 +9813,7 @@ index 1a8e264644..2ef6fe3b46 100644
  
    // Per spec, if we failed in the upload phase, fire a final error
    // and loadend events for the upload after readystatechange=4/done.
-@@ -3024,6 +4345,12 @@ void XMLHttpRequestMainThread::Send(
+@@ -3024,6 +4487,12 @@ void XMLHttpRequestMainThread::Send(
      return;
    }
  
@@ -9346,7 +9826,7 @@ index 1a8e264644..2ef6fe3b46 100644
    if (aData.IsNull()) {
      SendInternal(nullptr, false, aRv);
      return;
-@@ -3368,6 +4695,7 @@ void XMLHttpRequestMainThread::SetRequestHeader(const nsACString& aName,
+@@ -3368,6 +4837,7 @@ void XMLHttpRequestMainThread::SetRequestHeader(const nsACString& aName,
    } else {
      mAuthorRequestHeaders.MergeOrSet(aName, value);
    }
@@ -9393,10 +9873,10 @@ index ce1d41936c..f27ea9e664 100644
    nsXMLHttpRequestXPCOMifier* mXPCOMifier;
  
 diff --git a/js/src/vm/Interpreter.cpp b/js/src/vm/Interpreter.cpp
-index 81a10dba41..ff835cd0f3 100644
+index 81a10dba41..d6478d4a85 100644
 --- a/js/src/vm/Interpreter.cpp
 +++ b/js/src/vm/Interpreter.cpp
-@@ -17,73 +17,3408 @@
+@@ -17,73 +17,3651 @@
  #include "mozilla/Sprintf.h"
  #include "mozilla/TimeStamp.h"
  
@@ -9490,8 +9970,14 @@ index 81a10dba41..ff835cd0f3 100644
 +static std::atomic<bool> sFirefoxTraceJSDeepSuppressionNoticeWritten{false};
 +static std::atomic<uint64_t> sFirefoxTraceOpcodeEventCount{0};
 +static std::atomic<bool> sFirefoxTraceOpcodeLimitSentinelWritten{false};
++static std::atomic<uint64_t> sFirefoxTraceOpcodeExecutionCount{0};
++static std::atomic<bool> sFirefoxTraceOpcodeExecutionLimitSentinelWritten{false};
 +static std::atomic<uint64_t> sFirefoxTraceVMStepCount{0};
 +static std::atomic<bool> sFirefoxTraceVMStepLimitSentinelWritten{false};
++static thread_local int64_t sFirefoxTraceOpcodeRateWindowStartUS = 0;
++static thread_local uint64_t sFirefoxTraceOpcodeRateEvents = 0;
++static thread_local uint64_t sFirefoxTraceOpcodeRateBytes = 0;
++static thread_local bool sFirefoxTraceOpcodeRateSentinelWritten = false;
 +static thread_local uint64_t sFirefoxTraceCurrentJSCallId = 0;
 +static thread_local uint64_t sFirefoxTraceCurrentScriptedJSCallId = 0;
 +static thread_local uint32_t sFirefoxTraceDeepCaptureDepth = 0;
@@ -9546,6 +10032,9 @@ index 81a10dba41..ff835cd0f3 100644
 +#endif
 +
 +namespace {
++
++uint64_t FirefoxTraceNowUS();
++void FirefoxTraceWriteJSEventLineRaw(const char* aLine, size_t aLen);
 +
 +bool FirefoxTraceEnvEnabled(const char* name, bool defaultValue = false) {
 +  const char* value = getenv(name);
@@ -9777,9 +10266,16 @@ index 81a10dba41..ff835cd0f3 100644
 +  sFirefoxTraceOpcodeEventCount.store(0, std::memory_order_relaxed);
 +  sFirefoxTraceOpcodeLimitSentinelWritten.store(false,
 +                                                std::memory_order_relaxed);
++  sFirefoxTraceOpcodeExecutionCount.store(0, std::memory_order_relaxed);
++  sFirefoxTraceOpcodeExecutionLimitSentinelWritten.store(
++      false, std::memory_order_relaxed);
 +  sFirefoxTraceVMStepCount.store(0, std::memory_order_relaxed);
 +  sFirefoxTraceVMStepLimitSentinelWritten.store(false,
 +                                                std::memory_order_relaxed);
++  sFirefoxTraceOpcodeRateWindowStartUS = 0;
++  sFirefoxTraceOpcodeRateEvents = 0;
++  sFirefoxTraceOpcodeRateBytes = 0;
++  sFirefoxTraceOpcodeRateSentinelWritten = false;
 +
 +  for (size_t i = 0; i < kFirefoxTraceJSBoundaryBufferMaxCapacity; i++) {
 +    if (sFirefoxTraceJSBoundaryBuffer[i].line) {
@@ -9980,6 +10476,82 @@ index 81a10dba41..ff835cd0f3 100644
 +  return true;
 +}
 +
++bool FirefoxTraceOpcodeScriptIdentityMatches(JSScript* aScript);
++uint32_t FirefoxTraceParseUintEnv(const char* aPrimary, const char* aAlias,
++                                  uint32_t aDefault, uint32_t aMax);
++
++uint32_t FirefoxTraceOpcodeExecutionLimit() {
++  return FirefoxTraceParseUintEnv("FIREFOX_TRACE_OPCODE_EXECUTION_LIMIT",
++                                  "TRACE_OPCODE_EXECUTION_LIMIT", 65536,
++                                  1000000);
++}
++
++bool FirefoxTraceUnsafeUnlimitedAllowed() {
++  const char* unsafe =
++      FirefoxTraceEnv("FIREFOX_TRACE_UNSAFE_ALLOW", "TRACE_UNSAFE_ALLOW");
++  return unsafe && unsafe[0] && strcmp(unsafe, "0") != 0 &&
++         strcmp(unsafe, "false") != 0 && strcmp(unsafe, "off") != 0;
++}
++
++void FirefoxTraceWriteOpcodeExecutionLimitSentinel(uint32_t aLimit) {
++  bool expected = false;
++  if (!sFirefoxTraceOpcodeExecutionLimitSentinelWritten.compare_exchange_strong(
++          expected, true)) {
++    return;
++  }
++
++  char line[512];
++  int len = SprintfLiteral(
++      line,
++      "{\"schema\":\"firefox_trace.event.v1\",\"type\":\"trace.degraded\","
++      "\"ts_us\":%llu,\"pid\":%d,\"module\":\"opcode\","
++      "\"reason\":\"opcode_execution_limit\",\"limit\":%u}\n",
++      static_cast<unsigned long long>(FirefoxTraceNowUS()), getpid(), aLimit);
++  if (len > 0) {
++    FirefoxTraceWriteJSEventLineRaw(line, static_cast<size_t>(len));
++  }
++}
++
++bool FirefoxTraceOpcodeBudgetAvailable(JSScript* aScript) {
++  if (!FirefoxTraceOpcodeScriptIdentityMatches(aScript)) {
++    return true;
++  }
++
++  uint32_t limit = FirefoxTraceOpcodeExecutionLimit();
++  // A zero limit is an explicitly unbounded mode. Keep it behind the
++  // opt-in escape hatch; the normal VM UI and presets always use a finite
++  // execution budget so a hot loop can hand control back to JIT.
++  if (!limit) {
++    return FirefoxTraceUnsafeUnlimitedAllowed();
++  }
++  return sFirefoxTraceOpcodeExecutionCount.load(std::memory_order_relaxed) <
++         limit;
++}
++
++bool FirefoxTraceConsumeOpcodeExecutionBudget(JSScript* aScript) {
++  if (!FirefoxTraceOpcodeScriptIdentityMatches(aScript)) {
++    return true;
++  }
++
++  uint32_t limit = FirefoxTraceOpcodeExecutionLimit();
++  if (!limit) {
++    if (FirefoxTraceUnsafeUnlimitedAllowed()) {
++      return true;
++    }
++    FirefoxTraceWriteOpcodeExecutionLimitSentinel(0);
++    return false;
++  }
++
++  uint64_t index = sFirefoxTraceOpcodeExecutionCount.fetch_add(
++                       1, std::memory_order_relaxed) +
++                   1;
++  if (index > limit) {
++    FirefoxTraceWriteOpcodeExecutionLimitSentinel(limit);
++    return false;
++  }
++  return true;
++}
++
 +bool FirefoxTraceJSScriptEventsEnabled() {
 +  return FirefoxTraceEnvEnabledAlias("FIREFOX_TRACE_JS_SCRIPT_EVENTS",
 +                                     "TRACE_JS_SCRIPT_EVENTS",
@@ -10036,8 +10608,13 @@ index 81a10dba41..ff835cd0f3 100644
 +
 +  if (executionMode && strcmp(executionMode, "opcode") == 0) {
 +    const char* opcode = FirefoxTraceEnv("FIREFOX_TRACE_OPCODE", "TRACE_OPCODE");
-+    return opcode && opcode[0] && strcmp(opcode, "0") != 0 &&
-+           FirefoxTraceOpcodeScriptIdentityMatches(aScript);
++    const char* vmStep =
++        FirefoxTraceEnv("FIREFOX_TRACE_VM_STEP", "TRACE_VM_STEP");
++    bool interpreterTrace =
++        (opcode && opcode[0] && strcmp(opcode, "0") != 0) ||
++        (vmStep && vmStep[0] && strcmp(vmStep, "0") != 0);
++    return interpreterTrace && FirefoxTraceOpcodeScriptIdentityMatches(aScript) &&
++           FirefoxTraceOpcodeBudgetAvailable(aScript);
 +  }
 +
 +  // Keeping the whole page in the interpreter is far too expensive on real
@@ -10086,19 +10663,44 @@ index 81a10dba41..ff835cd0f3 100644
 +  return static_cast<uint32_t>(parsed);
 +}
 +
++uint32_t FirefoxTraceParseUintEnvUnlimited0(const char* aPrimary,
++                                            const char* aAlias,
++                                            uint32_t aDefault,
++                                            uint32_t aMax) {
++  const char* value = FirefoxTraceEnv(aPrimary, aAlias);
++  if (!value || !value[0]) {
++    return aDefault;
++  }
++
++  char* end = nullptr;
++  unsigned long parsed = strtoul(value, &end, 10);
++  if (end == value) {
++    return aDefault;
++  }
++  if (parsed == 0) {
++    return 0xffffffffu;
++  }
++  if (parsed > aMax) {
++    return aMax;
++  }
++  return static_cast<uint32_t>(parsed);
++}
++
 +uint32_t FirefoxTraceJSObjectDepth() {
 +  return FirefoxTraceParseUintEnv("FIREFOX_TRACE_JS_OBJECT_DEPTH",
 +                                  "TRACE_JS_OBJECT_DEPTH", 0, 6);
 +}
 +
 +uint32_t FirefoxTraceJSObjectKeys() {
-+  return FirefoxTraceParseUintEnv("FIREFOX_TRACE_JS_OBJECT_KEYS",
-+                                  "TRACE_JS_OBJECT_KEYS", 32, 256);
++  return FirefoxTraceParseUintEnvUnlimited0("FIREFOX_TRACE_JS_OBJECT_KEYS",
++                                            "TRACE_JS_OBJECT_KEYS", 32,
++                                            0xffffffffu);
 +}
 +
 +uint32_t FirefoxTraceJSArrayItems() {
-+  return FirefoxTraceParseUintEnv("FIREFOX_TRACE_JS_ARRAY_ITEMS",
-+                                  "TRACE_JS_ARRAY_ITEMS", 16, 256);
++  return FirefoxTraceParseUintEnvUnlimited0("FIREFOX_TRACE_JS_ARRAY_ITEMS",
++                                            "TRACE_JS_ARRAY_ITEMS", 16,
++                                            0xffffffffu);
 +}
 +
 +uint32_t FirefoxTraceJSTypedArrayBytes() {
@@ -10124,6 +10726,12 @@ index 81a10dba41..ff835cd0f3 100644
 +bool FirefoxTraceJSCaptureValuesEnabled() {
 +  return FirefoxTraceEnvEnabledAlias("FIREFOX_TRACE_JS_CAPTURE_VALUES",
 +                                     "TRACE_JS_CAPTURE_VALUES", false);
++}
++
++bool FirefoxTraceJSAutoCaptureValuesEnabled() {
++  return FirefoxTraceEnvEnabledAlias(
++      "FIREFOX_TRACE_JS_AUTO_CAPTURE_VALUES",
++      "TRACE_JS_AUTO_CAPTURE_VALUES", false);
 +}
 +
 +const char* FirefoxTraceJSObjectValueKeys() {
@@ -10232,9 +10840,9 @@ index 81a10dba41..ff835cd0f3 100644
 +}
 +
 +uint32_t FirefoxTraceJSValueStoreMaxBytes() {
-+  return FirefoxTraceParseUintEnv("FIREFOX_TRACE_JS_VALUE_STORE_MAX_BYTES",
-+                                  "TRACE_JS_VALUE_STORE_MAX_BYTES", 2097152,
-+                                  67108864);
++  return FirefoxTraceParseUintEnvUnlimited0(
++      "FIREFOX_TRACE_JS_VALUE_STORE_MAX_BYTES",
++      "TRACE_JS_VALUE_STORE_MAX_BYTES", 0xffffffffu, 0xffffffffu);
 +}
 +
 +uint64_t FirefoxTraceJSLimitEvents() {
@@ -11102,7 +11710,10 @@ index 81a10dba41..ff835cd0f3 100644
 +
 +bool FirefoxTraceOpcodeConfigured() {
 +  const char* opcode = FirefoxTraceEnv("FIREFOX_TRACE_OPCODE", "TRACE_OPCODE");
-+  if (!opcode || !opcode[0] || strcmp(opcode, "0") == 0) {
++  const char* vmStep = FirefoxTraceEnv("FIREFOX_TRACE_VM_STEP", "TRACE_VM_STEP");
++  bool opcodeEnabled = opcode && opcode[0] && strcmp(opcode, "0") != 0;
++  bool vmStepEnabled = vmStep && vmStep[0] && strcmp(vmStep, "0") != 0;
++  if (!opcodeEnabled && !vmStepEnabled) {
 +    return false;
 +  }
 +
@@ -11122,13 +11733,80 @@ index 81a10dba41..ff835cd0f3 100644
 +  return scriptFilter && scriptFilter[0];
 +}
 +
++bool FirefoxTraceOpcodeEventLoggingEnabled() {
++  const char* opcode = FirefoxTraceEnv("FIREFOX_TRACE_OPCODE", "TRACE_OPCODE");
++  return opcode && opcode[0] && strcmp(opcode, "0") != 0;
++}
++
 +bool FirefoxTraceOpcodeTracingEnabled() {
 +  return FirefoxTraceOpcodeConfigured() && FirefoxTraceBaseEnabled();
 +}
 +
 +uint32_t FirefoxTraceOpcodeLimit() {
 +  return FirefoxTraceParseUintEnv("FIREFOX_TRACE_OPCODE_LIMIT",
-+                                  "TRACE_OPCODE_LIMIT", 10000, UINT32_MAX);
++                                  "TRACE_OPCODE_LIMIT", 4096, UINT32_MAX);
++}
++
++uint32_t FirefoxTraceOpcodeMaxEventsPerSecond() {
++  return FirefoxTraceParseUintEnv("FIREFOX_TRACE_OPCODE_MAX_EVENTS_PER_SECOND",
++                                  "TRACE_OPCODE_MAX_EVENTS_PER_SECOND", 2000,
++                                  12000);
++}
++
++uint32_t FirefoxTraceOpcodeMaxBytesPerSecond() {
++  return FirefoxTraceParseUintEnv("FIREFOX_TRACE_OPCODE_MAX_BYTES_PER_SECOND",
++                                  "TRACE_OPCODE_MAX_BYTES_PER_SECOND",
++                                  4 * 1024 * 1024,
++                                  8 * 1024 * 1024);
++}
++
++void FirefoxTraceWriteOpcodeRateLimitSentinel(uint32_t aEventLimit,
++                                              uint32_t aByteLimit) {
++  if (sFirefoxTraceOpcodeRateSentinelWritten) {
++    return;
++  }
++  sFirefoxTraceOpcodeRateSentinelWritten = true;
++
++  char line[512];
++  int len = SprintfLiteral(
++      line,
++      "{\"schema\":\"firefox_trace.event.v1\",\"type\":\"trace.degraded\","
++      "\"ts_us\":%llu,\"pid\":%d,\"module\":\"opcode\","
++      "\"reason\":\"opcode_rate_limit\",\"max_events_per_second\":%u,"
++      "\"max_bytes_per_second\":%u}\n",
++      static_cast<unsigned long long>(FirefoxTraceNowUS()), getpid(),
++      aEventLimit, aByteLimit);
++  if (len > 0) {
++    FirefoxTraceWriteJSEventLineRaw(line, static_cast<size_t>(len));
++  }
++}
++
++bool FirefoxTraceConsumeOpcodeRateBudget(uint32_t aEstimatedBytes) {
++  uint32_t eventLimit = FirefoxTraceOpcodeMaxEventsPerSecond();
++  uint32_t byteLimit = FirefoxTraceOpcodeMaxBytesPerSecond();
++  if (!eventLimit && !byteLimit) {
++    return true;
++  }
++
++  int64_t now = static_cast<int64_t>(FirefoxTraceNowUS());
++  if (!sFirefoxTraceOpcodeRateWindowStartUS ||
++      now - sFirefoxTraceOpcodeRateWindowStartUS >= 1000000) {
++    sFirefoxTraceOpcodeRateWindowStartUS = now;
++    sFirefoxTraceOpcodeRateEvents = 0;
++    sFirefoxTraceOpcodeRateBytes = 0;
++  }
++
++  if ((eventLimit &&
++       sFirefoxTraceOpcodeRateEvents + 1 > eventLimit) ||
++      (byteLimit &&
++       sFirefoxTraceOpcodeRateBytes + aEstimatedBytes > byteLimit)) {
++    FirefoxTraceWriteOpcodeRateLimitSentinel(eventLimit, byteLimit);
++    return false;
++  }
++
++  sFirefoxTraceOpcodeRateEvents++;
++  sFirefoxTraceOpcodeRateBytes += aEstimatedBytes;
++  return true;
 +}
 +
 +bool FirefoxTraceOpcodeOperandsEnabled() {
@@ -11300,7 +11978,7 @@ index 81a10dba41..ff835cd0f3 100644
 +    return;
 +  }
 +  uint32_t limit = FirefoxTraceParseUintEnv("FIREFOX_TRACE_VM_STEP_LIMIT",
-+                                            "TRACE_VM_STEP_LIMIT", 10000,
++                                            "TRACE_VM_STEP_LIMIT", 2048,
 +                                            UINT32_MAX);
 +  uint64_t step = sFirefoxTraceVMStepCount.fetch_add(
 +                      1, std::memory_order_relaxed) +
@@ -11340,11 +12018,25 @@ index 81a10dba41..ff835cd0f3 100644
 +  }
 +
 +  uint64_t pcOffset = aScript->pcToOffset(aPC);
++  bool opcodeLogEnabled = FirefoxTraceOpcodeEventLoggingEnabled();
++  bool vmStepMatch = FirefoxTraceVMStepMatches(pcOffset);
++  bool opcodePCMatch = opcodeLogEnabled && FirefoxTraceOpcodePCMatches(pcOffset);
++  if (!vmStepMatch && !opcodePCMatch) {
++    return;
++  }
++  // Reserve a bounded local budget before formatting/IPC. This keeps a hot
++  // VM loop from spending CPU on JSON construction after the safe window is
++  // exhausted; the separate IPC budget remains the final cross-process gate.
++  uint32_t estimatedBytes =
++      2048 + static_cast<uint32_t>(strlen(scriptURL ? scriptURL : ""));
++  if (!FirefoxTraceConsumeOpcodeRateBudget(estimatedBytes)) {
++    return;
++  }
 +  // vm_step is scoped by the pinned JSScript but has its own dispatch PC and
 +  // limit. This allows a running trace to move the VM marker independently of
 +  // the opcode display window.
 +  FirefoxTraceWriteVMStep(aScript, pcOffset, aRegs);
-+  if (!FirefoxTraceOpcodePCMatches(pcOffset)) {
++  if (!opcodePCMatch) {
 +    return;
 +  }
 +
@@ -11797,10 +12489,22 @@ index 81a10dba41..ff835cd0f3 100644
 +    cacheCalleeMetadata();
 +    targetMatch_ = FirefoxTraceShouldCaptureTargetValues(
 +        scriptUrl_, functionName_, scriptSha256_, scriptSha256Available_);
++    const bool boundaryEligible =
++        FirefoxTraceJSModeIsBoundary() &&
++        FirefoxTraceShouldLogBoundary(calleeKind_, scriptUrl_,
++                                       isScriptedCallee_);
++    autoCaptureValues_ =
++        FirefoxTraceJSAutoCaptureValuesEnabled() &&
++        FirefoxTraceJSModeIsBoundary() && isScriptedCallee_ &&
++        boundaryEligible;
 +    captureValues_ =
-+        FirefoxTraceJSCaptureValuesEnabled() &&
-+        (targetMatch_ || (FirefoxTraceJSModeIsDeep() &&
-+                          sFirefoxTraceDeepCaptureDepth > 0));
++        (FirefoxTraceJSCaptureValuesEnabled() &&
++         (targetMatch_ ||
++          (FirefoxTraceJSModeIsBoundary() && isScriptedCallee_ &&
++           boundaryEligible) ||
++          (FirefoxTraceJSModeIsDeep() &&
++           sFirefoxTraceDeepCaptureDepth > 0))) ||
++        autoCaptureValues_;
 +    if (captureValues_ &&
 +        FirefoxTraceShouldSuppressDeepDescendant(calleeKind_, functionName_,
 +                                                targetMatch_)) {
@@ -11812,9 +12516,7 @@ index 81a10dba41..ff835cd0f3 100644
 +    }
 +    logEnabled_ =
 +        logEnabled_ &&
-+        ((FirefoxTraceJSModeIsBoundary() &&
-+          FirefoxTraceShouldLogBoundary(calleeKind_, scriptUrl_,
-+                                        isScriptedCallee_)) ||
++        (boundaryEligible ||
 +         targetMatch_ || captureValues_);
 +    pruneNonTargetFunctionStack_ =
 +        FirefoxTraceJSPruneNonTargetFunctionsEnabled() &&
@@ -11999,13 +12701,16 @@ index 81a10dba41..ff835cd0f3 100644
 +      }
 +      return;
 +    }
- 
--#include "jsapi.h"
--#include "jsnum.h"
++
 +    if (id.isSymbol()) {
 +      FirefoxTraceWriteJsonString(file, "<symbol>");
 +      return;
 +    }
+ 
+-#include "jsapi.h"
+-#include "jsnum.h"
++    FirefoxTraceWriteJsonString(file, "<unknown-key>");
++  }
  
 -#include "builtin/Array.h"
 -#include "builtin/Eval.h"
@@ -12031,9 +12736,6 @@ index 81a10dba41..ff835cd0f3 100644
 -#include "vm/ConstantCompareOperand.h"
 -#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
 -#  include "vm/ErrorObject.h"
-+    FirefoxTraceWriteJsonString(file, "<unknown-key>");
-+  }
-+
 +  bool shouldReadObjectPropertyValue(JS::HandleId id) {
 +    const char* filters = FirefoxTraceJSObjectValueKeys();
 +    if (!filters) {
@@ -12283,7 +12985,10 @@ index 81a10dba41..ff835cd0f3 100644
 +
 +#if defined(XP_UNIX)
 +    fclose(file);
-+    FirefoxTraceWriteJSEventLineRaw(lineBuffer, lineSize);
++    // Keep metadata in the same bounded boundary window as its enclosing
++    // call.  This avoids turning automatic shallow capture into a synchronous
++    // per-value disk/IPC stream on hot pages.
++    FirefoxTraceWriteJSEventLine(lineBuffer, lineSize);
 +    free(lineBuffer);
 +#else
 +    fclose(file);
@@ -12530,7 +13235,13 @@ index 81a10dba41..ff835cd0f3 100644
 +  }
 +
 +  void writeCapturedEnterValues(FILE* file) {
-+    fputs(",\"capture_status\":\"target_values_preview\"", file);
++    fputs(",\"capture_status\":", file);
++    FirefoxTraceWriteJsonString(
++        file, autoCaptureValues_ ? "boundary_auto_values_preview"
++                                 : "target_values_preview");
++    if (autoCaptureValues_) {
++      fputs(",\"auto_capture_values\":true", file);
++    }
 +    fputs(",\"data\":{", file);
 +    if (FirefoxTraceJSThisEnabled()) {
 +      fputs("\"this_preview\":", file);
@@ -12563,7 +13274,13 @@ index 81a10dba41..ff835cd0f3 100644
 +  }
 +
 +  void writeCapturedReturnValue(FILE* file) {
-+    fputs(",\"capture_status\":\"target_values_preview\"", file);
++    fputs(",\"capture_status\":", file);
++    FirefoxTraceWriteJsonString(
++        file, autoCaptureValues_ ? "boundary_auto_values_preview"
++                                 : "target_values_preview");
++    if (autoCaptureValues_) {
++      fputs(",\"auto_capture_values\":true", file);
++    }
 +    if (FirefoxTraceJSReturnEnabled()) {
 +      fputs(",\"data\":{\"return\":", file);
 +      JS::RootedValue rval(cx_, args_.rval());
@@ -12648,6 +13365,11 @@ index 81a10dba41..ff835cd0f3 100644
 +    FirefoxTraceWriteJsonString(file, FirefoxTraceJSMode());
 +    fputs(",\"target_match\":", file);
 +    fputs(targetMatch_ ? "true" : "false", file);
++    if (autoCaptureValues_) {
++      fputs(",\"capture_tier\":\"boundary_auto\"", file);
++    } else if (captureValues_) {
++      fputs(",\"capture_tier\":\"target_or_deep\"", file);
++    }
 +    if (earlyScriptFilterActive_) {
 +      fputs(",\"early_script_filter\":true", file);
 +      fputs(",\"non_target_stack_skipped\":true", file);
@@ -12690,6 +13412,7 @@ index 81a10dba41..ff835cd0f3 100644
 +  bool logEnabled_ = false;
 +  bool targetMatch_ = false;
 +  bool captureValues_ = false;
++  bool autoCaptureValues_ = false;
 +  bool pushedDeepCaptureDepth_ = false;
 +  bool earlyScriptFilterActive_ = false;
 +  bool pruneNonTargetFunctionStack_ = false;
@@ -12864,7 +13587,7 @@ index 81a10dba41..ff835cd0f3 100644
  
  template <bool Eq>
  static MOZ_ALWAYS_INLINE bool LooseEqualityOp(JSContext* cx,
-@@ -433,6 +3768,8 @@ bool js::RunScript(JSContext* cx, RunState& state) {
+@@ -433,6 +4011,8 @@ bool js::RunScript(JSContext* cx, RunState& state) {
      return false;
    }
  
@@ -12873,7 +13596,7 @@ index 81a10dba41..ff835cd0f3 100644
    GeckoProfilerEntryMarker marker(cx, state.script());
  
    // If the isExecuting flag was not set, then enable it.
-@@ -458,21 +3795,23 @@ bool js::RunScript(JSContext* cx, RunState& state) {
+@@ -458,21 +4038,23 @@ bool js::RunScript(JSContext* cx, RunState& state) {
      }
    });
  
@@ -12906,7 +13629,7 @@ index 81a10dba41..ff835cd0f3 100644
  }
  #ifdef _MSC_VER
  #  pragma optimize("", on)
-@@ -564,23 +3903,26 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
+@@ -564,23 +4146,26 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
      return ReportIsNotFunction(cx, args.calleev(), skipForCallee, construct);
    }
  
@@ -12936,7 +13659,7 @@ index 81a10dba41..ff835cd0f3 100644
    }
  
    /* Invoke native functions. */
-@@ -594,19 +3936,19 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
+@@ -594,19 +4179,19 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
          native = jitInfo->ignoresReturnValueMethod;
        }
      }
@@ -12959,7 +13682,7 @@ index 81a10dba41..ff835cd0f3 100644
    }
  
    /* Run function until JSOp::RetRval, JSOp::Return or error. */
-@@ -616,20 +3958,20 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
+@@ -616,20 +4201,20 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
    // ensure this object has the correct realm.
    AutoRealm ar(cx, state.script());
    if (construct && !MaybeCreateThisForConstructor(cx, args)) {
@@ -12983,7 +13706,7 @@ index 81a10dba41..ff835cd0f3 100644
  }
  
  // Returns true if the callee needs an outerized |this| object. Outerization
-@@ -1817,6 +5159,15 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -1817,6 +5402,19 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
  #define ADVANCE_AND_DISPATCH(N)                  \
    JS_BEGIN_MACRO                                 \
      REGS.pc += (N);                              \
@@ -12993,13 +13716,17 @@ index 81a10dba41..ff835cd0f3 100644
 +        firefoxTraceOpcodeTraceEnabled = FirefoxTraceOpcodeTracingEnabled(); \
 +      }                                                                  \
 +      if (MOZ_LIKELY(firefoxTraceOpcodeTraceEnabled)) {                 \
-+        FirefoxTraceWriteOpcodeEvent(script, REGS.pc, REGS);            \
++        if (MOZ_LIKELY(FirefoxTraceConsumeOpcodeExecutionBudget(script))) { \
++          FirefoxTraceWriteOpcodeEvent(script, REGS.pc, REGS);          \
++        } else {                                                        \
++          firefoxTraceOpcodeTraceEnabled = false;                       \
++        }                                                               \
 +      }                                                                  \
 +    }                                                                    \
      SANITY_CHECKS();                             \
      DISPATCH_TO(*REGS.pc | activation.opMask()); \
    JS_END_MACRO
-@@ -1928,6 +5279,13 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -1928,6 +5526,13 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
    RootedScript script(cx);
    SET_SCRIPT(REGS.fp()->script());
  
@@ -13013,7 +13740,7 @@ index 81a10dba41..ff835cd0f3 100644
    /*
     * Pool of rooters for use in this interpreter frame. References to these
     * are used for local variables within interpreter cases. This avoids
-@@ -2025,11 +5383,12 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -2025,11 +5630,12 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
      COUNT_COVERAGE();
      END_CASE(JumpTarget)
  
@@ -13028,7 +13755,7 @@ index 81a10dba41..ff835cd0f3 100644
          script->incWarmUpCounter();
  
          jit::MethodStatus status =
-@@ -3320,20 +6679,55 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -3320,20 +6926,55 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
            goto error;
          }
  

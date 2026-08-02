@@ -1,12 +1,14 @@
 # Firefox Trace Agent Handoff
 
-更新时间：2026-07-28
+更新时间：2026-08-02
 
 ## 当前结论
 
+补充：`docs/AGENT_TRACE_GUIDE.md` 是后续 agent 读懂通用 trace 日志、做补环境/纯算的入口文档；站点样本放在 `examples/` 或 `analysis/`，不属于 `tools/` 主交付链路。
+
 第一阶段核心能力已完成并通过真实站验证。JD `h5st` 和 PDD `anti_content` 都只是验证样本，
-不是产品内置规则。当前已新增 runtime trace control，可支持真实站先登录/过滑块，目标触发前
-再开启 trace。
+不是产品内置规则。当前已新增 `full-chain` 一次采集计划和中文中控台，可支持用户打开可见
+Firefox、手动完成前置动作、开始/暂停/停止记录，并把同一操作的多类日志整理到分类目录。
 
 JD `h5st` 和 PDD `anti_content` 都能形成：
 
@@ -23,6 +25,28 @@ JD `h5st` 和 PDD `anti_content` 都能形成：
 - `FIREFOX_TRACE_JS=0` / `TRACE_JS=0` 已下沉到
   `js/src/vm/Interpreter.cpp::FirefoxTraceBaseEnabled()`，已重新 build，并用本地 active smoke
   验证：XHR/DOM 仍写日志，`firefox-js-*.jsonl` 不生成。
+- `TRACE_JS_AUTO_CAPTURE_VALUES=1` 已接入 boundary 模式：网页脚本调用按
+  `TRACE_JS_MAX_ARGS`、`TRACE_JS_OBJECT_DEPTH`、`TRACE_JS_MAX_VALUE_BYTES` 做浅层
+  args/return 采集，事件标记 `capture_tier=boundary_auto`；值 metadata 仍受
+  `TRACE_JS_VALUE_STORE_MIN_BYTES` 和 IPC/事件预算保护。
+- Query 与 Body 已分开支持：`TRACE_QUERY_FIELDS` / `TRACE_BODY_FIELDS`，XHR 与 Fetch
+  request body 都写 `body_fields` / `body_fields_meta`，Fetch body 的真实上传流仍通过
+  clone 读取。
+- `tools/trace_finalize.py` 会把原始 JSONL 生成 `categorized/`、`index/summary.json`、
+  `index/causal-index.json`；`tools/trace_check.py full-chain TRACE_DIR` 可做离线校验。
+- 中文中控台入口：
+
+  ```bash
+  tools/trace-console.sh --host 127.0.0.1 --port 8788
+  ```
+
+  API 现在包含 `/api/open`、`/api/start`、`/api/pause`、`/api/stop`、
+  `/api/finalize`、`/api/close` 和 `/api/session/status`；`/api/status` 等旧入口继续兼容。
+- VM/WASM 选项已进入中控台：opcode、raw operand、栈 slot/primitive、dispatcher
+  `vm_step`、WASM dump/raw bytes 均可同一轮配置；opcode/VM 会自动补齐安全上限和 rate
+  guard，缺脚本过滤或 dispatcher PC 的配置会直接报错。
+- 开启 VM 细粒度时，中控台会自动把 JS call 收窄到目标脚本、关闭 JS 自动浅值并设置
+  `FIREFOX_TRACE_JS_LIMIT_EVENTS=12000`，避免普通 JS call 日志把 VM 压力页放大。
 
 本轮已完成 paused 热切换的配置推送与 ACK 协议：Parent 轮询 control revision 并在 content
 初始化后立即尝试推送，content 安装后写 `firefox-control-acks.jsonl` 的
@@ -91,7 +115,7 @@ PATH=/opt/homebrew/opt/lld/bin:$PATH \
 python3.11 ./mach build
 ```
 
-最近一次构建结果：通过。
+最近一次构建结果：通过（2026-08-02，obj-aarch64-apple-darwin25.6.0）。
 
 ## 当前主要能力
 
@@ -105,6 +129,8 @@ python3.11 ./mach build
 - 长字符串 value_store。
 - `values/<value_id>.txt` 保存完整值。
 - `origin_call_id` / `parent_call_id` 辅助链路回溯。
+- `full-chain` 下的 boundary 自动浅值：`capture_tier=boundary_auto`、
+  `capture_status=boundary_auto_values_preview`、受限 `data.args` / `data.return`。
 - boundary ring buffer：首轮 discover 保调用边界，sink 触发 flush。
 - boundary ring buffer 支持按 sink reason 设置 flush 窗口，例如
   `TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY` / `TRACE_JS_BOUNDARY_BUFFER_EVENTS_DOM_CALL`；
@@ -126,14 +152,19 @@ python3.11 ./mach build
 - XHR open/send/body/response。
 - XHR URL `query_fields` 和 value_store。
 - XHR request body bounded preview/store/sha256。
+- XHR responseText 完整 artifact：`TRACE_XHR_RESPONSE_BODY=full` +
+  `TRACE_XHR_RESPONSE_BODY_STORE=1`，`TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES=0`
+  表示 trace 层不按大小丢弃；`xhr.response` 带 path/size/SHA-256。
 - XHR body 字段抽取：
   - JSON body；
   - form-urlencoded body；
-  - 字段名复用 `TRACE_QUERY_FIELDS`。
+  - 字段名使用 `TRACE_BODY_FIELDS`，为空时回退 `TRACE_QUERY_FIELDS`。
 - Fetch call/request/response/done。
 - Fetch request body clone preview/store。
+- Fetch request body JSON/form 字段抽取和 `body_fields_meta`。
 - Fetch response headers。
-- Fetch response body clone preview 和 `body_chunk` preview 已有基础能力。
+- Fetch response body clone preview、`body_chunk` preview 和
+  `fetch.body_artifact` 完整响应制品已有基础能力；完整制品由正常网络读路径旁路保存。
 
 ### script.resource
 
@@ -185,15 +216,24 @@ tools/trace-control.sh "$TRACE_DIR" status
 - 最新 smoke：`/private/tmp/firefox-trace-runtime-segments-smoke6`，同一个 Firefox
   进程先跑 `discover-light` segment，再切到 `target-values` segment；`seg_003`
   成功出现 `js_mode=target`、`target_match=true` 和 `js.value.store`。
-- 本地控制台 v1 已实现：`tools/trace-console-server.py`，入口统一使用
-  `tools/trace-console.sh`。
+- 桌面控制台 v1 已实现：`tools/trace-desktop.py` 与 `Firefox Trace Console.app`；Web/API 控制台保留为 `tools/trace-console-server.py` / `tools/trace-console.sh`。
   - Python 环境：默认固定 `/opt/miniconda3/envs/firefox-trace/bin/python`；
     只有显式设置 `FIREFOX_TRACE_PYTHON=/path/to/python` 才会替换。
-  - 启动：`tools/trace-console.sh --host 127.0.0.1 --port 8788 --trace-dir "$TRACE_DIR"`
-  - UI：`http://127.0.0.1:8788/`
-  - Agent API：`/api/status`、`/api/summary`、`/api/config`、`/api/new-segment`、
-    `/api/start`、`/api/stop`、`/api/prewarm`。
-  - API smoke 已通过：`/private/tmp/firefox-trace-console-api-smoke`。
+  - 桌面启动：双击 `Firefox Trace Console.app` 或执行 `tools/trace-desktop.sh`；
+  - Web 启动：`tools/trace-console.sh --host 127.0.0.1 --port 8788 --trace-dir "$TRACE_DIR"`；
+  - UI 默认使用 `full-chain`；
+  - Agent API：`/api/open`、`/api/status`、`/api/session/status`、`/api/summary`、
+    `/api/config`、`/api/new-segment`、`/api/start`、`/api/pause`、`/api/stop`、
+    `/api/finalize`、`/api/close`、`/api/prewarm`；
+  - 中控台状态每秒读取新增 JSONL，显示事件速率、分类计数、字段命中、Producer 候选、
+    ACK 和 degraded 状态；
+- 本地 full-chain smoke 已通过：`/private/tmp/firefox-trace-full-chain-smoke-20260802-final`。
+- 最新构建 Fetch request body smoke 已通过：
+  `/private/tmp/firefox-trace-fetch-request-body-full-chain-1Zu2Nx`；
+  `fetch.request` 实际包含 `body_fields.token`、`body_fields_meta` 和
+  `values/fetch_req_body_*.txt`，整理后的 full-chain 校验通过。
+- 中控台 `/api/latest` 已回归：只枚举带 `manifest.json` 的 trace 目录，并排除
+  `*-profile` 目录。
 - JS value_store 的长值 artifact 按 SHA-256 命名并去重；不同 `value_id` 可引用相同
   `values/<sha256>.txt`。这减少二轮 args/return 重复值的 IPC 和磁盘写入。
 - launcher preset 新增 `TRACE_IPC_MAX_EVENTS_PER_SECOND` / `TRACE_IPC_MAX_BYTES_PER_SECOND`
@@ -769,10 +809,13 @@ TRACE_XHR_REQUEST_BODY_STORE=1 \
 - 上限为独立的 `TRACE_OPCODE_LIMIT`，每个 segment 默认 10,000 条；到达后写
   `trace.degraded module=opcode reason=opcode_limit`。Parent 已把 `module=opcode` 正确
   路由到 `firefox-js-*.jsonl`。
-- launcher 的 `opcode-window` preset 默认：`TRACE_OPCODE_LIMIT=10000`、
-  `TRACE_OPCODE_OPERANDS=1`、`TRACE_OPCODE_STACK_SLOTS=4`、
+- launcher 的 `opcode-window` preset 默认：`TRACE_OPCODE_LIMIT=4096`、
+  `TRACE_OPCODE_OPERANDS=1`、`TRACE_OPCODE_STACK_SLOTS=2`、
   `TRACE_OPCODE_STACK_PRIMITIVES=0`。缺少 `TRACE_OPCODE_SCRIPT_CONTAINS` 或
   `TRACE_SCRIPT_CONTAINS` 时 launcher 退出，避免无目标脚本的 opcode run。
+- opcode/VM 默认还包含 `TRACE_OPCODE_EXECUTION_LIMIT=65536`、`TRACE_VM_STEP_LIMIT=2048`、opcode
+  `2000 events/s + 4 MiB/s` 和 IPC `6000 events/s + 4 MiB/s` 的 rate guard；
+  `trace-control.sh` 直接配置时同样自动补齐。
 
 实现文件：
 
@@ -797,13 +840,14 @@ TRACE_OPCODE_SCRIPT_LINE=LINE             # 可空，由 analyzer tier_pin_env �
 TRACE_OPCODE_SCRIPT_COLUMN=COLUMN         # 可空
 TRACE_OPCODE_SCRIPT_BYTECODE_LENGTH=LEN   # 可空
 TRACE_OPCODE_PC_RANGE='START:END'       # 可空
-TRACE_OPCODE_LIMIT=10000                # 0 不表示不限；范围 1..1000000
+TRACE_OPCODE_LIMIT=4096                 # 安全默认；范围由 trace-control 校验
+TRACE_OPCODE_EXECUTION_LIMIT=65536      # 解释执行预算；到达后允许回 JIT
 TRACE_OPCODE_OPERANDS=1
-TRACE_OPCODE_STACK_SLOTS=4              # 0..8
+TRACE_OPCODE_STACK_SLOTS=2              # 安全 preset；内核支持 0..8
 TRACE_OPCODE_STACK_PRIMITIVES=0
 TRACE_VM_STEP=1
 TRACE_VM_DISPATCH_PC=START             # 必填；使用 analyzer 的 dispatcher window 起点
-TRACE_VM_STEP_LIMIT=10000
+TRACE_VM_STEP_LIMIT=2048
 ```
 
 fixture 的 255/469/551 条事件是各自小程序的实际执行次数，不是采集器的固定上限。真实
@@ -867,6 +911,15 @@ python3.11 ./mach build
   PC 278 输出 7 条 vm_step、126 条 opcode，页面完成 `complex:126`。
 - `/private/tmp/firefox-trace-vmp-vm-step-limit-routed-20260728`：limit=3 保留 3 条
   vm_step，随后 JS 流内写 `trace.degraded module=vm_step reason=vm_step_limit`。
+- `/private/tmp/firefox-trace-vm-safe-stress-LoaXHO`：安全 rate guard 下 opcode=4096、
+  vm_step=65，写出 `opcode_rate_limit` 与 `opcode_limit` 降级事件，页面截图输出
+  `stress:126`。
+- `/private/tmp/firefox-trace-ui-vm-step-only-1785652331`：只勾 vm_step，不输出 opcode，
+  3.2 秒完成、约 3.3 MiB。
+- `/private/tmp/firefox-trace-ui-opcode-stack-budget-1785652334`：opcode/stack/primitive/vm_step
+  同开，2.4 秒完成、约 3.2 MiB，写出 rate/execution 降级但页面完成。
+- `/private/tmp/firefox-trace-wasm-final-20260802-141334`：JS 关闭时生成 1 个
+  `wasm.module`、6 个 `wasm.insn` 和 `.wasm` artifact，`trace_check.py wasm` 通过。
 
 PC window 分析命令：
 

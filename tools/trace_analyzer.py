@@ -105,11 +105,19 @@ def iter_text_values(row: dict[str, Any]) -> list[tuple[str, str]]:
         value = row.get(key)
         if isinstance(value, str):
             out.append((key, value))
-    query_fields = row.get("query_fields")
-    if isinstance(query_fields, dict):
-        for key, value in query_fields.items():
-            if isinstance(value, str):
-                out.append((f"query_fields.{key}", value))
+    for field_key in ("query_fields", "body_fields", "header_fields", "cookie_fields"):
+        field_values = row.get(field_key)
+        if isinstance(field_values, dict):
+            for key, value in field_values.items():
+                if isinstance(value, str):
+                    out.append((f"{field_key}.{key}", value))
+    headers = row.get("headers")
+    if isinstance(headers, dict):
+        for key, value in headers.items():
+            if isinstance(value, dict) and isinstance(value.get("value"), str):
+                out.append((f"headers.{key}", value["value"]))
+            elif isinstance(value, str):
+                out.append((f"headers.{key}", value))
     for arg in row.get("args") or []:
         if isinstance(arg, dict) and isinstance(arg.get("preview"), str):
             out.append(("arg.preview", arg["preview"]))
@@ -453,6 +461,9 @@ def build_next_trace_env(
         "TRACE_JS_DEEP_LONG_STR=128",
         "TRACE_JS_VALUE_STORE_MAX_BYTES=8388608",
         f"TRACE_QUERY_FIELDS={','.join(query_fields)}",
+        f"TRACE_BODY_FIELDS={','.join(query_fields)}",
+        f"TRACE_HEADER_FIELDS={','.join(query_fields)}",
+        f"TRACE_COOKIE_FIELDS={','.join(query_fields)}",
     ]
     return "\n".join(lines) + "\n"
 

@@ -1,0 +1,108 @@
+# UI Options And Defaults
+
+The desktop UI is the primary product surface: `Firefox Trace Console.app` or `tools/trace-desktop.sh`.
+
+
+## Panel operating rules
+
+- First chain-discovery pass: keep defaults, use `full-chain`, and start active if page-load code matters.
+- Fill the target field where it lives: query, body, request header, or cookie.
+- JSVMP/WASM options are additive evidence. Keep JS/XHR/Fetch/DOM/BOM/Cookie/Storage/Script enabled unless the run becomes degraded or too heavy.
+- `contains` is a user-provided substring filter. `opcode PC range` and `dispatcher PC` are analysis outputs from a previous trace, usually produced by `trace_opcode_analyzer.py`.
+
+## Raw HTTP
+
+Raw HTTP records lower-level HTTP channel payload chunks (`channel_id`, `offset`, `payload_hex`, URL/context metadata). Use it when logical XHR/Fetch evidence is already aligned but byte-level differences remain: multipart boundaries, compression/charset, binary bodies, newline/encoding issues, or response chunk inspection. It is usually off during normal environment reconstruction and pure calculation work.
+
+## Session panel
+
+| UI item | Default | Effect |
+|---|---:|---|
+| Target URL | `about:blank` | Firefox opens this address. |
+| Output directory | `~/Desktop/firefox-trace-outputs/firefox-trace-YYYYMMDD-HHMMSS` | All logs/artifacts/indexes for the run. |
+| Firefox binary | packaged runtime Nightly if present | Modified Firefox executable. |
+| Profile directory | empty | Empty creates a temporary profile; fill it to reuse state. |
+| Run label | `manual` | Human-readable label in manifest/control. |
+| Startup mode | `active` | Open and trace immediately. |
+| Reuse output directory | off | Keep off for a fresh run; turn on to append segments. |
+
+Startup modes:
+
+| Mode | Use |
+|---|---|
+| `active` | Capture page-load scripts, initialization, early requests. Recommended for chain discovery. |
+| `paused` | Prepare login/captcha/navigation first, then start before the target action. |
+| `prewarm` | Warm browser/runtime before a formal action window. |
+
+## Capture plan
+
+| Plan | Use | Evidence |
+|---|---|---|
+| `full-chain` | Default one-pass evidence collection | JS boundary + shallow args/return, DOM/BOM signal, XHR/Fetch request/response, Cookie/Storage, Script artifact, WebSocket, WASM module hints, long values in `values/`. |
+| `discover-light` | Lower overhead first pass | Requests, scripts, DOM/BOM signal, Cookie/Storage, JS boundary with reduced value capture. |
+
+Default target fields are generic:
+
+```text
+sign,signature,token,riskData,fp,nonce,timestamp,captchaId,securityToken,antiToken,authToken,checksum,digest
+```
+
+Users can replace them with any query/body/header/cookie field names. Header matches appear as `location=headers`; cookie matches appear as `location=cookies`.
+
+## Modules
+
+Default on: JS, XHR, Fetch, DOM/BOM, Cookie, Storage, Script artifact, WebSocket.
+Default off: Raw HTTP.
+
+## JS value options
+
+Default UI strength is `通用完整值落盘（默认）`:
+
+- ordinary JS event limit: `0` when “不限普通 JS trace 总事件数” is checked;
+- object depth: `1` in UI form, while `full-chain` preset uses shallow boundary defaults unless the UI/extra env overrides it;
+- object keys: `0` means no key-count cutoff;
+- array items: `0` means no item-count cutoff;
+- value metadata: `1`;
+- primitive metadata: `1`;
+- value store min bytes: `1`;
+- JS value store max bytes: `0`, meaning do not drop artifacts by trace-layer size.
+
+Full values are usually stored under `values/`; JSONL keeps preview, size, SHA-256, and path.
+
+## VM/WASM options
+
+Defaults:
+
+- checked: raw operands, WASM module metadata;
+- off: JS opcode, stack slot type, stack primitive value, VM step, WASM artifact, WASM raw bytes, VM/opcode unbounded mode.
+
+Safety defaults:
+
+| Parameter | Default |
+|---|---:|
+| opcode limit | 4096 |
+| opcode execution budget | 65536 |
+| VM step limit | 2048 |
+| opcode events/s | 2000 |
+| opcode bytes/s | 4194304 |
+| IPC events/s | 6000 |
+| IPC bytes/s | 4194304 |
+| stack slots | 2 |
+| WASM module limit | 16 |
+| WASM preview bytes | 128 |
+| WASM dump max bytes | 1048576 |
+| WASM insn limit | 512 |
+
+`目标脚本 contains` is a keyword/substring, usually part of the script URL or file name. `opcode PC range` is a numeric SpiderMonkey bytecode range like `120:220`; first pass leaves it empty. `dispatcher PC` is the single bytecode PC of a JSVM dispatcher loop; fill it only after opcode analysis identifies it.
+
+
+## VM stage presets
+
+Use the UI preset instead of guessing individual checkboxes:
+
+- `JSVMP round 1`: JS opcode + raw operands + script substring; leave PC range and dispatcher PC empty.
+- `JSVMP round 2`: same opcode capture plus the `START:END` range returned by the analyzer.
+- `JSVMP round 3`: VM step plus the analyzer-confirmed dispatcher PC.
+- `WASM metadata`: module metadata only; dump/raw bytes are follow-up options.
+
+Keep the normal JS/XHR/Fetch/DOM/BOM/Cookie/Storage/Script modules enabled so the VM trace remains connected to the request and environment ledger.

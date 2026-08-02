@@ -10,7 +10,8 @@ Usage:
   run-trace-firefox.sh [trace options] [Firefox options] URL
 
 Trace options:
-  --trace-preset discover-light|target-return|target-values|deep-causal|opcode-window|manual
+  --trace-preset full-chain|discover-light|target-return|target-values|deep-causal|opcode-window|manual
+  --trace-plan full-chain
   --trace-start active|paused|prewarm
   --trace-run-label LABEL
   --trace-automation-surface baseline|stock
@@ -18,7 +19,9 @@ Trace options:
 
 Environment:
   FIREFOX_BIN, TRACE_DIR, PROFILE_DIR, TRACE_HEADLESS=0|1,
-  TRACE_SCREENSHOT=PATH, TRACE_QUERY_FIELDS, and other TRACE_* settings.
+  TRACE_SCREENSHOT=PATH, TRACE_QUERY_FIELDS, TRACE_BODY_FIELDS,
+  TRACE_HEADER_FIELDS, TRACE_COOKIE_FIELDS,
+  and other TRACE_* settings.
 EOF
 }
 
@@ -45,6 +48,8 @@ TRACE_USER_JS="${TRACE_USER_JS:-$ROOT_DIR/profiles/trace-user.js}"
 TRACE_APPLY_USER_JS="${TRACE_APPLY_USER_JS:-1}"
 TRACE_HEADLESS="${TRACE_HEADLESS:-0}"
 TRACE_PRESET="${TRACE_PRESET:-}"
+TRACE_PLAN="${TRACE_PLAN:-}"
+TRACE_CAPTURE_PLAN="${TRACE_CAPTURE_PLAN:-}"
 TRACE_CAMPAIGN_ID="${TRACE_CAMPAIGN_ID:-campaign-$(date +%Y%m%d-%H%M%S)}"
 TRACE_RUN_LABEL="${TRACE_RUN_LABEL:-}"
 TRACE_AUTOMATION_SURFACE="${TRACE_AUTOMATION_SURFACE:-baseline}"
@@ -75,6 +80,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --trace-preset=*)
       TRACE_PRESET="${1#--trace-preset=}"
+      shift
+      ;;
+    --trace-plan)
+      TRACE_PLAN="${2:-}"
+      shift 2
+      ;;
+    --trace-plan=*)
+      TRACE_PLAN="${1#--trace-plan=}"
       shift
       ;;
     --trace-run-label)
@@ -129,6 +142,15 @@ case "$TRACE_AUTOMATION_SURFACE" in
     ;;
 esac
 
+# A plan is the user-facing capture composition.  Keep the old preset
+# interface working, but make `--trace-plan full-chain` sufficient on its own.
+if [[ -z "$TRACE_PRESET" && -z "$TRACE_CAPTURE_PLAN" && "$TRACE_PLAN" == "full-chain" ]]; then
+  TRACE_PRESET="full-chain"
+fi
+if [[ -z "$TRACE_PLAN" && -n "$TRACE_CAPTURE_PLAN" ]]; then
+  TRACE_PLAN="$TRACE_CAPTURE_PLAN"
+fi
+
 case "$TRACE_START" in
   "active"|"paused"|"prewarm")
     ;;
@@ -156,8 +178,92 @@ apply_trace_preset() {
   case "$TRACE_PRESET" in
     ""|"manual")
       ;;
+    "full-chain")
+      set_default TRACE_PLAN full-chain
+      set_default TRACE_PROFILE discover
+      set_default FIREFOX_TRACE_JS 1
+      set_default TRACE_JS_MODE boundary
+      set_default TRACE_JS_AUTO_CAPTURE_VALUES 1
+      set_default TRACE_JS_CAPTURE_VALUES 1
+      set_default TRACE_JS_THIS none
+      set_default TRACE_JS_ARGS preview
+      set_default TRACE_JS_RET preview
+      set_default TRACE_JS_OBJECT_DEPTH 0
+      set_default TRACE_JS_OBJECT_KEYS 0
+      set_default TRACE_JS_ARRAY_ITEMS 0
+      set_default TRACE_JS_VALUE_STORE 1
+      set_default TRACE_JS_VALUE_METADATA 1
+      set_default TRACE_JS_VALUE_METADATA_MIN_BYTES 24
+      set_default TRACE_JS_PRIMITIVE_METADATA 1
+      set_default TRACE_JS_VALUE_STORE_MIN_BYTES 1
+      set_default TRACE_JS_VALUE_STORE_MAX_BYTES 0
+      set_default TRACE_JS_MAX_VALUE_BYTES 512
+      set_default TRACE_JS_MAX_ARGS 0
+      set_default TRACE_JS_BOUNDARY_BUFFER 1
+      set_default TRACE_JS_BOUNDARY_BUFFER_EVENTS 8192
+      set_default TRACE_JS_BOUNDARY_BUFFER_EVENTS_DOM_GET 2048
+      set_default TRACE_JS_BOUNDARY_BUFFER_EVENTS_DOM_CALL 4096
+      set_default TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_SEND 16384
+      set_default TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY 32768
+      set_default TRACE_JS_BOUNDARY_BUFFER_EVENTS_FETCH_CALL 24576
+      set_default TRACE_JS_BOUNDARY_BUFFER_EVENTS_FETCH_REQUEST 24576
+      set_default TRACE_JS_BOUNDARY_BUFFER_EVENTS_COOKIE_GET 4096
+      set_default TRACE_JS_BOUNDARY_BUFFER_EVENTS_COOKIE_SET 4096
+      set_default TRACE_JS_BOUNDARY_BUFFER_EVENTS_STORAGE_GET 4096
+      set_default TRACE_JS_BOUNDARY_BUFFER_EVENTS_STORAGE_SET 4096
+      set_default TRACE_JS_BOUNDARY_FLUSH_ON dom.get,dom.call,xhr.send,xhr.body,fetch.call,fetch.request,cookie.get,cookie.set,storage.get,storage.set
+      set_default TRACE_REQUEST_URL preview
+      set_default TRACE_QUERY_FIELDS sign,signature,token,riskData,fp,nonce,timestamp,captchaId,securityToken,antiToken,authToken,checksum,digest
+      set_default TRACE_BODY_FIELDS sign,signature,token,riskData,fp,nonce,timestamp,captchaId,securityToken,antiToken,authToken,checksum,digest
+      set_default TRACE_HEADER_FIELDS sign,signature,token,riskData,fp,nonce,timestamp,captchaId,securityToken,antiToken,authToken,checksum,digest
+      set_default TRACE_COOKIE_FIELDS sign,signature,token,riskData,fp,nonce,timestamp,captchaId,securityToken,antiToken,authToken,checksum,digest
+      set_default TRACE_QUERY_FIELD_VALUES preview
+      set_default TRACE_QUERY_FIELD_VALUE_STORE 1
+      set_default TRACE_QUERY_FIELD_VALUE_STORE_MIN_BYTES 1
+      set_default TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES 0
+      set_default TRACE_XHR_EVENTS open,header,send,body,response
+      set_default TRACE_FETCH_REQUEST_HEADERS preview
+      set_default TRACE_XHR_REQUEST_BODY preview
+      set_default TRACE_XHR_REQUEST_BODY_STORE 1
+      set_default TRACE_XHR_RESPONSE_BODY full
+      set_default TRACE_XHR_RESPONSE_BODY_STORE 1
+      set_default TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES 0
+      set_default TRACE_FETCH_EVENTS all
+      set_default TRACE_FETCH_REQUEST_BODY preview
+      set_default TRACE_FETCH_REQUEST_BODY_STORE 1
+      set_default TRACE_FETCH_RESPONSE_HEADERS preview
+      set_default TRACE_FETCH_RESPONSE_BODY preview
+      set_default TRACE_FETCH_RESPONSE_BODY_STORE 1
+      set_default TRACE_FETCH_RESPONSE_BODY_MAX_BYTES 4096
+      set_default TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES 0
+      set_default TRACE_FETCH_RESPONSE_BODY_CHUNK_EVENTS 32
+      set_default FIREFOX_TRACE_DOM 1
+      set_default TRACE_DOM_MODE signal
+      set_default TRACE_DOM_EVENTS get,call
+      set_default TRACE_DOM_PREVIEW none
+      set_default FIREFOX_TRACE_XHR 1
+      set_default FIREFOX_TRACE_FETCH 1
+      set_default FIREFOX_TRACE_WS 1
+      set_default FIREFOX_TRACE_WASM 1
+      set_default TRACE_WASM 1
+      set_default TRACE_WASM_DUMP 1
+      set_default TRACE_WASM_DUMP_MAX_BYTES 1048576
+      set_default TRACE_WASM_PREVIEW_BYTES 256
+      set_default TRACE_WASM_MODULE_LIMIT 64
+      set_default TRACE_WASM_INSN 0
+      set_default FIREFOX_TRACE_STORAGE 1
+      set_default FIREFOX_TRACE_COOKIE 1
+      set_default TRACE_SCRIPT_RESOURCE 1
+      set_default TRACE_SCRIPT_RESOURCE_CAPTURE 1
+      set_default TRACE_SCRIPT_RESOURCE_STORE 1
+      set_default TRACE_SCRIPT_RESOURCE_MAX_BYTES 4194304
+      set_default TRACE_IPC_MAX_EVENTS_PER_SECOND 12000
+      set_default TRACE_IPC_MAX_BYTES_PER_SECOND 8388608
+      set_default FIREFOX_TRACE_JS_LIMIT_EVENTS 0
+      ;;
     "discover-light")
       set_default TRACE_PROFILE discover
+      set_default FIREFOX_TRACE_JS 1
       set_default TRACE_JS_MODE boundary
       set_default TRACE_JS_CAPTURE_VALUES 0
       set_default TRACE_JS_BOUNDARY_BUFFER 1
@@ -188,6 +294,7 @@ apply_trace_preset() {
       ;;
     "target-return")
       set_default TRACE_PROFILE target
+      set_default FIREFOX_TRACE_JS 1
       set_default TRACE_JS_MODE target
       set_default TRACE_TARGET_MATCH all
       set_default TRACE_JS_EARLY_SCRIPT_FILTER 1
@@ -226,6 +333,7 @@ apply_trace_preset() {
       ;;
     "target-values")
       set_default TRACE_PROFILE target
+      set_default FIREFOX_TRACE_JS 1
       set_default TRACE_JS_MODE target
       set_default TRACE_TARGET_MATCH all
       set_default TRACE_JS_EARLY_SCRIPT_FILTER 1
@@ -264,6 +372,7 @@ apply_trace_preset() {
       ;;
     "deep-causal")
       set_default TRACE_PROFILE deep
+      set_default FIREFOX_TRACE_JS 1
       set_default TRACE_JS_MODE deep
       set_default TRACE_TARGET_MATCH all
       set_default TRACE_JS_EARLY_SCRIPT_FILTER 1
@@ -297,19 +406,27 @@ apply_trace_preset() {
       ;;
     "opcode-window")
       set_default TRACE_PROFILE vm
+      set_default FIREFOX_TRACE_JS 1
       set_default TRACE_JS_MODE target
       set_default TRACE_EXECUTION_MODE opcode
       set_default TRACE_OPCODE 1
-      set_default TRACE_OPCODE_LIMIT 10000
+      set_default TRACE_OPCODE_LIMIT 4096
+      set_default TRACE_OPCODE_EXECUTION_LIMIT 65536
       set_default TRACE_OPCODE_OPERANDS 1
-      set_default TRACE_OPCODE_STACK_SLOTS 4
+      set_default TRACE_OPCODE_STACK_SLOTS 2
       set_default TRACE_OPCODE_STACK_PRIMITIVES 0
+      set_default TRACE_OPCODE_MAX_EVENTS_PER_SECOND 2000
+      set_default TRACE_OPCODE_MAX_BYTES_PER_SECOND 4194304
+      set_default TRACE_IPC_MAX_EVENTS_PER_SECOND 6000
+      set_default TRACE_IPC_MAX_BYTES_PER_SECOND 4194304
+      set_default TRACE_VM_STEP 0
+      set_default TRACE_VM_STEP_LIMIT 2048
       set_default TRACE_JS_CAPTURE_VALUES 0
-      set_default FIREFOX_TRACE_JS_LIMIT_EVENTS 10000
+      set_default FIREFOX_TRACE_JS_LIMIT_EVENTS 12000
       ;;
     *)
       echo "Unknown TRACE_PRESET: $TRACE_PRESET" >&2
-      echo "Known presets: discover-light, target-return, target-values, deep-causal, opcode-window, manual" >&2
+      echo "Known presets: full-chain, discover-light, target-return, target-values, deep-causal, opcode-window, manual" >&2
       exit 2
       ;;
   esac
@@ -330,11 +447,26 @@ if [[ "${TRACE_EXECUTION_MODE:-}" == "opcode" || "${TRACE_OPCODE:-0}" != "0" ]];
   fi
 fi
 
+# Keep manually composed opcode/VM traces bounded even without the preset.
+if [[ "${TRACE_EXECUTION_MODE:-}" == "opcode" ||
+      "${TRACE_OPCODE:-0}" != "0" ||
+      "${TRACE_VM_STEP:-0}" != "0" ]]; then
+  set_default TRACE_OPCODE_LIMIT 4096
+  set_default TRACE_OPCODE_EXECUTION_LIMIT 65536
+  set_default TRACE_VM_STEP_LIMIT 2048
+  set_default TRACE_OPCODE_MAX_EVENTS_PER_SECOND 2000
+  set_default TRACE_OPCODE_MAX_BYTES_PER_SECOND 4194304
+  set_default TRACE_IPC_MAX_EVENTS_PER_SECOND 6000
+  set_default TRACE_IPC_MAX_BYTES_PER_SECOND 4194304
+fi
+
 export FIREFOX_TRACE_ENABLE="${FIREFOX_TRACE_ENABLE:-1}"
 export FIREFOX_TRACE_JS="${FIREFOX_TRACE_JS:-1}"
 export FIREFOX_TRACE_LOG_DIR="${FIREFOX_TRACE_LOG_DIR:-$TRACE_DIR}"
 export TRACE_CAMPAIGN_ID
 export TRACE_PRESET
+export TRACE_PLAN
+export TRACE_CAPTURE_PLAN="${TRACE_CAPTURE_PLAN:-$TRACE_PLAN}"
 export TRACE_START
 export TRACE_CONTROL_FILE
 export FIREFOX_TRACE_CONTROL_FILE="${FIREFOX_TRACE_CONTROL_FILE:-$TRACE_CONTROL_FILE}"
@@ -386,6 +518,17 @@ aliases = {
     "TRACE_SCRIPT_SHA256": "FIREFOX_TRACE_SCRIPT_SHA256",
     "TRACE_TARGET_MATCH": "FIREFOX_TRACE_TARGET_MATCH",
     "TRACE_QUERY_FIELDS": "FIREFOX_TRACE_QUERY_FIELDS",
+    "TRACE_BODY_FIELDS": "FIREFOX_TRACE_BODY_FIELDS",
+    "TRACE_HEADER_FIELDS": "FIREFOX_TRACE_HEADER_FIELDS",
+    "TRACE_COOKIE_FIELDS": "FIREFOX_TRACE_COOKIE_FIELDS",
+    "TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES": "FIREFOX_TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES",
+    "TRACE_XHR_RESPONSE_BODY": "FIREFOX_TRACE_XHR_RESPONSE_BODY",
+    "TRACE_XHR_RESPONSE_BODY_STORE": "FIREFOX_TRACE_XHR_RESPONSE_BODY_STORE",
+    "TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES": "FIREFOX_TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES",
+    "TRACE_FETCH_RESPONSE_BODY": "FIREFOX_TRACE_FETCH_RESPONSE_BODY",
+    "TRACE_FETCH_RESPONSE_BODY_STORE": "FIREFOX_TRACE_FETCH_RESPONSE_BODY_STORE",
+    "TRACE_FETCH_REQUEST_HEADERS": "FIREFOX_TRACE_FETCH_REQUEST_HEADERS",
+    "TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES": "FIREFOX_TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES",
 }
 for src, dst in aliases.items():
     if src in env and dst not in env:
@@ -466,24 +609,31 @@ keys = [
     "TRACE_PROFILE", "TRACE_JS_MODE",
     "TRACE_SCRIPT_CONTAINS", "TRACE_FUNCTION_CONTAINS", "TRACE_SCRIPT_SHA256",
     "TRACE_TARGET_MATCH", "TRACE_JS_EARLY_SCRIPT_FILTER",
-    "TRACE_JS_PRUNE_NON_TARGET_FUNCTIONS", "TRACE_JS_CAPTURE_VALUES",
+    "TRACE_JS_PRUNE_NON_TARGET_FUNCTIONS", "TRACE_JS_AUTO_CAPTURE_VALUES",
+    "TRACE_JS_CAPTURE_VALUES",
     "TRACE_JS_BOUNDARY_BUFFER", "TRACE_JS_BOUNDARY_BUFFER_EVENTS",
     "TRACE_JS_BOUNDARY_FLUSH_ON",
     "TRACE_JS_THIS", "TRACE_JS_ARGS", "TRACE_JS_RET", "TRACE_JS_OBJECT_DEPTH",
     "TRACE_JS_OBJECT_KEYS", "TRACE_JS_OBJECT_VALUE_KEYS", "TRACE_JS_VALUE_STORE",
     "TRACE_JS_VALUE_METADATA", "TRACE_JS_VALUE_METADATA_MIN_BYTES",
     "TRACE_JS_PRIMITIVE_METADATA", "TRACE_JS_PRIMITIVE_METADATA_MIN_BYTES",
-    "TRACE_JS_VALUE_STORE_MIN_BYTES", "TRACE_JS_DEEP_LONG_STR",
+    "TRACE_JS_VALUE_STORE_MIN_BYTES", "TRACE_JS_VALUE_STORE_MAX_BYTES",
+    "TRACE_JS_MAX_VALUE_BYTES", "TRACE_JS_MAX_ARGS", "TRACE_JS_ARRAY_ITEMS",
+    "TRACE_JS_TYPED_ARRAY_BYTES", "TRACE_JS_DEEP_LONG_STR",
     "TRACE_JS_DEEP_NATIVE",
     "TRACE_JS_DEEP_SELFHOSTED", "TRACE_JS_DEEP_SUPPRESS_FUNCTIONS",
-    "TRACE_REQUEST_URL", "TRACE_QUERY_FIELDS",
+    "TRACE_PLAN", "TRACE_CAPTURE_PLAN", "TRACE_REQUEST_URL", "TRACE_QUERY_FIELDS",
+    "TRACE_BODY_FIELDS", "TRACE_HEADER_FIELDS", "TRACE_COOKIE_FIELDS",
     "TRACE_QUERY_FIELD_VALUES", "TRACE_QUERY_FIELD_VALUE_STORE",
     "TRACE_QUERY_FIELD_VALUE_STORE_MIN_BYTES",
+    "TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES",
     "TRACE_FETCH_RESPONSE_BODY", "TRACE_FETCH_BODY", "TRACE_NETWORK_BODY",
     "TRACE_FETCH_RESPONSE_BODY_MAX_BYTES",
     "TRACE_FETCH_RESPONSE_BODY_HEX_BYTES",
     "TRACE_FETCH_RESPONSE_BODY_STORE",
+    "TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES",
     "TRACE_FETCH_RESPONSE_BODY_CHUNK_EVENTS", "TRACE_DOM_MODE",
+    "TRACE_FETCH_REQUEST_HEADERS",
     "TRACE_FETCH_REQUEST_BODY", "TRACE_FETCH_REQUEST_BODY_MAX_BYTES",
     "TRACE_FETCH_REQUEST_BODY_HEX_BYTES", "TRACE_FETCH_REQUEST_BODY_STORE",
     "TRACE_FETCH_RESPONSE_HEADERS", "TRACE_FETCH_RESPONSE_HEADER_NAMES",
@@ -491,6 +641,8 @@ keys = [
     "TRACE_FETCH_RESPONSE_HEADER_VALUE_MAX_BYTES",
     "TRACE_XHR_REQUEST_BODY", "TRACE_XHR_REQUEST_BODY_MAX_BYTES",
     "TRACE_XHR_REQUEST_BODY_HEX_BYTES", "TRACE_XHR_REQUEST_BODY_STORE",
+    "TRACE_XHR_RESPONSE_BODY", "TRACE_XHR_RESPONSE_BODY_STORE",
+    "TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES",
     "TRACE_DOM_EVENTS", "TRACE_DOM_PREVIEW", "TRACE_DOM_HOT_MEMBER_LIMIT",
     "TRACE_DOM_HOT_MEMBER_SAMPLE", "TRACE_XHR_EVENTS", "TRACE_XHR_PREVIEW",
     "TRACE_SCRIPT_RESOURCE", "TRACE_SCRIPT_RESOURCE_CAPTURE",
@@ -503,11 +655,31 @@ keys = [
     "TRACE_WASM", "TRACE_WASM_DUMP", "TRACE_WASM_DUMP_MAX_BYTES", "TRACE_WASM_PREVIEW_BYTES",
     "TRACE_WASM_MODULE_LIMIT", "TRACE_WASM_INSN", "TRACE_WASM_INSN_LIMIT",
     "TRACE_OPCODE_SCRIPT_CONTAINS", "TRACE_OPCODE_PC_RANGE", "TRACE_OPCODE_LIMIT",
+    "TRACE_OPCODE_EXECUTION_LIMIT",
+    "TRACE_OPCODE_MAX_EVENTS_PER_SECOND", "TRACE_OPCODE_MAX_BYTES_PER_SECOND",
     "TRACE_OPCODE_SCRIPT_LINE", "TRACE_OPCODE_SCRIPT_COLUMN",
     "TRACE_OPCODE_SCRIPT_BYTECODE_LENGTH",
-    "TRACE_VM_STEP", "TRACE_VM_DISPATCH_PC", "TRACE_VM_STEP_LIMIT",
+    "TRACE_VM_SAFE_MODE", "TRACE_VM_STEP", "TRACE_VM_DISPATCH_PC",
+    "TRACE_VM_STEP_LIMIT",
     "TRACE_OPCODE_OPERANDS", "TRACE_OPCODE_STACK_SLOTS", "TRACE_OPCODE_STACK_PRIMITIVES",
-    "FIREFOX_TRACE_ENABLE", "FIREFOX_TRACE_LOG_DIR", "FIREFOX_TRACE_DOM",
+    "FIREFOX_TRACE_ENABLE", "FIREFOX_TRACE_LOG_DIR", "FIREFOX_TRACE_JS",
+    "FIREFOX_TRACE_PROFILE", "FIREFOX_TRACE_JS_MODE",
+    "FIREFOX_TRACE_JS_CAPTURE_VALUES", "FIREFOX_TRACE_JS_AUTO_CAPTURE_VALUES",
+    "FIREFOX_TRACE_JS_THIS", "FIREFOX_TRACE_JS_ARGS", "FIREFOX_TRACE_JS_RET",
+    "FIREFOX_TRACE_JS_OBJECT_DEPTH", "FIREFOX_TRACE_JS_OBJECT_KEYS",
+    "FIREFOX_TRACE_JS_ARRAY_ITEMS", "FIREFOX_TRACE_JS_TYPED_ARRAY_BYTES",
+    "FIREFOX_TRACE_JS_VALUE_STORE", "FIREFOX_TRACE_JS_VALUE_METADATA",
+    "FIREFOX_TRACE_JS_VALUE_METADATA_MIN_BYTES",
+    "FIREFOX_TRACE_JS_PRIMITIVE_METADATA",
+    "FIREFOX_TRACE_JS_PRIMITIVE_METADATA_MIN_BYTES",
+    "FIREFOX_TRACE_JS_VALUE_STORE_MIN_BYTES",
+    "FIREFOX_TRACE_JS_VALUE_STORE_MAX_BYTES",
+    "FIREFOX_TRACE_JS_MAX_VALUE_BYTES", "FIREFOX_TRACE_JS_MAX_ARGS",
+    "FIREFOX_TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES",
+    "FIREFOX_TRACE_JS_SCRIPT_CONTAINS",
+    "FIREFOX_TRACE_JS_FUNCTION_CONTAINS",
+    "FIREFOX_TRACE_JS_SCRIPT_SHA256",
+    "FIREFOX_TRACE_DOM",
     "FIREFOX_TRACE_XHR", "FIREFOX_TRACE_FETCH", "FIREFOX_TRACE_WS", "FIREFOX_TRACE_HTTP_RAW", "FIREFOX_TRACE_WASM", "FIREFOX_TRACE_STORAGE",
     "FIREFOX_TRACE_COOKIE", "FIREFOX_TRACE_JS_BOUNDARY_BUFFER",
     "FIREFOX_TRACE_JS_BOUNDARY_BUFFER_EVENTS",

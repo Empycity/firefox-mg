@@ -198,6 +198,34 @@ def check_fetch_body(trace_dir):
     print(f"fetch-body: validated {len(responses)} complete response artifacts")
 
 
+def check_xhr_response_body(trace_dir):
+    responses = [
+        event
+        for _, _, event in json_lines(trace_dir, "firefox-xhr-*.jsonl")
+        if event.get("type") == "xhr.response"
+        and event.get("response_body_stored") is True
+    ]
+    if not responses:
+        fail("no complete stored XHR response artifact found")
+    for index, event in enumerate(responses, 1):
+        if event.get("response_body_truncated") is not False:
+            fail(f"XHR response #{index} stored a truncated body")
+        relative_path = require_field(
+            event, "response_body_store_path", f"XHR response #{index}"
+        )
+        if not relative_path:
+            fail(f"XHR response #{index} has an empty artifact path")
+        artifact = (trace_dir / relative_path).resolve()
+        if trace_dir.resolve() not in artifact.parents or not artifact.is_file():
+            fail(f"XHR response #{index} artifact is missing: {relative_path}")
+        expected_sha = require_field(
+            event, "response_body_sha256", f"XHR response #{index}"
+        )
+        if sha256(artifact) != expected_sha:
+            fail(f"XHR response #{index} response_body_sha256 does not match {relative_path}")
+    print(f"xhr-response-body: validated {len(responses)} complete response artifacts")
+
+
 def check_http_raw(trace_dir):
     events = json_lines(trace_dir, "firefox-http-raw-*.jsonl")
     chunks = [event for _, _, event in events if event.get("type") == "http.raw_chunk"]
@@ -237,10 +265,95 @@ def check_wasm(trace_dir):
     print(f"wasm: validated {len(modules)} module events")
 
 
+def check_full_chain(trace_dir):
+    summary_path = trace_dir / "index" / "summary.json"
+    causal_path = trace_dir / "index" / "causal-index.json"
+    request_path = trace_dir / "categorized" / "request-fields.jsonl"
+    if not summary_path.is_file():
+        fail(f"missing finalized summary: {summary_path}")
+    if not causal_path.is_file():
+        fail(f"missing causal index: {causal_path}")
+    if not request_path.is_file():
+        fail(f"missing request field index: {request_path}")
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    for field in (
+        "schema",
+        "event_count",
+        "category_counts",
+        "request_field_count",
+        "target_match_count",
+        "degraded_count",
+    ):
+        require_field(summary, field, "full-chain summary")
+    if summary.get("schema") != "firefox_trace.final_summary.v1":
+        fail("full-chain summary has an unexpected schema")
+
+    category_counts = summary.get("category_counts") or {}
+    required_categories = {
+        "dom",
+        "bom",
+        "js",
+        "network",
+        "state",
+        "script",
+        "worker",
+        "wasm-vm",
+        "control-health",
+    }
+    missing_categories = sorted(
+        category for category in required_categories if category not in category_counts
+    )
+    if missing_categories:
+        fail(f"full-chain summary is missing categories: {', '.join(missing_categories)}")
+
+    # Request fields are checked directly so this command also works when no
+    # raw stream remains.
+    request_rows = []
+    for line_number, line in enumerate(
+        request_path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1
+    ):
+        if not line.strip():
+            continue
+        try:
+            request_rows.append(json.loads(line))
+        except json.JSONDecodeError as error:
+            fail(f"invalid request field JSON at {request_path}:{line_number}: {error.msg}")
+    for index, row in enumerate(request_rows, 1):
+        if row.get("location") not in {"url.query", "body", "headers", "cookies"}:
+            fail(f"request field #{index} has an invalid location")
+        for key in ("field_name", "value_sha256", "request_id"):
+            require_field(row, key, f"request field #{index}")
+
+    causal = json.loads(causal_path.read_text(encoding="utf-8"))
+    require_field(causal, "targets", "full-chain causal index")
+    if summary["request_field_count"] != len(request_rows):
+        fail("summary request_field_count does not match categorized/request-fields.jsonl")
+    print(
+        "full-chain: validated "
+        f"{summary['event_count']} raw events, {len(request_rows)} request fields, "
+        f"{summary['target_match_count']} matched targets, "
+        f"{summary['degraded_count']} degraded notices"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "check", choices=("runtime", "boundary", "source-map", "worker", "worker-fetch", "websocket", "fetch-body", "http-raw", "wasm")
+        "check",
+        choices=(
+            "runtime",
+            "boundary",
+            "source-map",
+            "worker",
+            "worker-fetch",
+            "websocket",
+            "fetch-body",
+            "xhr-response-body",
+            "http-raw",
+            "wasm",
+            "full-chain",
+        ),
     )
     parser.add_argument("trace_dir", type=Path)
     args = parser.parse_args()
@@ -258,10 +371,14 @@ def main():
         check_worker_fetch(args.trace_dir)
     elif args.check == "fetch-body":
         check_fetch_body(args.trace_dir)
+    elif args.check == "xhr-response-body":
+        check_xhr_response_body(args.trace_dir)
     elif args.check == "http-raw":
         check_http_raw(args.trace_dir)
     elif args.check == "wasm":
         check_wasm(args.trace_dir)
+    elif args.check == "full-chain":
+        check_full_chain(args.trace_dir)
     else:
         check_websocket(args.trace_dir)
 

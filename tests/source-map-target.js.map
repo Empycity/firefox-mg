@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "file": "source-map-target.js",
-  "sources": ["source-map-target.original.js"],
-  "names": ["traceSourceMapInput", "value", "__traceSourceMapSmoke"],
-  "mappings": "AAAA,SAASA,oBAAoBC,KAAK;EAChC,OAAO,eAAeA,KAAK;AAC7B;;AAED,OAAOC,uBAAuB,GAAG,YAAY;EAC3C,OAAOF,oBAAoB,IAAI;AACjC"
-}

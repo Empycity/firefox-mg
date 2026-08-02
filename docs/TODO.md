@@ -1,6 +1,6 @@
 # Firefox Trace 待做清单
 
-更新时间：2026-07-28
+更新时间：2026-08-02
 
 本文是当前唯一的待做清单入口。`README.md`、`docs/TRACE_PROGRESS.md` 和
 `docs/AGENT_HANDOFF.md` 只保留背景、能力说明和验证记录；后续新增/关闭任务优先改这里。
@@ -15,7 +15,7 @@ P1 可交付试用能力已经具备：
 - `discover-light` / `target-return` / `target-values` / `deep-causal` / `opcode-window`
   preset 已有 launcher 配置。
 - XHR/Fetch URL query 字段、XHR request body 字段、Fetch request body、Fetch response
-  headers 和 bounded response body preview/chunk 已实现。
+  headers、bounded response body preview/chunk 和完整 Fetch/XHR response artifact 已实现。
 - DOM signal、Cookie、Storage、script.resource、动态脚本 hash/artifact、source map
   relation fields 已实现。
 - JS boundary ring buffer、sink/字段级窗口、flush summary、`trace.degraded` 明确提示已实现。
@@ -24,6 +24,27 @@ P1 可交付试用能力已经具备：
 - `tools/run-trace-firefox.sh` 默认优先使用 `FIREFOX_BIN`；未指定时会从
   `gecko-dev/obj-*/dist/Nightly.app/Contents/MacOS/firefox` 自动选择最新可执行产物。
 - `tools/trace_analyzer.py` 可做首轮候选分析和下一轮 env 建议。
+- `[已实现]` `full-chain` 计划：一次操作同时开启 JS boundary/自动浅值、DOM/BOM
+  signal、XHR/Fetch、Cookie/Storage、Script、WebSocket、WASM 线索，并用预算和
+  boundary ring buffer 限制开销。
+- `[已实现]` boundary 模式支持 `TRACE_JS_AUTO_CAPTURE_VALUES=1`，对网页脚本调用
+  记录浅层 args/return、`capture_tier=boundary_auto` 和 `origin_call_id`；深对象仍由
+  `TRACE_JS_OBJECT_DEPTH` 控制。
+- `[已实现]` Query 与 POST Body 可分别配置 `TRACE_QUERY_FIELDS` /
+  `TRACE_BODY_FIELDS`；XHR、Fetch Body 和离线 finalizer 都保留明确的字段位置、大小、
+  SHA-256 和 artifact 路径。
+- `[已实现]` `tools/trace_finalize.py` 会生成 `categorized/`、`index/summary.json`、
+  `index/causal-index.json`；`tools/trace_check.py full-chain TRACE_DIR` 校验整理结果。
+- `[已实现]` 中文中控台 `tools/trace-console.sh`：输入 URL 和输出目录后启动可见、
+  paused 的 Firefox，用户手动操作，点击开始/暂停/停止并整理/关闭，实时显示事件速率、
+  分类计数、ACK、目标字段命中和 `trace.degraded`。
+- `[已实现]` VM/WASM 中控台细粒度选项：opcode、raw operands、栈 slot/primitive、
+  dispatcher `vm_step`、WASM artifact/raw bytes；opcode/VM 必须锁脚本，WASM 和 IPC
+  均有默认上限。
+- `[已实现]` 直接 CLI 的 VM 安全收口：自动补齐 opcode 4,096、解释执行预算 65,536、
+  vm_step 2,048、
+  opcode 2,000 events/s + 4 MiB/s、IPC 6,000 events/s + 4 MiB/s；缺脚本过滤或
+  dispatcher PC 时拒绝配置，超限写 `trace.degraded`。
 - `[已通过]` Parent push / content ACK 协议：控制台可读取 `trace.config.applied`，并以
   当前 `version/config_hash` 匹配作为热切换生效门槛；多进程目标页可按 XHR/Fetch 的 `pid`
   查询 `/api/status?target_pid=<pid>`，不再把其他 content process 的 ACK 当作目标页就绪。
@@ -409,9 +430,9 @@ primitive metadata 验收：
 - `[已实现]` opcode window：解释器分发点写 `js.opcode`，含 SpiderMonkey `pc`、
   `op/op_name`、bytecode length、script URL、origin call 和 segment/control 元数据；仅
   `TRACE_EXECUTION_MODE=opcode`、`TRACE_OPCODE=1` 且命中脚本过滤时启用，可加
-  `TRACE_OPCODE_PC_RANGE=start:end`，默认每 segment 最多 10,000 条并写
-  `trace.degraded reason=opcode_limit`。当前包含原生 JS bytecode、raw operand 和可选
-  stack slots；尚不包含虚拟 PC 或 VM step。
+  `TRACE_OPCODE_PC_RANGE=start:end`，安全默认每 segment 最多 4,096 条并写
+  `trace.degraded reason=opcode_limit`。当前包含原生 JS bytecode、raw operand、可选
+  stack slots 和独立的 `vm_step` 标记；仍不自动解码虚拟 PC。
 - `[已实现]` stack slots / operands：`js.opcode` 记录 raw `operand_bytes_hex`、
   operand format、SpiderMonkey stack depth/uses/defs；`TRACE_OPCODE_STACK_SLOTS=0..8`
   可记录栈顶 slot 类型，`TRACE_OPCODE_STACK_PRIMITIVES=1` 才附带 number/boolean/
@@ -427,7 +448,7 @@ primitive metadata 验收：
   `dispatcher_candidate` score/confidence；候选按 score 排序，明确标注 heuristic。
 - `[已实现]` jsvmp/vm_step：在已确认的 native dispatcher PC 上输出每轮
   `js.vm_step` 标记；要求 `TRACE_VM_STEP=1`、`TRACE_VM_DISPATCH_PC=PC`，并由
-  `TRACE_VM_STEP_LIMIT`（默认 10,000，`0=不限`）独立限额。该事件记录脚本 identity、native
+  `TRACE_VM_STEP_LIMIT`（默认 2,048，`0=不限`）独立限额。该事件记录脚本 identity、native
   dispatcher PC、栈深度和 `step_index`；它不是虚拟 opcode / virtual PC 的自动解码。vm 开关、
   dispatcher PC 与 limit 均可热更新，且不受 opcode PC display window 限制。
   opcode 配置可用 paused 启动：解释器在配置存在时每 1,024 条 bytecode 刷新 runtime active
@@ -503,6 +524,18 @@ opcode window 验收：
 - `[已通过]` paused opcode/vm_step 验收：启动 paused 的有头实例在页面加载阶段不写 opcode；
   `trace-control start` 后，单一 JSScript + PC window 的有限窗口可写 opcode/vm_step，
   `stop` 后恢复暂停。该路径用于真实页面的短触发窗口，避免页面加载耗尽 event limit。
+- `[已通过]` VM 性能收口：`/private/tmp/firefox-trace-vm-safe-stress-LoaXHO`
+  在 opcode=4,096、vm_step=2,048、opcode 2,000 events/s + 4 MiB/s、IPC 6,000
+  events/s + 4 MiB/s 下页面仍输出 `stress:126`，并明确写出
+  `opcode_rate_limit` / `opcode_limit` 降级事件。
+- `[已通过]` 中控台真实 VM 降载压力：
+  `/private/tmp/firefox-trace-ui-vm-step-only-1785652331` 只输出 `js.vm_step=910`、
+  `js.opcode=0`、约 3.3 MiB；`/private/tmp/firefox-trace-ui-opcode-stack-budget-1785652334`
+  输出 `js.opcode=1963`、`js.vm_step=26`、约 3.2 MiB；两轮均未超时并完成截图。
+- `[已通过]` 最新构建纯 WASM smoke：
+  `/private/tmp/firefox-trace-wasm-final-20260802-141334` 生成 1 个
+  `wasm.module`、6 个 `wasm.insn` 和 `.wasm` artifact，`tools/trace_check.py wasm`
+  通过，且 `FIREFOX_TRACE_JS=0` 时没有 JS trace。
 
 ## P3：UI / Viewer
 

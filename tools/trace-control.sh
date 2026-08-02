@@ -10,7 +10,7 @@ Usage:
 
 Config options:
   --segment LABEL
-  --preset discover-light|target-return|target-values|deep-causal|manual
+  --preset full-chain|discover-light|target-return|target-values|deep-causal|opcode-window|manual
   --profile VALUE
   --js-mode boundary|target|deep|off
   --script-contains CSV
@@ -18,6 +18,9 @@ Config options:
   --script-sha256 CSV
   --target-match all|any|auto
   --query-fields CSV
+  --body-fields CSV
+  --header-fields CSV
+  --cookie-fields CSV
   --object-depth N
   --object-keys N
   --array-items N
@@ -25,6 +28,7 @@ Config options:
   --value-metadata 0|1
   --primitive-metadata 0|1
   --value-store-min-bytes N
+  --value-store-max-bytes N   JS value artifact 最大字节；0 表示不按大小丢弃
   --limit-events N
   --module js|xhr|fetch|ws|http_raw|wasm|dom|cookie|storage|script=0|1
   --set TRACE_NAME=VALUE
@@ -101,6 +105,133 @@ MODULE_ENV = {
 
 PRESETS = {
     "manual": {},
+    "full-chain": {
+        "TRACE_PLAN": "full-chain",
+        "TRACE_CAPTURE_PLAN": "full-chain",
+        "TRACE_PROFILE": "discover",
+        "TRACE_JS_MODE": "boundary",
+        "TRACE_JS_AUTO_CAPTURE_VALUES": "1",
+        "TRACE_JS_CAPTURE_VALUES": "1",
+        "TRACE_JS_THIS": "none",
+        "TRACE_JS_ARGS": "preview",
+        "TRACE_JS_RET": "preview",
+        "TRACE_JS_OBJECT_DEPTH": "0",
+        "TRACE_JS_OBJECT_KEYS": "0",
+        "TRACE_JS_ARRAY_ITEMS": "0",
+        "TRACE_JS_VALUE_STORE": "1",
+        "TRACE_JS_VALUE_METADATA": "1",
+        "TRACE_JS_VALUE_METADATA_MIN_BYTES": "24",
+        "TRACE_JS_PRIMITIVE_METADATA": "1",
+        "TRACE_JS_VALUE_STORE_MIN_BYTES": "1",
+        "TRACE_JS_VALUE_STORE_MAX_BYTES": "0",
+        "TRACE_JS_MAX_VALUE_BYTES": "512",
+        "TRACE_JS_MAX_ARGS": "0",
+        "TRACE_JS_BOUNDARY_BUFFER": "1",
+        "TRACE_JS_BOUNDARY_BUFFER_EVENTS": "8192",
+        "TRACE_JS_BOUNDARY_BUFFER_EVENTS_DOM_GET": "2048",
+        "TRACE_JS_BOUNDARY_BUFFER_EVENTS_DOM_CALL": "4096",
+        "TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_SEND": "16384",
+        "TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY": "32768",
+        "TRACE_JS_BOUNDARY_BUFFER_EVENTS_FETCH_CALL": "24576",
+        "TRACE_JS_BOUNDARY_BUFFER_EVENTS_FETCH_REQUEST": "24576",
+        "TRACE_JS_BOUNDARY_BUFFER_EVENTS_COOKIE_GET": "4096",
+        "TRACE_JS_BOUNDARY_BUFFER_EVENTS_COOKIE_SET": "4096",
+        "TRACE_JS_BOUNDARY_BUFFER_EVENTS_STORAGE_GET": "4096",
+        "TRACE_JS_BOUNDARY_BUFFER_EVENTS_STORAGE_SET": "4096",
+        "TRACE_JS_BOUNDARY_FLUSH_ON": "dom.get,dom.call,xhr.send,xhr.body,fetch.call,fetch.request,cookie.get,cookie.set,storage.get,storage.set",
+        "TRACE_REQUEST_URL": "preview",
+        "TRACE_QUERY_FIELDS": "sign,signature,token,riskData,fp,nonce,timestamp,captchaId,securityToken,antiToken,authToken,checksum,digest",
+        "TRACE_BODY_FIELDS": "sign,signature,token,riskData,fp,nonce,timestamp,captchaId,securityToken,antiToken,authToken,checksum,digest",
+        "TRACE_HEADER_FIELDS": "sign,signature,token,riskData,fp,nonce,timestamp,captchaId,securityToken,antiToken,authToken,checksum,digest",
+        "TRACE_COOKIE_FIELDS": "sign,signature,token,riskData,fp,nonce,timestamp,captchaId,securityToken,antiToken,authToken,checksum,digest",
+        "TRACE_QUERY_FIELD_VALUES": "preview",
+        "TRACE_QUERY_FIELD_VALUE_STORE": "1",
+        "TRACE_QUERY_FIELD_VALUE_STORE_MIN_BYTES": "1",
+        "TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES": "0",
+        "TRACE_XHR_EVENTS": "open,header,send,body,response",
+        "TRACE_FETCH_REQUEST_HEADERS": "preview",
+        "TRACE_XHR_REQUEST_BODY": "preview",
+        "TRACE_XHR_REQUEST_BODY_STORE": "1",
+        "TRACE_XHR_RESPONSE_BODY": "full",
+        "TRACE_XHR_RESPONSE_BODY_STORE": "1",
+        "TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES": "0",
+        "TRACE_FETCH_EVENTS": "all",
+        "TRACE_FETCH_REQUEST_BODY": "preview",
+        "TRACE_FETCH_REQUEST_BODY_STORE": "1",
+        "TRACE_FETCH_RESPONSE_HEADERS": "preview",
+        "TRACE_FETCH_RESPONSE_BODY": "preview",
+        "TRACE_FETCH_RESPONSE_BODY_STORE": "1",
+        "TRACE_FETCH_RESPONSE_BODY_MAX_BYTES": "4096",
+        "TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES": "0",
+        "TRACE_FETCH_RESPONSE_BODY_CHUNK_EVENTS": "32",
+        "FIREFOX_TRACE_DOM": "1",
+        "TRACE_DOM_MODE": "signal",
+        "TRACE_DOM_EVENTS": "get,call",
+        "TRACE_DOM_PREVIEW": "none",
+        "FIREFOX_TRACE_XHR": "1",
+        "FIREFOX_TRACE_FETCH": "1",
+        "FIREFOX_TRACE_WS": "1",
+        "FIREFOX_TRACE_STORAGE": "1",
+        "FIREFOX_TRACE_COOKIE": "1",
+        "TRACE_SCRIPT_RESOURCE": "1",
+        "TRACE_SCRIPT_RESOURCE_CAPTURE": "1",
+        "TRACE_SCRIPT_RESOURCE_STORE": "1",
+        "TRACE_SCRIPT_RESOURCE_MAX_BYTES": "4194304",
+        "FIREFOX_TRACE_WASM": "1",
+        "TRACE_WASM": "1",
+        "TRACE_WASM_DUMP": "1",
+        "TRACE_WASM_DUMP_MAX_BYTES": "1048576",
+        "TRACE_WASM_PREVIEW_BYTES": "256",
+        "TRACE_WASM_MODULE_LIMIT": "64",
+        "TRACE_WASM_INSN": "0",
+        "TRACE_IPC_MAX_EVENTS_PER_SECOND": "12000",
+        "TRACE_IPC_MAX_BYTES_PER_SECOND": "8388608",
+        "FIREFOX_TRACE_JS_LIMIT_EVENTS": "0",
+    },
+    "opcode-window": {
+        "TRACE_PLAN": "opcode-window",
+        "TRACE_CAPTURE_PLAN": "opcode-window",
+        "TRACE_PROFILE": "vm",
+        "TRACE_JS_MODE": "target",
+        "TRACE_TARGET_MATCH": "all",
+        "TRACE_EXECUTION_MODE": "opcode",
+        "TRACE_OPCODE": "1",
+        "TRACE_OPCODE_LIMIT": "4096",
+        "TRACE_OPCODE_EXECUTION_LIMIT": "65536",
+        "TRACE_OPCODE_OPERANDS": "1",
+        "TRACE_OPCODE_STACK_SLOTS": "2",
+        "TRACE_OPCODE_STACK_PRIMITIVES": "0",
+        "TRACE_VM_STEP": "0",
+        "TRACE_VM_STEP_LIMIT": "2048",
+        "TRACE_OPCODE_MAX_EVENTS_PER_SECOND": "2000",
+        "TRACE_OPCODE_MAX_BYTES_PER_SECOND": "4194304",
+        "TRACE_IPC_MAX_EVENTS_PER_SECOND": "6000",
+        "TRACE_IPC_MAX_BYTES_PER_SECOND": "4194304",
+        "FIREFOX_TRACE_JS_LIMIT_EVENTS": "12000",
+        "TRACE_REQUEST_URL": "preview",
+        "TRACE_QUERY_FIELD_VALUES": "preview",
+        "TRACE_QUERY_FIELD_VALUE_STORE": "1",
+        "TRACE_QUERY_FIELD_VALUE_STORE_MIN_BYTES": "64",
+        "FIREFOX_TRACE_DOM": "1",
+        "TRACE_DOM_MODE": "signal",
+        "TRACE_DOM_EVENTS": "get,call",
+        "TRACE_DOM_PREVIEW": "none",
+        "FIREFOX_TRACE_XHR": "1",
+        "TRACE_XHR_EVENTS": "open,send,response",
+        "TRACE_XHR_PREVIEW": "none",
+        "FIREFOX_TRACE_FETCH": "1",
+        "TRACE_FETCH_EVENTS": "all",
+        "FIREFOX_TRACE_STORAGE": "1",
+        "FIREFOX_TRACE_COOKIE": "1",
+        "TRACE_SCRIPT_RESOURCE": "1",
+        "FIREFOX_TRACE_WASM": "1",
+        "TRACE_WASM": "1",
+        "TRACE_WASM_MODULE_LIMIT": "16",
+        "TRACE_WASM_PREVIEW_BYTES": "128",
+        "TRACE_WASM_DUMP": "0",
+        "TRACE_WASM_INSN": "0",
+        "TRACE_WASM_INSN_LIMIT": "512",
+    },
     "discover-light": {
         "TRACE_PROFILE": "discover",
         "TRACE_JS_MODE": "boundary",
@@ -208,12 +339,41 @@ PRESETS = {
 ALIASES = {
     "TRACE_PROFILE": "FIREFOX_TRACE_PROFILE",
     "TRACE_JS_MODE": "FIREFOX_TRACE_JS_MODE",
+    "TRACE_JS_CAPTURE_VALUES": "FIREFOX_TRACE_JS_CAPTURE_VALUES",
+    "TRACE_JS_AUTO_CAPTURE_VALUES": "FIREFOX_TRACE_JS_AUTO_CAPTURE_VALUES",
+    "TRACE_JS_BOUNDARY_BUFFER": "FIREFOX_TRACE_JS_BOUNDARY_BUFFER",
+    "TRACE_JS_BOUNDARY_BUFFER_EVENTS": "FIREFOX_TRACE_JS_BOUNDARY_BUFFER_EVENTS",
+    "TRACE_JS_BOUNDARY_FLUSH_ON": "FIREFOX_TRACE_JS_BOUNDARY_FLUSH_ON",
+    "TRACE_JS_THIS": "FIREFOX_TRACE_JS_THIS",
+    "TRACE_JS_ARGS": "FIREFOX_TRACE_JS_ARGS",
+    "TRACE_JS_RET": "FIREFOX_TRACE_JS_RET",
+    "TRACE_JS_OBJECT_DEPTH": "FIREFOX_TRACE_JS_OBJECT_DEPTH",
+    "TRACE_JS_OBJECT_KEYS": "FIREFOX_TRACE_JS_OBJECT_KEYS",
+    "TRACE_JS_ARRAY_ITEMS": "FIREFOX_TRACE_JS_ARRAY_ITEMS",
+    "TRACE_JS_TYPED_ARRAY_BYTES": "FIREFOX_TRACE_JS_TYPED_ARRAY_BYTES",
+    "TRACE_JS_VALUE_STORE": "FIREFOX_TRACE_JS_VALUE_STORE",
+    "TRACE_JS_VALUE_METADATA": "FIREFOX_TRACE_JS_VALUE_METADATA",
+    "TRACE_JS_VALUE_METADATA_MIN_BYTES": "FIREFOX_TRACE_JS_VALUE_METADATA_MIN_BYTES",
+    "TRACE_JS_PRIMITIVE_METADATA": "FIREFOX_TRACE_JS_PRIMITIVE_METADATA",
+    "TRACE_JS_VALUE_STORE_MIN_BYTES": "FIREFOX_TRACE_JS_VALUE_STORE_MIN_BYTES",
+    "TRACE_JS_VALUE_STORE_MAX_BYTES": "FIREFOX_TRACE_JS_VALUE_STORE_MAX_BYTES",
+    "TRACE_JS_MAX_VALUE_BYTES": "FIREFOX_TRACE_JS_MAX_VALUE_BYTES",
+    "TRACE_JS_MAX_ARGS": "FIREFOX_TRACE_JS_MAX_ARGS",
     "TRACE_SCRIPT_CONTAINS": "FIREFOX_TRACE_SCRIPT_CONTAINS",
     "TRACE_FUNCTION_CONTAINS": "FIREFOX_TRACE_FUNCTION_CONTAINS",
     "TRACE_SCRIPT_SHA256": "FIREFOX_TRACE_SCRIPT_SHA256",
     "TRACE_TARGET_MATCH": "FIREFOX_TRACE_TARGET_MATCH",
     "TRACE_JS_LIMIT_EVENTS": "FIREFOX_TRACE_JS_LIMIT_EVENTS",
     "TRACE_QUERY_FIELDS": "FIREFOX_TRACE_QUERY_FIELDS",
+    "TRACE_BODY_FIELDS": "FIREFOX_TRACE_BODY_FIELDS",
+    "TRACE_HEADER_FIELDS": "FIREFOX_TRACE_HEADER_FIELDS",
+    "TRACE_COOKIE_FIELDS": "FIREFOX_TRACE_COOKIE_FIELDS",
+    "TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES": "FIREFOX_TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES",
+    "TRACE_XHR_RESPONSE_BODY": "FIREFOX_TRACE_XHR_RESPONSE_BODY",
+    "TRACE_XHR_RESPONSE_BODY_STORE": "FIREFOX_TRACE_XHR_RESPONSE_BODY_STORE",
+    "TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES": "FIREFOX_TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES",
+    "TRACE_FETCH_REQUEST_HEADERS": "FIREFOX_TRACE_FETCH_REQUEST_HEADERS",
+    "TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES": "FIREFOX_TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES",
 }
 
 OPTION_ENV = {
@@ -224,6 +384,9 @@ OPTION_ENV = {
     "--script-sha256": "TRACE_SCRIPT_SHA256",
     "--target-match": "TRACE_TARGET_MATCH",
     "--query-fields": "TRACE_QUERY_FIELDS",
+    "--body-fields": "TRACE_BODY_FIELDS",
+    "--header-fields": "TRACE_HEADER_FIELDS",
+    "--cookie-fields": "TRACE_COOKIE_FIELDS",
     "--object-depth": "TRACE_JS_OBJECT_DEPTH",
     "--object-keys": "TRACE_JS_OBJECT_KEYS",
     "--array-items": "TRACE_JS_ARRAY_ITEMS",
@@ -231,6 +394,7 @@ OPTION_ENV = {
     "--value-metadata": "TRACE_JS_VALUE_METADATA",
     "--primitive-metadata": "TRACE_JS_PRIMITIVE_METADATA",
     "--value-store-min-bytes": "TRACE_JS_VALUE_STORE_MIN_BYTES",
+    "--value-store-max-bytes": "TRACE_JS_VALUE_STORE_MAX_BYTES",
     "--limit-events": "FIREFOX_TRACE_JS_LIMIT_EVENTS",
 }
 
@@ -322,6 +486,33 @@ def config_hash(record):
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
+def apply_vm_safety_defaults(env):
+    """Make direct control-file edits inherit the bounded VM profile."""
+    out = dict(env or {})
+
+    def value(*keys):
+        for key in keys:
+            item = out.get(key)
+            if item is not None and str(item) != "":
+                return str(item)
+        return ""
+
+    opcode_enabled = boolish(value("TRACE_OPCODE", "FIREFOX_TRACE_OPCODE"))
+    execution_mode = value(
+        "TRACE_EXECUTION_MODE", "FIREFOX_TRACE_EXECUTION_MODE"
+    ).lower()
+    vm_step_enabled = boolish(value("TRACE_VM_STEP", "FIREFOX_TRACE_VM_STEP"))
+    if opcode_enabled or execution_mode == "opcode" or vm_step_enabled:
+        out.setdefault("TRACE_OPCODE_LIMIT", "4096")
+        out.setdefault("TRACE_OPCODE_EXECUTION_LIMIT", "65536")
+        out.setdefault("TRACE_VM_STEP_LIMIT", "2048")
+        out.setdefault("TRACE_OPCODE_MAX_EVENTS_PER_SECOND", "2000")
+        out.setdefault("TRACE_OPCODE_MAX_BYTES_PER_SECOND", "4194304")
+        out.setdefault("TRACE_IPC_MAX_EVENTS_PER_SECOND", "6000")
+        out.setdefault("TRACE_IPC_MAX_BYTES_PER_SECOND", "4194304")
+    return with_aliases(out)
+
+
 def enforce_safety(record):
     env = record.get("env") or {}
     unsafe = str(env.get("TRACE_UNSAFE_ALLOW") or env.get("FIREFOX_TRACE_UNSAFE_ALLOW") or "").lower() in ("1", "true", "yes", "on")
@@ -343,6 +534,78 @@ def enforce_safety(record):
         object_depth = 0
     if record.get("enabled") and object_depth > 2 and not unsafe:
         raise SystemExit("refuse to start with TRACE_JS_OBJECT_DEPTH > 2 without TRACE_UNSAFE_ALLOW=1")
+
+    def value(*keys):
+        for key in keys:
+            item = env.get(key)
+            if item is not None and str(item) != "":
+                return str(item)
+        return ""
+
+    def bounded(name, default, minimum, maximum):
+        raw = value(name)
+        if not raw:
+            return default
+        try:
+            parsed = int(raw, 10)
+        except ValueError:
+            raise SystemExit(f"{name} must be an integer between {minimum} and {maximum}")
+        if parsed < minimum or parsed > maximum:
+            raise SystemExit(
+                f"{name} must stay between {minimum} and {maximum}; "
+                "set TRACE_UNSAFE_ALLOW=1 for an explicit override"
+            )
+        return parsed
+
+    if unsafe:
+        return
+
+    opcode_enabled = boolish(value("TRACE_OPCODE", "FIREFOX_TRACE_OPCODE"))
+    execution_mode = value(
+        "TRACE_EXECUTION_MODE", "FIREFOX_TRACE_EXECUTION_MODE"
+    ).lower()
+    vm_step_enabled = boolish(value("TRACE_VM_STEP", "FIREFOX_TRACE_VM_STEP"))
+    wasm_insn_enabled = boolish(value("TRACE_WASM_INSN", "FIREFOX_TRACE_WASM_INSN"))
+    wasm_dump_enabled = boolish(value("TRACE_WASM_DUMP", "FIREFOX_TRACE_WASM_DUMP"))
+
+    if opcode_enabled or execution_mode == "opcode" or vm_step_enabled:
+        has_opcode_filter = any(
+            value(key).strip()
+            for key in (
+                "TRACE_OPCODE_SCRIPT_CONTAINS",
+                "FIREFOX_TRACE_OPCODE_SCRIPT_CONTAINS",
+                "TRACE_SCRIPT_CONTAINS",
+                "FIREFOX_TRACE_SCRIPT_CONTAINS",
+            )
+        )
+        if not has_opcode_filter:
+            raise SystemExit(
+                "opcode/vm_step requires TRACE_OPCODE_SCRIPT_CONTAINS "
+                "or TRACE_SCRIPT_CONTAINS"
+            )
+        if vm_step_enabled and not value(
+            "TRACE_VM_DISPATCH_PC", "FIREFOX_TRACE_VM_DISPATCH_PC"
+        ):
+            raise SystemExit(
+                "TRACE_VM_STEP requires TRACE_VM_DISPATCH_PC after the dispatcher PC is known"
+            )
+        bounded("TRACE_OPCODE_LIMIT", 4096, 1, 20000)
+        bounded("TRACE_OPCODE_EXECUTION_LIMIT", 65536, 1024, 1000000)
+        bounded("TRACE_OPCODE_MAX_EVENTS_PER_SECOND", 2000, 1, 12000)
+        bounded("TRACE_OPCODE_MAX_BYTES_PER_SECOND", 1048576, 65536, 8388608)
+        bounded("TRACE_IPC_MAX_EVENTS_PER_SECOND", 6000, 1, 12000)
+        bounded("TRACE_IPC_MAX_BYTES_PER_SECOND", 4194304, 65536, 8388608)
+        bounded("TRACE_OPCODE_STACK_SLOTS", 0, 0, 4)
+        bounded("TRACE_VM_STEP_LIMIT", 2048, 1, 20000)
+
+    if not record.get("enabled"):
+        return
+
+    if wasm_insn_enabled:
+        bounded("TRACE_WASM_INSN_LIMIT", 256, 1, 4096)
+    if wasm_dump_enabled:
+        bounded("TRACE_WASM_MODULE_LIMIT", 32, 1, 64)
+        bounded("TRACE_WASM_DUMP_MAX_BYTES", 1048576, 1, 4194304)
 
 
 def next_segment_id(current, label):
@@ -459,6 +722,12 @@ def parse_config_args(args, current):
     for name, enabled in module_env_overrides.items():
         env[MODULE_ENV[name]] = "1" if enabled else "0"
 
+    # Keep the human-readable module map aligned with preset/env composition.
+    # The env values remain the runtime source of truth.
+    for name, env_key in MODULE_ENV.items():
+        if env_key in env:
+            modules[name] = boolish(env[env_key])
+
     return with_aliases(env), modules, segment_label, preset
 
 
@@ -499,6 +768,7 @@ elif action == "config":
 else:
     raise SystemExit(f"unsupported action: {action}")
 
+record["env"] = apply_vm_safety_defaults(record.get("env") or {})
 record["config_hash"] = config_hash(record)
 record["previous_state"] = prev
 enforce_safety(record)

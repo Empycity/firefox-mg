@@ -1,6 +1,43 @@
 # Firefox Trace 魔改进展记录
 
-更新时间：2026-07-27
+更新时间：2026-08-02
+
+## 2026-08-02：full-chain 与中文中控台
+
+本轮把“同一次用户操作的多模式日志”收口为一个采集计划：
+
+- `--trace-plan full-chain` 可直接映射到 `full-chain` preset；
+- boundary JS 支持 `TRACE_JS_AUTO_CAPTURE_VALUES=1`，对网页脚本调用记录受限的
+  浅层 args/return，并用 `capture_tier=boundary_auto` 标记；
+- `TRACE_QUERY_FIELDS` 与 `TRACE_BODY_FIELDS` 分开配置，XHR/Fetch Body 都能抽取
+  JSON/form 字段并写 metadata；
+- `tools/trace_finalize.py` 输出 `categorized/`、`index/summary.json`、
+  `index/causal-index.json`；
+- `tools/trace_check.py full-chain TRACE_DIR` 验证整理结果；
+- `tools/trace-console.sh` 提供中文中控台：URL、输出目录、Query/Body 字段、暂停打开、
+  开始/暂停/停止并整理/关闭 Firefox、实时事件速率和分类健康度。
+
+构建与 smoke：
+
+- Gecko 增量构建：`mach build --priority normal` 通过；
+- full-chain smoke：`/private/tmp/firefox-trace-full-chain-smoke-20260802-final`；
+- smoke 抓到 `js.call.enter` 的 `capture_tier=boundary_auto`、XHR Body 字段和
+  `js.boundary.flush_summary`，finalizer 与 `trace_check.py full-chain` 均通过。
+- Fetch request body smoke：`/private/tmp/firefox-trace-fetch-request-body-full-chain-1Zu2Nx`；
+  使用 `gecko-dev/obj-aarch64-apple-darwin25.6.0` 最新构建，`fetch.request` 实际写出
+  `body_fields.token=trace-fetch-request-body-token`、`body_fields_meta` 和
+  `values/fetch_req_body_*.txt`，`trace_check.py full-chain` 通过。
+- 中控台 `/api/latest` 过滤回归通过：只返回带 `manifest.json` 的 trace 目录，不返回
+  profile 目录。
+- VM/性能收口：直接 `trace-control.sh` 配置 opcode/VM 会自动写入安全 limit、解释执行预算和
+  opcode/IPC rate guard；无脚本过滤、无 dispatcher PC、超大 limit 的 CLI 回归均通过。
+- 中控台 VM 降载压力：`/private/tmp/firefox-trace-ui-vm-step-only-1785652331`
+  只勾 vm_step 时不输出 `js.opcode`，3.2 秒完成、约 3.3 MiB；`/private/tmp/firefox-trace-ui-opcode-stack-budget-1785652334`
+  勾 opcode/stack/primitive/vm_step 时 2.4 秒完成、约 3.2 MiB，均没有浏览器卡死。
+- 纯 WASM smoke：`/private/tmp/firefox-trace-wasm-final-20260802-141334`；
+  `FIREFOX_TRACE_JS=0` 下生成 1 个 `wasm.module`、6 个 `wasm.insn` 和完整
+  `wasm/<sha1>.wasm` 制品，`tools/trace_check.py wasm` 通过，页面无 `trace.degraded`。
+- 当前构建后 Python 单元测试 20 项、shell launcher 测试和 `git apply --check` 均通过。
 
 ## 目标定位
 

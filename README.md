@@ -31,10 +31,15 @@ Agent 和 MCP 是辅助层：Agent 先消费 Trace 已经收窄的结果，只�
 
 交付给实际使用者的产品手册见 [docs/PRODUCT_MANUAL.md](docs/PRODUCT_MANUAL.md)。
 当前待做清单见 [docs/TODO.md](docs/TODO.md)，后续不要把新 TODO 混进本文的大段规划里。
-当前提供本地 Web 控制台 v1，用于 runtime control、segment、preset/filter 和日志摘要；
+当前推荐桌面软件式中控台 `Firefox Trace Console.app`：双击打开窗口，在窗口里填写 URL、
+输出目录、Firefox 路径、Query/Body 字段和采集勾选项，然后“打开 Firefox -> 手动操作 ->
+开始记录 -> 停止并整理”。默认 `full-chain` 计划会把 DOM/BOM、JS、Network、Cookie/Storage、
+Script、Worker/WASM 线索写入同一个 `TRACE_DIR`。桌面 UI 默认不限制普通 JS trace 总事件数；
+采集强度只控制值预览大小、IPC/opcode 突刺保护和 artifact 大小；
+旧的 Web 中控台、runtime control、segment、preset/filter API 仍保留；
 另有静态 [Trace Explorer](viewer/index.html)，可直接打开、选择 `TRACE_DIR`，离线查看
 时间线、request/call 关联事件、制品和导出报告。实际证据仍以 `TRACE_DIR` 下的 JSONL
-与制品为准。启动入口见 `tools/trace-console.sh` 和产品手册。
+与制品为准。启动入口见 `Firefox Trace Console.app`、`tools/trace-desktop.py` 和产品手册。
 
 当前推荐只使用有头浏览器。launcher 默认启用 automation surface baseline：网页侧
 `navigator.webdriver=false`，有头远控提示 UI 隐藏，`about:support` 不暴露
@@ -70,6 +75,51 @@ tools/trace-control.sh "$TRACE_DIR" stop after-target
 
 `trace-control.sh` 只改本轮 `TRACE_DIR/trace-control.json`，不杀浏览器、不改 profile。
 
+### 推荐：桌面软件中控台一次采集
+
+双击项目根目录里的：
+
+```text
+Firefox Trace Console.app
+```
+
+也可以从终端直接打开桌面 UI，不需要传 host/port 参数：
+
+```bash
+tools/trace-desktop.sh
+```
+
+打开桌面窗口后：
+
+1. 输入 URL、输出目录、Query 字段和 POST Body 字段；
+2. 点击“打开网站（暂停记录）”，在 Firefox 窗口里完成登录和前置跳转；
+3. 点击“开始记录”，执行一次目标操作；
+4. 点击“停止并整理”，日志会生成 `categorized/` 分类文件和
+   `index/summary.json`、`index/causal-index.json`；
+5. 需要结束浏览器时点击“关闭 Firefox”，中控台会先 stop、整理，再结束本轮进程组。
+
+Web 版备用入口：
+
+```bash
+tools/trace-console.sh --host 127.0.0.1 --port 8788
+```
+
+命令行等价入口：
+
+```bash
+TRACE_DIR=/private/tmp/firefox-trace-full-chain-$(date +%s) \
+TRACE_QUERY_FIELDS=sign,token,anti_content,h5st \
+TRACE_BODY_FIELDS=sign,token,anti_content,h5st \
+tools/run-trace-firefox.sh \
+  --trace-plan full-chain \
+  --trace-start paused \
+  'https://example.com/'
+```
+
+`full-chain` 保持 JS 为 boundary 主模式，但对网页脚本调用增加受限的自动浅层
+args/return 采集；事件带 `capture_tier=boundary_auto`。对象深度默认是 0，长值按阈值
+落盘，命中 XHR/Fetch/DOM/Cookie/Storage sink 时再 flush 最近的调用窗口。
+
 ### Preset 选择
 
 | 场景 | preset | 说明 |
@@ -78,7 +128,8 @@ tools/trace-control.sh "$TRACE_DIR" stop after-target
 | 已找到候选函数，要确认返回值 | `target-return` | 配合 `TRACE_SCRIPT_CONTAINS` / `TRACE_FUNCTION_CONTAINS` / `TRACE_SCRIPT_SHA256` 使用 |
 | 要看目标函数输入依赖 | `target-values` | 打开 args/return preview、object preview 和 value_store |
 | 需要目标局部调用树 | `deep-causal` | 只在目标脚本已收窄后使用 |
-| VM/opcode 场景 | `opcode-window` | 必须锁脚本；可再锁 PC 范围，默认 10,000 条 |
+| VM/opcode 场景 | `opcode-window` | 必须锁脚本；可再锁 PC 范围，默认 4,096 条，并有 rate/IPC 预算 |
+| 一次手动操作收集完整证据面 | `full-chain` | 中控台默认计划；浅值、预算、ring buffer 控制性能 |
 
 ### 推荐多轮流程
 
@@ -114,7 +165,7 @@ JS 侧打开 `TRACE_JS_VALUE_STORE=1` 后，return/args/object 中的长值也�
 target/deep 场景需要看短字段时，打开 `TRACE_JS_VALUE_METADATA=1`。短字符串会写
 `js.value.store` metadata，`stored=false`，包含 `preview`、`sha256`、`call_id`、
 `function_name`、`value_role`、`arg_index` 和 `value_path`；是否完整落盘仍由
-`TRACE_JS_VALUE_STORE_MIN_BYTES` / `TRACE_JS_VALUE_STORE_MAX_BYTES` 控制。
+`TRACE_JS_VALUE_STORE_MIN_BYTES` 控制；`TRACE_JS_VALUE_STORE_MAX_BYTES=0` 表示完整值制品不按长度丢弃。
 
 复合签名字段按通用流程处理：先保存请求字段完整值，再按分隔符或 JSON path 拆分，
 然后逐段查 JS metadata。`exact` 命中说明分段本身被函数 return/arg/object 传递；
@@ -1105,7 +1156,7 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_JS_PRIMITIVE_METADATA_MIN_BYTES` | 整数 | `1` | primitive preview 最小长度 |
 | `TRACE_JS_VALUE_STORE_MIN_BYTES` | 整数 | 同 `TRACE_JS_DEEP_LONG_STR` | 完整落盘最小长度 |
 | `TRACE_JS_DEEP_LONG_STR` | 整数 | `1024` | 长字符串超过该阈值时优先落盘 |
-| `TRACE_JS_VALUE_STORE_MAX_BYTES` | 整数 | `2097152` | 单个 value_store 文件最大字节数 |
+| `TRACE_JS_VALUE_STORE_MAX_BYTES` | 整数，`0` 表示不限 | `0` | 单个 JS value_store 制品大小保险丝；默认不因参数长而丢弃，主 JSONL 仍只放 preview/hash/path |
 | `TRACE_JS_LIMIT_EVENTS` | 整数 | `50000` | JS 调用事件上限，命中后写 limit 哨兵 |
 | `TRACE_JS_SHALLOW` | `1` / `0` | `1` | 浅序列化，降低时序干扰 |
 | `TRACE_JS_SHALLOW_DEPTH` | 整数 | `2` | 浅序列化对象深度 |
@@ -1178,8 +1229,8 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_FETCH_RESPONSE_BODY_MAX_BYTES` | 整数 | `65536` | Fetch response body 单次最多读取字节数，上限 2 MiB |
 | `TRACE_FETCH_RESPONSE_BODY_HEX_BYTES` | 整数 | `64` | `body_bytes_hex` 最多输出字节数 |
 | `TRACE_FETCH_RESPONSE_BODY_CHUNK_EVENTS` | 整数 | `4` | Fetch body chunk preview 最多输出事件数，0 表示不限制事件数但仍受 MAX_BYTES 限制 |
-| `TRACE_FETCH_RESPONSE_BODY_STORE` | `1` / `0` | `0` | response 阶段 clone 完整且未截断时写入 `values/fetch_body_<pid>_<seq>.txt`；事件带 artifact path 和 SHA-256 |
-| `TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES` | 整数 | `65536` | 完整 response artifact 的最大读取量，上限 `67108864`；超过上限不写 partial artifact |
+| `TRACE_FETCH_RESPONSE_BODY_STORE` | `1` / `0` | `0` | 在 `FetchDriver::OnDataAvailable` 正常网络读路径旁路保存完整 response artifact；事件带 artifact path 和 SHA-256 |
+| `TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES` | 整数 | `0` | 完整 response artifact 的最大字节；`0` 或 unset 表示 trace 层不按大小丢弃 |
 | `TRACE_FETCH_REQUEST_BODY` | `none` / `preview` / `full` | `none` | Fetch request body 预览；显式开启后克隆 InternalRequest body stream，避免消费真实请求体 |
 | `TRACE_FETCH_REQUEST_BODY_MAX_BYTES` | 整数 | `65536` | Fetch request body 最多读取字节数，上限 2 MiB |
 | `TRACE_FETCH_REQUEST_BODY_HEX_BYTES` | 整数 | `64` | Fetch request `body_bytes_hex` 最多输出字节数 |
@@ -1194,11 +1245,14 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_XHR_REQUEST_BODY_MAX_BYTES` | 整数 | `65536` | XHR request body 最多捕获字节数，上限 2 MiB |
 | `TRACE_XHR_REQUEST_BODY_HEX_BYTES` | 整数 | `64` | XHR request `request_body_bytes_hex` 最多输出字节数 |
 | `TRACE_XHR_REQUEST_BODY_STORE` | `1` / `0` | `0` | 将 XHR request body 捕获片段写入 `values/xhr_req_body_<pid>_<seq>.txt` |
+| `TRACE_XHR_RESPONSE_BODY` | `none` / `full` | `none` | XHR text/json/默认 responseText 完整响应体记录 |
+| `TRACE_XHR_RESPONSE_BODY_STORE` | `1` / `0` | `0` | 将 XHR responseText 完整写入 `values/`，`xhr.response` 带 path、size、SHA-256 |
+| `TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES` | 整数 | `0` | XHR response artifact 最大字节；`0` 或 unset 表示 trace 层不按大小丢弃 |
 | `TRACE_REQUEST_URL` | `full` / `preview` / `none` | `full` | 控制 XHR/fetch URL 字段输出量；`preview` 写截断 URL 和 size/truncated 元数据，`none` 只写 disabled/size，但仍用完整 URL 拆 `query_fields` |
 | `TRACE_QUERY_FIELD_VALUES` | `preview` / `full` / `none` | `preview` | 控制 `TRACE_QUERY_FIELDS` 命中字段在日志中的值输出；`full` 用于二轮精确对齐，`none` 只写 meta |
 | `TRACE_QUERY_FIELD_VALUE_STORE` | `1` / `0` | `0` | 将命中的 query 字段完整值写入 `values/`，并在 `query_fields_meta` 写 `value_id/value_store_path/sha256`；XHR 文件名前缀 `qfv_xhr_`，Fetch 文件名前缀 `qfv_fetch_` |
 | `TRACE_QUERY_FIELD_VALUE_STORE_MIN_BYTES` | 整数 | `0` | query 字段落盘最小字节数 |
-| `TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES` | 整数 | `2097152` | query 字段落盘最大字节数，过大时写 `value_store_skipped=too_large` |
+| `TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES` | 整数，`0` 表示不限 | `0` | query 字段 value_store 制品大小保险丝；默认不因参数长而丢弃 |
 | `TRACE_NETWORK_BODY` | `none` / `preview` / `full` | `none` | 请求/响应 body 总开关；具体模块仍可用 Fetch/XHR 专用开关覆盖 |
 | `TRACE_NETWORK_RAW` | `1` / `0` | `0` | 精确编码确有需要时保存目标请求/响应原始字节 |
 | `TRACE_NETWORK_INITIATOR` | `1` / `0` | `1` | 请求关联 JS 调用链 |
@@ -1218,7 +1272,7 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_WASM_INSN` | `1` / `0` | `0` | 输出 bounded `wasm.insn` raw code-section byte 事件 |
 | `TRACE_WASM_INSN_LIMIT` | 整数 | `256` | 单模块 code-section byte 事件最大数，上限 `65536` |
 
-当前 Fetch 已实现轻量生命周期事件：`fetch.call` 记录 JS 调用入口、caller、page、query fields 和 body length；`fetch.request` 记录最终 Request 元数据，并可显式开启 request body clone preview/store；`fetch.response` 记录 status、response type、redirect、body size 和 response headers；`fetch.done` 记录结束原因。默认不读取、不 clone Request/Response body，日志写 `body_preview_enabled=false`。显式设置 `TRACE_FETCH_REQUEST_BODY=preview|full` 后，`fetch.request` 会克隆 InternalRequest body stream 后限量读取，失败会写 `body_preview_skipped`，不会消费真实上传 body。显式设置 `TRACE_FETCH_RESPONSE_BODY=preview|full` 后，`fetch.response` 会先尝试 trace-only body clone；如果 response 阶段 body 尚不可读，会写 `body_preview_skipped`。真实响应体可见性主要由 `fetch.body_chunk` 提供：它在 `FetchDriver::OnDataAvailable` 原本复制网络数据到 pipe 的同一轮旁路采样前 N 字节，输出 `body_preview/body_bytes_hex`，不额外读取 stream。XHR request body 需要显式设置 `TRACE_XHR_REQUEST_BODY=preview|full`；开启后 `xhr.body` 会记录 `request_body_size/captured_size/truncated/sha256`，可选写入 `values/xhr_req_body_*`，并从 JSON body 或 form-urlencoded body 中按 `TRACE_QUERY_FIELDS` 抽取 `body_fields/body_fields_meta`。WebSocket 默认关闭；开启后在 `firefox-websocket-*.jsonl` 写入 `websocket.frame` 的 send/recv 逻辑边界、socket id、URL、binary、size 和 bounded preview。二进制 preview 用 hex，Blob/stream send 仅记录大小并将 `preview_available=false`。真实站长 URL/query 日志过大时，可设置 `TRACE_REQUEST_URL=preview` 或 `none` 降低写盘量；这不会影响 `TRACE_QUERY_FIELDS` 从完整 URL 中提取字段。需要把请求中的目标参数与 JS return/value_store 做完整等值对齐时，使用 `TRACE_QUERY_FIELD_VALUE_STORE=1`，或短时间设置 `TRACE_QUERY_FIELD_VALUES=full`；默认 `preview` 只适合候选定位。
+当前 Fetch 已实现轻量生命周期事件：`fetch.call` 记录 JS 调用入口、caller、page、query fields 和 body length；`fetch.request` 记录最终 Request 元数据，并可显式开启 request body clone preview/store；`fetch.response` 记录 status、response type、redirect、body size 和 response headers；`fetch.done` 记录结束原因。显式设置 `TRACE_FETCH_REQUEST_BODY=preview|full` 后，`fetch.request` 会克隆 InternalRequest body stream 后限量读取，失败会写 `body_preview_skipped`，不会消费真实上传 body。显式设置 `TRACE_FETCH_RESPONSE_BODY=preview|full` 后，`fetch.response` 会先尝试 trace-only body clone 做轻量 preview；完整响应体由 `FetchDriver::OnDataAvailable` 在原复制网络数据到 pipe 的同一轮旁路保存为 `fetch.body_artifact`，`TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES=0` 表示 trace 层不按大小丢弃。XHR request body 需要显式设置 `TRACE_XHR_REQUEST_BODY=preview|full`；开启后 `xhr.body` 会记录 `request_body_size/captured_size/truncated/sha256`，可选写入 `values/xhr_req_body_*`，并从 JSON body 或 form-urlencoded body 中按 `TRACE_QUERY_FIELDS` 抽取 `body_fields/body_fields_meta`。XHR response 可用 `TRACE_XHR_RESPONSE_BODY=full` + `TRACE_XHR_RESPONSE_BODY_STORE=1` 保存 text/json/默认 `responseText` 的完整 artifact。WebSocket 默认关闭；开启后在 `firefox-websocket-*.jsonl` 写入 `websocket.frame` 的 send/recv 逻辑边界、socket id、URL、binary、size 和 bounded preview。二进制 preview 用 hex，Blob/stream send 仅记录大小并将 `preview_available=false`。真实站长 URL/query 日志过大时，可设置 `TRACE_REQUEST_URL=preview` 或 `none` 降低写盘量；这不会影响 `TRACE_QUERY_FIELDS` 从完整 URL 中提取字段。需要把请求中的目标参数与 JS return/value_store 做完整等值对齐时，使用 `TRACE_QUERY_FIELD_VALUE_STORE=1`，或短时间设置 `TRACE_QUERY_FIELD_VALUES=full`；默认 `preview` 只适合候选定位。
 
 `http.raw_chunk` 是 parent HTTP 已读响应块，事件含 frame/top-frame 标识，可与 XHR/Fetch
 的同名字段关联；它不是 TCP 包捕获。`wasm.module` 是成功编译的 WASM 模块元数据，optional
@@ -1247,13 +1301,18 @@ dump 受单模块字节上限控制；`wasm.insn` 的 `semantic=raw_code_section
 | `TRACE_OPCODE_SCRIPT_COLUMN` | 整数 | 空 | 可选 JSScript 起始列 pin |
 | `TRACE_OPCODE_SCRIPT_BYTECODE_LENGTH` | 整数 | 空 | 可选 JSScript bytecode length pin |
 | `TRACE_OPCODE_PC_RANGE` | `start:end` | 空 | PC 窗口；运行中可更新 |
-| `TRACE_OPCODE_LIMIT` | 整数 / `0` | `10000` | 每个 segment 的 opcode 事件上限；`0` 不限，运行中可更新；超限写 `trace.degraded reason=opcode_limit` |
+| `TRACE_OPCODE_LIMIT` | 整数 / `0` | `4096` | 每个 segment 的 opcode 事件上限；`0` 不限，运行中可更新；超限写 `trace.degraded reason=opcode_limit` |
+| `TRACE_OPCODE_EXECUTION_LIMIT` | 整数 / `0` | `65536` | 目标脚本解释执行预算；到达后写 `trace.degraded reason=opcode_execution_limit` 并允许后续回到 JIT |
 | `TRACE_OPCODE_OPERANDS` | `1` / `0` | `1` | 输出原始 `operand_bytes_hex` 与 bytecode operand format |
-| `TRACE_OPCODE_STACK_SLOTS` | `0..8` | `0` | 输出指定数量的栈顶 slot 类型；`opcode-window` preset 默认 `4` |
+| `TRACE_OPCODE_STACK_SLOTS` | `0..8` | `0` | 输出指定数量的栈顶 slot 类型；安全 preset 默认 `2` |
 | `TRACE_OPCODE_STACK_PRIMITIVES` | `1` / `0` | `0` | 对栈顶的 number/boolean/null/undefined 附带原始值；不展开字符串或对象 |
 | `TRACE_VM_STEP` | `1` / `0` | `0` | 启用已定位 dispatcher PC 的 `js.vm_step` 标记；运行中可更新 |
 | `TRACE_VM_DISPATCH_PC` | 整数 | 空 | 必填；仅此 native JS bytecode PC 写 step；运行中可更新 |
-| `TRACE_VM_STEP_LIMIT` | 整数 / `0` | `10000` | 每 segment 的 step 上限；`0` 不限，运行中可更新；超限写 `trace.degraded module=vm_step reason=vm_step_limit` |
+| `TRACE_VM_STEP_LIMIT` | 整数 / `0` | `2048` | 每 segment 的 step 上限；`0` 不限，运行中可更新；超限写 `trace.degraded module=vm_step reason=vm_step_limit` |
+| `TRACE_OPCODE_MAX_EVENTS_PER_SECOND` | 整数 | `2000` | opcode 本地 rate guard；超限写 `trace.degraded reason=opcode_rate_limit` |
+| `TRACE_OPCODE_MAX_BYTES_PER_SECOND` | 整数 | `4194304` | opcode 本地 JSON 估算字节 rate guard |
+| `TRACE_IPC_MAX_EVENTS_PER_SECOND` | 整数 | `6000` | opcode/VM 场景 Parent IPC 事件预算 |
+| `TRACE_IPC_MAX_BYTES_PER_SECOND` | 整数 | `4194304` | opcode/VM 场景 Parent IPC 字节预算 |
 
 `js.vm_step` 是收窄后的 native dispatcher-loop iteration marker，记录 `step_index`、
 JSScript identity、`vm_dispatch_pc` 和栈深度。它不自动从 JS 局部变量或数组中解码 VMP 的
@@ -1261,6 +1320,10 @@ virtual opcode / virtual PC；先用 opcode analyzer 确认 dispatcher，再显�
 `TRACE_VM_DISPATCH_PC`。脚本 identity/tier-pin 是启动级配置；opcode PC window、opcode
 limit、vm_step 开关、dispatcher PC 和 step limit 可经 `trace-control config` 热更新。vm_step
 只受匹配 JSScript 和自己的 dispatcher PC/limit 限制，不受 opcode 显示 PC window 限制。
+直接用 `trace-control.sh` 或手工环境变量开启 opcode/VM 时，也会自动补齐上述安全限额；
+没有脚本过滤或没有 `TRACE_VM_DISPATCH_PC` 的配置会被拒绝，避免误开全站高频 trace。
+中控台开启 VM 细粒度选项时会把 JS call 自动收窄到目标脚本、关闭自动浅值，并把
+`FIREFOX_TRACE_JS_LIMIT_EVENTS` 降到 12000，避免 VM 压力场景被普通 JS call 日志放大。
 
 `script.resource` 中如果脚本、响应头或完整 raw capture 里的 `sourceMappingURL=`
 声明了 source map，会输出 `source_map_url` 和 `source_map_resolved_url`。如果同时开启
@@ -1761,13 +1824,19 @@ TRACE_EXECUTION_MODE=opcode
 TRACE_OPCODE=1
 TRACE_OPCODE_SCRIPT_CONTAINS=risk,captcha,challenge
 TRACE_OPCODE_PC_RANGE=0:12000
-TRACE_OPCODE_LIMIT=10000
+TRACE_OPCODE_LIMIT=4096
+TRACE_OPCODE_EXECUTION_LIMIT=65536
+TRACE_OPCODE_MAX_EVENTS_PER_SECOND=2000
+TRACE_OPCODE_MAX_BYTES_PER_SECOND=4194304
+TRACE_IPC_MAX_EVENTS_PER_SECOND=6000
+TRACE_IPC_MAX_BYTES_PER_SECOND=4194304
 ```
 
 说明：VM 模式只用于 jsvmp、控制流平坦化、单大函数黑盒等场景。当前 opcode window
-记录 SpiderMonkey 原生 bytecode 的 `pc/op/op_name`、raw operands、stack depth 和可选的
-栈顶 slot 类型/primitive。尚未记录虚拟 PC 或 VM step。opcode 必须先锁脚本，确认目标 PC 窗口后再设置
-`TRACE_OPCODE_PC_RANGE=start:end`。该模式会改变 JIT 和时序，不与常规运行等价。
+记录 SpiderMonkey 原生 bytecode 的 `pc/op/op_name`、raw operands、stack depth、可选的
+栈顶 slot 类型/primitive 和已定位 dispatcher 的 `vm_step` 标记。仍不自动解码虚拟 PC。
+opcode 必须先锁脚本，确认目标 PC 窗口后再设置 `TRACE_OPCODE_PC_RANGE=start:end`；
+该模式会改变 JIT 和时序，不与常规运行等价。
 
 本地 smoke：
 
