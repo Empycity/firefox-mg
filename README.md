@@ -95,7 +95,7 @@ tools/trace-desktop.sh
 2. 点击“打开网站（暂停记录）”，在 Firefox 窗口里完成登录和前置跳转；
 3. 点击“开始记录”，执行一次目标操作；
 4. 点击“停止并整理”，日志会生成 `categorized/` 分类文件和
-   `index/summary.json`、`index/causal-index.json`；
+   `index/summary.json`、`index/causal-index.json`、`index/target-candidates.json`；
 5. 需要结束浏览器时点击“关闭 Firefox”，中控台会先 stop、整理，再结束本轮进程组。
 
 Web 版备用入口：
@@ -294,7 +294,7 @@ flowchart TB
 - 记录 DOM/BOM 属性读取和值、JS call/return、参数/返回值和脚本位置。
 - 将 fetch/XHR/form/body builder、Cookie/Storage 与当前调用上下文关联。
 - 支持动态脚本、WebCrypto/WASM 边界以及目标 opcode/vm_step。
-- 提供函数名、脚本 URL/hash、请求和 PC 范围过滤，默认轻量、目标命中后深抓。
+- 由请求 caller、`origin_call_id`、JS 调用链和值匹配自动生成脚本 URL/hash、请求和 PC 范围候选；UI 不要求用户猜内部过滤值。
 - 输出 `call_id`、`parent_call_id`、`origin_call_id`、`request_id`、`channel_id` 等关联 ID。
 
 Trace 内核的直接价值是先把范围从“整个页面”压缩到“具体请求、脚本、函数和属性读取”，从源头减少 Agent 动态调试工作量。
@@ -1729,7 +1729,7 @@ tools/run-trace-firefox.sh --trace-preset discover-light https://example.com/
 | `target-return` | 二轮确认生成函数 | target return-only、this/args 关闭、object depth=1、value_store |
 | `target-values` | 输入依赖分析 | target args/return preview、object depth=2、value_store |
 | `deep-causal` | 目标局部调用树 | deep + 关闭目标脚本内 prune，仍保持浅值策略 |
-| `opcode-window` | VM/opcode 前置 | 只设置 opcode 模式基础项，必须另行锁脚本/PC/limit |
+| `opcode-window` | VM/opcode 前置 | 只设置 opcode 模式基础项；中控台从 `index/target-candidates.json` 自动锁脚本和 PC，CLI 专家模式仍可显式传入 |
 
 脚本会在 `TRACE_DIR/manifest.json` 写入本轮 preset、`automation_surface`、目标 URL、
 Firefox binary、profile、headless 状态和关键 trace 环境变量，供 AI/用户后续综合多轮结果。
@@ -1835,7 +1835,7 @@ TRACE_IPC_MAX_BYTES_PER_SECOND=4194304
 说明：VM 模式只用于 jsvmp、控制流平坦化、单大函数黑盒等场景。当前 opcode window
 记录 SpiderMonkey 原生 bytecode 的 `pc/op/op_name`、raw operands、stack depth、可选的
 栈顶 slot 类型/primitive 和已定位 dispatcher 的 `vm_step` 标记。仍不自动解码虚拟 PC。
-opcode 必须先锁脚本，确认目标 PC 窗口后再设置 `TRACE_OPCODE_PC_RANGE=start:end`；
+中控台会先从请求调用链自动锁脚本，确认目标 PC 窗口后再自动设置 `TRACE_OPCODE_PC_RANGE=start:end`；
 该模式会改变 JIT 和时序，不与常规运行等价。
 
 本地 smoke：
@@ -1856,14 +1856,13 @@ tools/run-trace-firefox.sh --trace-preset opcode-window \
 
 ```bash
 python3 tools/trace_opcode_analyzer.py "$TRACE_DIR" \
-  --script-contains '<target-script-substring>' \
   --width 48 \
   --top-windows 3
 ```
 
 输出按 `script_url + script_line + script_column + script_bytecode_length` 分组，列出 hot PC、
 branch hits 和候选窗口；每个窗口的 `env` 字段可直接用于下一轮
-`TRACE_OPCODE_PC_RANGE=start:end`，脚本组的 `tier_pin_env` 可直接用于 script-level
+`TRACE_OPCODE_PC_RANGE=start:end`；中控台会把它写入 `index/target-candidates.json` 并在下一轮自动套用，脚本组的 `tier_pin_env` 可直接用于 script-level
 interpreter pin。pin 生效后只有目标 JSScript 强制解释执行，同 URL 的其它函数仍保留 JIT。
 `dispatcher_candidate` 使用循环重复度、branch、data access 和 call hits 给出 heuristic
 score/confidence；它用于候选排序，不代表已经解码 VMP virtual instruction。

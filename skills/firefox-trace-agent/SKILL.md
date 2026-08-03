@@ -83,7 +83,7 @@ Prefer another segment in the same Firefox session:
 discover-light/full-chain -> target-values -> deep-causal -> opcode-window
 ```
 
-Narrow one dimension at a time: field location/name, script hash/contains, function contains, then VM/opcode PC range. `contains` is a script URL/file-name substring. PC range (`START:END`) and dispatcher PC are analysis outputs; leave them empty on the first VM pass and fill them only after `trace_opcode_analyzer.py` identifies a hot range/dispatcher.
+Narrow one dimension at a time: field location/name, automatically derived script identity, producer evidence, then VM/opcode PC range. The UI and server derive script substring/hash, PC range (`START:END`) and dispatcher PC from `index/target-candidates.json`; do not ask the user to invent internal filter values.
 
 ## Reference routing
 
@@ -124,20 +124,20 @@ Agent reads the request field, producer chain, script identity and `wasm-vm` sig
 User reminder:
 
 ```text
-先保持默认模块不动；如果确认是 JSVMP，请选择“JSVMP 第1轮：opcode 热点定位”，只填目标脚本关键词 contains，PC range 和 dispatcher PC 留空，执行一次短目标动作。
+先保持默认模块不动；如果确认是 JSVMP，请选择“JSVMP 第1轮：自动定位（先全链路）”，不填写目标脚本关键词、PC range 或 dispatcher PC，执行一次短目标动作。
 ```
 
 ### Gate 1 — opcode hotspot pass
 
-Agent sets/uses the target script substring and analyzes `js.opcode` records with `trace_opcode_analyzer.py`. The Agent reports the exact script identity and, when present, a candidate `START:END` PC range. The Agent does not ask the user to guess a PC.
+The tool derives the target script substring from request caller/origin call/value evidence and analyzes `js.opcode` records with `trace_opcode_analyzer.py`. The Agent reviews the exact script identity and candidate `START:END` PC range; the UI applies them automatically.
 
 If a hotspot range exists, remind the user:
 
 ```text
-第一轮已找到 opcode 热点：SCRIPT_SUBSTRING，PC 范围：START:END。请选择“JSVMP 第2轮：填 PC 范围窄采”，回填这两个值，其他 VM 字段保持默认，再执行一次相同动作。
+第一轮已找到 opcode 热点：SCRIPT_SUBSTRING，PC 范围：START:END。请选择“JSVMP 第2轮：自动套用 PC 窄采”，不回填内部参数，再执行一次相同动作。
 ```
 
-If no stable hotspot exists, remind the user to repeat the same short action with the same script filter or report that the script identity/filter needs repair; do not request dispatcher PC yet.
+If no stable hotspot exists, remind the user to repeat the same short action; keep the automatically derived script identity and expose no manual filter field.
 
 ### Gate 2 — dispatcher decision
 
@@ -146,7 +146,7 @@ Agent compares opcode PC, function/script identity, call context and request tim
 If confirmed, remind the user:
 
 ```text
-已确认 dispatcher PC：DISPATCH_PC。请选择“JSVMP 第3轮：填 dispatcher 开 VM step”，保持目标脚本关键词，填入 dispatcher PC，执行一次短目标动作；PC range 可按提示保留或使用上一轮范围。
+已确认 dispatcher PC：DISPATCH_PC。请选择“JSVMP 第3轮：自动套用 dispatcher”，工具自动保持脚本与 PC identity 并开启 VM step，执行一次短目标动作。
 ```
 
 If not confirmed, keep the opcode-window route and ask for no VM step. Stack slot/type and primitive capture are follow-up evidence only when the unresolved question is VM state; WASM dump/raw bytes are follow-up evidence only when a WASM module is actually involved.

@@ -580,8 +580,7 @@ def enforce_safety(record):
         )
         if not has_opcode_filter:
             raise SystemExit(
-                "opcode/vm_step requires TRACE_OPCODE_SCRIPT_CONTAINS "
-                "or TRACE_SCRIPT_CONTAINS"
+                "opcode/vm_step requires an automatically resolved script identity"
             )
         if vm_step_enabled and not value(
             "TRACE_VM_DISPATCH_PC", "FIREFOX_TRACE_VM_DISPATCH_PC"

@@ -268,6 +268,7 @@ def check_wasm(trace_dir):
 def check_full_chain(trace_dir):
     summary_path = trace_dir / "index" / "summary.json"
     causal_path = trace_dir / "index" / "causal-index.json"
+    candidates_path = trace_dir / "index" / "target-candidates.json"
     request_path = trace_dir / "categorized" / "request-fields.jsonl"
     if not summary_path.is_file():
         fail(f"missing finalized summary: {summary_path}")
@@ -275,6 +276,12 @@ def check_full_chain(trace_dir):
         fail(f"missing causal index: {causal_path}")
     if not request_path.is_file():
         fail(f"missing request field index: {request_path}")
+    if candidates_path.is_file():
+        candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+        if candidates.get("schema") != "firefox_trace.target_candidates.v1":
+            fail("target candidate index has an unexpected schema")
+        if not isinstance(candidates.get("candidates"), list):
+            fail("target candidate index is missing candidates[]")
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     for field in (

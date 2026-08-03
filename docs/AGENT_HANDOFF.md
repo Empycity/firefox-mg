@@ -44,7 +44,8 @@ JD `h5st` 和 PDD `anti_content` 都能形成：
   `/api/finalize`、`/api/close` 和 `/api/session/status`；`/api/status` 等旧入口继续兼容。
 - VM/WASM 选项已进入中控台：opcode、raw operand、栈 slot/primitive、dispatcher
   `vm_step`、WASM dump/raw bytes 均可同一轮配置；opcode/VM 会自动补齐安全上限和 rate
-  guard，缺脚本过滤或 dispatcher PC 的配置会直接报错。
+  guard。中控台从首轮 `index/target-candidates.json` 自动补齐脚本过滤和已确认的
+  dispatcher PC；CLI 直接配置时仍保留缺失 identity 的启动保护。
 - 开启 VM 细粒度时，中控台会自动把 JS call 收窄到目标脚本、关闭 JS 自动浅值并设置
   `FIREFOX_TRACE_JS_LIMIT_EVENTS=12000`，避免普通 JS call 日志把 VM 压力页放大。
 
@@ -811,8 +812,9 @@ TRACE_XHR_REQUEST_BODY_STORE=1 \
   路由到 `firefox-js-*.jsonl`。
 - launcher 的 `opcode-window` preset 默认：`TRACE_OPCODE_LIMIT=4096`、
   `TRACE_OPCODE_OPERANDS=1`、`TRACE_OPCODE_STACK_SLOTS=2`、
-  `TRACE_OPCODE_STACK_PRIMITIVES=0`。缺少 `TRACE_OPCODE_SCRIPT_CONTAINS` 或
-  `TRACE_SCRIPT_CONTAINS` 时 launcher 退出，避免无目标脚本的 opcode run。
+  `TRACE_OPCODE_STACK_PRIMITIVES=0`。中控台会从 target-candidates 自动提供
+  `TRACE_OPCODE_SCRIPT_CONTAINS`；CLI 缺少目标脚本时 launcher 退出，避免无目标脚本的
+  opcode run。
 - opcode/VM 默认还包含 `TRACE_OPCODE_EXECUTION_LIMIT=65536`、`TRACE_VM_STEP_LIMIT=2048`、opcode
   `2000 events/s + 4 MiB/s` 和 IPC `6000 events/s + 4 MiB/s` 的 rate guard；
   `trace-control.sh` 直接配置时同样自动补齐。
@@ -828,14 +830,14 @@ TRACE_XHR_REQUEST_BODY_STORE=1 \
 
 ### 配置与容量
 
-以下均为启动级配置；`TRACE_EXECUTION_MODE`、`TRACE_OPCODE`、script filter、PC range、
-limit、operand/stack 开关在控制台中都属于 restart-required，不能在已启动的 opcode
-进程上热切换。
+以下均为启动级配置；`TRACE_EXECUTION_MODE`、`TRACE_OPCODE`、script identity、PC range、
+limit、operand/stack 开关在控制台中都属于 restart-required，已启动的 opcode 进程不会
+热切换这些身份参数。
 
 ```bash
 TRACE_EXECUTION_MODE=opcode
 TRACE_OPCODE=1
-TRACE_OPCODE_SCRIPT_CONTAINS='<target-script-substring>'
+TRACE_OPCODE_SCRIPT_CONTAINS='<auto-script-substring>'
 TRACE_OPCODE_SCRIPT_LINE=LINE             # 可空，由 analyzer tier_pin_env 给出
 TRACE_OPCODE_SCRIPT_COLUMN=COLUMN         # 可空
 TRACE_OPCODE_SCRIPT_BYTECODE_LENGTH=LEN   # 可空
@@ -846,7 +848,7 @@ TRACE_OPCODE_OPERANDS=1
 TRACE_OPCODE_STACK_SLOTS=2              # 安全 preset；内核支持 0..8
 TRACE_OPCODE_STACK_PRIMITIVES=0
 TRACE_VM_STEP=1
-TRACE_VM_DISPATCH_PC=START             # 必填；使用 analyzer 的 dispatcher window 起点
+TRACE_VM_DISPATCH_PC=START             # 由 analyzer 确认后自动套用
 TRACE_VM_STEP_LIMIT=2048
 ```
 

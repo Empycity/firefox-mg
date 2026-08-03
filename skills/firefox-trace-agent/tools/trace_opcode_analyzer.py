@@ -144,6 +144,18 @@ def sliding_windows(
 def dispatcher_signals(rows: list[dict[str, Any]]) -> dict[str, Any]:
     op_counts = collections.Counter(str(row.get("op_name") or "") for row in rows)
     pc_counts = collections.Counter(int(row.get("pc") or 0) for row in rows)
+    branch_by_pc: collections.Counter[int] = collections.Counter()
+    data_by_pc: collections.Counter[int] = collections.Counter()
+    call_by_pc: collections.Counter[int] = collections.Counter()
+    for row in rows:
+        pc = int(row.get("pc") or 0)
+        op = str(row.get("op_name") or "")
+        if op in BRANCH_OPS:
+            branch_by_pc[pc] += 1
+        if op in DATA_ACCESS_OPS:
+            data_by_pc[pc] += 1
+        if op in CALL_OPS:
+            call_by_pc[pc] += 1
     unique_pcs = len(pc_counts)
     repetition = len(rows) / max(unique_pcs, 1)
     loop_hits = op_counts["LoopHead"]
@@ -169,6 +181,19 @@ def dispatcher_signals(rows: list[dict[str, Any]]) -> dict[str, Any]:
         confidence = "medium"
     else:
         confidence = "low"
+    dispatcher_pcs = sorted(
+        pc_counts,
+        key=lambda pc: (
+            -(
+                pc_counts[pc]
+                + branch_by_pc[pc] * 2
+                + data_by_pc[pc] * 1.5
+                + call_by_pc[pc]
+            ),
+            pc,
+        ),
+    )
+    candidate_pc = dispatcher_pcs[0] if dispatcher_pcs else None
     return {
         "confidence": confidence,
         "score": round(score, 2),
@@ -178,6 +203,7 @@ def dispatcher_signals(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "branch_hits": branch_hits,
         "data_access_hits": data_access_hits,
         "call_hits": call_hits,
+        "candidate_pc": candidate_pc,
         "signals_are_heuristic": True,
     }
 

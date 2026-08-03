@@ -442,7 +442,7 @@ apply_trace_preset
 
 if [[ "${TRACE_EXECUTION_MODE:-}" == "opcode" || "${TRACE_OPCODE:-0}" != "0" ]]; then
   if [[ -z "${TRACE_OPCODE_SCRIPT_CONTAINS:-${TRACE_SCRIPT_CONTAINS:-}}" ]]; then
-    echo "opcode-window requires TRACE_OPCODE_SCRIPT_CONTAINS or TRACE_SCRIPT_CONTAINS" >&2
+    echo "opcode-window requires an automatically resolved script identity" >&2
     exit 2
   fi
 fi

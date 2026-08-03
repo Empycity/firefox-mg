@@ -39,10 +39,10 @@ python3 tools/trace_finalize.py "$TRACE_DIR" --json
 
 ```bash
 tools/trace-control.sh "$TRACE_DIR" new-segment target-values
+# UI/server normally reads index/target-candidates.json and supplies script
+# identity automatically; explicit flags are expert CLI overrides.
 tools/trace-control.sh "$TRACE_DIR" config \
   --preset target-values \
-  --script-contains 'SCRIPT_SUBSTRING' \
-  --function-contains 'FUNCTION_SUBSTRING' \
   --query-fields 'FIELD_A' \
   --body-fields 'FIELD_B' \
   --header-fields 'HEADER_A' \
@@ -59,12 +59,10 @@ python3 tools/trace_finalize.py "$TRACE_DIR" --json
 tools/trace-control.sh "$TRACE_DIR" new-segment opcode-window
 tools/trace-control.sh "$TRACE_DIR" config \
   --preset opcode-window \
-  --script-contains 'SCRIPT_SUBSTRING' \
-  --set TRACE_OPCODE_SCRIPT_CONTAINS=SCRIPT_SUBSTRING \
-  --set TRACE_OPCODE_PC_RANGE=START:END
-# First VM pass can leave START:END empty; fill it after trace_opcode_analyzer identifies a hot PC range.
+# The UI/server reads index/target-candidates.json and supplies the script
+# identity and PC range; users do not type SCRIPT_SUBSTRING or START:END.
 tools/trace-control.sh "$TRACE_DIR" start opcode-window
 # short target action once
 tools/trace-control.sh "$TRACE_DIR" stop after-opcode
-python3 tools/trace_opcode_analyzer.py "$TRACE_DIR" --script-contains 'SCRIPT_SUBSTRING'
+python3 tools/trace_opcode_analyzer.py "$TRACE_DIR"
 ```

@@ -124,7 +124,15 @@
     }
     .log-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .small { color: var(--muted); font-size: 12px; }
+    .auto-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 10px 0; }
+    .auto-field { min-width: 0; padding: 10px 11px; border: 1px solid #2e587c; border-radius: 10px; background: #0a1d33; }
+    .auto-field span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+    .auto-field strong { display: block; color: var(--cyan); font-size: 12px; overflow-wrap: anywhere; }
+    .auto-field strong.pending { color: var(--yellow); font-weight: 500; }
+    details.advanced-details { margin-top: 10px; border-top: 1px solid #274965; padding-top: 9px; }
+    details.advanced-details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
     @media (max-width: 1180px) { body { min-width: 0; } main { grid-template-columns: 1fr; } }
+    @media (max-width: 720px) { .auto-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -222,9 +230,9 @@
         <label>VM/JSVMP 阶段预设
           <select id="vmStage" onchange="applyVmStagePreset()">
             <option>默认关闭 VM（普通 full-chain）</option>
-            <option>JSVMP 第1轮：opcode 热点定位</option>
-            <option>JSVMP 第2轮：填 PC 范围窄采</option>
-            <option>JSVMP 第3轮：填 dispatcher 开 VM step</option>
+            <option>JSVMP 第1轮：自动定位（先全链路）</option>
+            <option>JSVMP 第2轮：自动套用 PC 窄采</option>
+            <option>JSVMP 第3轮：自动套用 dispatcher</option>
             <option>WASM：只看模块元数据</option>
           </select>
         </label>
@@ -239,25 +247,14 @@
           <label class="check"><input id="vmWasmInsn" type="checkbox"> WASM raw bytes</label>
           <label class="check"><input id="vmUnlimited" type="checkbox"> VM/opcode 不截断</label>
         </div>
-        <div class="grid-2">
-          <label>目标脚本关键词 contains
-            <input id="vmScriptContains" placeholder="脚本 URL / 文件名的一部分，例如 risk 或 chunk.js">
-          </label>
-          <label>opcode PC 范围（留空=自动）
-            <input id="vmPcRange" placeholder="Agent 分析后填写，例如 120:220">
-          </label>
+        <div class="auto-grid">
+          <div class="auto-field"><span>目标脚本身份</span><strong id="vmScriptIdentity" class="pending">首轮目标动作完成后自动推导</strong></div>
+          <div class="auto-field"><span>opcode PC 范围</span><strong id="vmPcRange" class="pending">等待 opcode 分析结果</strong></div>
+          <div class="auto-field"><span>dispatcher PC</span><strong id="vmDispatchPc" class="pending">等待高置信度分析结果</strong></div>
+          <div class="auto-field"><span>脚本精确身份</span><strong id="vmScriptPrecision" class="pending">script line / column / bytecode length 自动套用</strong></div>
         </div>
-        <div class="grid-3">
-          <label>脚本 line
-            <input id="vmScriptLine" inputmode="numeric" placeholder="可选">
-          </label>
-          <label>脚本 column
-            <input id="vmScriptColumn" inputmode="numeric" placeholder="可选">
-          </label>
-          <label>bytecode length
-            <input id="vmBytecodeLength" inputmode="numeric" placeholder="可选">
-          </label>
-        </div>
+        <details class="advanced-details">
+          <summary>查看 VM 性能保险丝（通常保持默认）</summary>
         <div class="grid-3">
           <label>opcode 上限
             <input id="vmOpcodeLimit" inputmode="numeric" value="4096">
@@ -270,9 +267,6 @@
           </label>
         </div>
         <div class="grid-3">
-          <label>VM dispatcher PC（分析后填写）
-            <input id="vmDispatchPc" inputmode="numeric" placeholder="首次留空；由 opcode analyzer 给出">
-          </label>
           <label>opcode events/s
             <input id="vmOpcodeRateEvents" inputmode="numeric" value="2000">
           </label>
@@ -302,9 +296,10 @@
             <input id="vmWasmDumpMaxBytes" inputmode="numeric" value="1048576">
           </label>
         </div>
+        </details>
         <p class="hint" id="vmHint">
           性能保护：opcode 默认最多 4096 条、执行预算 65536 条、每秒 IPC 6000 条、WASM 单模块最多 1 MiB artifact；
-          contains 是脚本关键词；PC 范围和 dispatcher PC 初次留空，由 Agent/opcode analyzer 找到后再填。
+          脚本身份、PC 范围和 dispatcher PC 都由请求调用链与 analyzer 自动推导，用户只需重复同一个目标动作。
         </p>
       </div>
 
@@ -314,6 +309,7 @@
           <button class="primary" id="startButton" onclick="startTrace()" disabled>开始记录</button>
           <button class="warn" id="pauseButton" onclick="pauseTrace()" disabled>暂停记录</button>
           <button class="primary" id="stopButton" onclick="stopTrace()" disabled>停止并整理</button>
+          <button id="newSegmentButton" onclick="newSegment()" disabled>新分段</button>
           <button class="danger" id="closeButton" onclick="closeBrowser()" disabled>关闭 Firefox</button>
           <button onclick="refreshStatus()">刷新状态</button>
         </div>
@@ -337,6 +333,11 @@
           <div class="metric"><div class="name">Producer 候选</div><div id="producerHits" class="value">0</div></div>
         </div>
         <div id="healthText" class="hint" style="margin-top:12px">状态会每秒刷新；trace.degraded 会在这里显式显示。</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><h2>自动推导结果</h2><span class="small">无需填写脚本关键词</span></div>
+        <pre id="discovery">首轮停止整理后，这里会显示请求关联脚本、PC 范围和下一轮自动配置。</pre>
       </div>
 
       <div class="card">
@@ -369,6 +370,7 @@
     let currentTraceDir = "";
     let lastStatus = null;
     let timer = null;
+    let autoVmIdentity = {};
 
     const $ = (id) => document.getElementById(id);
     const write = (id, value) => {
@@ -414,12 +416,13 @@
         wasm_dump: $("vmWasmDump").checked,
         wasm_insn: $("vmWasmInsn").checked,
         unlimited: $("vmUnlimited").checked,
-        script_contains: $("vmScriptContains").value.trim(),
-        script_line: $("vmScriptLine").value.trim(),
-        script_column: $("vmScriptColumn").value.trim(),
-        script_bytecode_length: $("vmBytecodeLength").value.trim(),
-        pc_range: $("vmPcRange").value.trim(),
-        dispatch_pc: $("vmDispatchPc").value.trim(),
+        script_contains: String(autoVmIdentity.script_contains || "").trim(),
+        script_sha256: String(autoVmIdentity.script_sha256 || "").trim(),
+        script_line: String(autoVmIdentity.script_line || "").trim(),
+        script_column: String(autoVmIdentity.script_column || "").trim(),
+        script_bytecode_length: String(autoVmIdentity.script_bytecode_length || "").trim(),
+        pc_range: String(autoVmIdentity.pc_range || "").trim(),
+        dispatch_pc: String(autoVmIdentity.dispatch_pc || "").trim(),
         opcode_limit: $("vmOpcodeLimit").value.trim(),
         opcode_execution_limit: $("vmOpcodeExecutionLimit").value.trim(),
         vm_step_limit: $("vmStepLimit").value.trim(),
@@ -439,20 +442,20 @@
       $("vmUnlimited").checked = false;
       const set = (id, value) => { $(id).checked = value; };
       if (stage.includes("第1轮")) {
-        set("vmOpcode", true); set("vmOperands", true); set("vmStack", false);
+        set("vmOpcode", false); set("vmOperands", true); set("vmStack", false);
         set("vmStackPrimitives", false); set("vmStep", false); set("vmWasmModule", false);
         set("vmWasmDump", false); set("vmWasmInsn", false);
-        $("vmHint").textContent = "JSVMP 第1轮：只填目标脚本关键词 contains；PC 范围和 dispatcher PC 留空，执行一次短目标动作。";
+        $("vmHint").textContent = "JSVMP 第1轮：工具先做一次普通全链路发现，不需要填写脚本关键词；执行一次短目标动作即可。";
       } else if (stage.includes("第2轮")) {
         set("vmOpcode", true); set("vmOperands", true); set("vmStack", false);
         set("vmStackPrimitives", false); set("vmStep", false); set("vmWasmModule", false);
         set("vmWasmDump", false); set("vmWasmInsn", false);
-        $("vmHint").textContent = "JSVMP 第2轮：填目标脚本 contains 和 Agent 给的 opcode PC 范围；dispatcher PC 仍可留空。";
+        $("vmHint").textContent = "JSVMP 第2轮：工具自动套用上一轮脚本身份和 PC 范围；执行同一个短目标动作即可。";
       } else if (stage.includes("第3轮")) {
         set("vmOpcode", false); set("vmOperands", false); set("vmStack", false);
         set("vmStackPrimitives", false); set("vmStep", true); set("vmWasmModule", false);
         set("vmWasmDump", false); set("vmWasmInsn", false);
-        $("vmHint").textContent = "JSVMP 第3轮：填目标脚本 contains 和 dispatcher PC；只记录 VM 分发点 step。";
+        $("vmHint").textContent = "JSVMP 第3轮：工具自动套用已确认的脚本身份和 dispatcher PC；你只需重复同一个动作。";
       } else if (stage.includes("WASM")) {
         set("vmOpcode", false); set("vmOperands", false); set("vmStack", false);
         set("vmStackPrimitives", false); set("vmStep", false); set("vmWasmModule", true);
@@ -484,19 +487,16 @@
     function updateVmHint() {
       const vm = vmOptions();
       syncVmDependencies();
-      const needsScript = vm.opcode || vm.vm_step;
-      const missingScript = needsScript && !vm.script_contains;
       const missingDispatch = vm.vm_step && !vm.dispatch_pc;
-      if (missingScript || missingDispatch) {
+      if (missingDispatch) {
         $("vmHint").textContent =
-          (missingScript ? "opcode/VM step 需要目标脚本关键词 contains；" : "") +
-          (missingDispatch ? "VM step 的 dispatcher PC 由 opcode 分析结果填写；" : "") +
-          "首次可以只填 contains，PC 范围和 dispatcher PC 留空。";
+          "已选择 VM step，但 dispatcher 尚未达到自动应用条件；工具会先回退到 opcode 采集，不需要你填写 PC。";
         $("vmHint").style.color = "var(--yellow)";
         return;
       }
-      $("vmHint").textContent =
-        "contains 是关键词；PC range 是 START:END 数字范围，dispatcher PC 是 VM 分发循环单点；初次留空，Agent 分析后填写。";
+      $("vmHint").textContent = vm.opcode
+        ? "目标脚本与 PC 参数由上一轮请求调用链自动推导；没有候选时，本轮会先做普通全链路发现。"
+        : "普通 full-chain 保持完整请求、响应、JS、DOM/BOM、Cookie、Storage 和 Script 证据；VM 选项按需附加。";
       $("vmHint").style.color = "";
     }
     function setBadge(id, text, kind = "") {
@@ -511,6 +511,7 @@
       $("startButton").disabled = !active || recording;
       $("pauseButton").disabled = !active || !recording;
       $("stopButton").disabled = !active || !recording;
+      $("newSegmentButton").disabled = !active;
       $("closeButton").disabled = !active;
     }
     function render(status) {
@@ -553,7 +554,48 @@
       write("control", status.control || {});
       write("acks", status.config_applied || {});
       if (status.final_summary) write("summary", status.final_summary);
+      renderDiscovery(status.target_discovery || {});
       setButtons(session);
+    }
+    function renderDiscovery(discovery) {
+      const recommended = discovery && discovery.recommended;
+      const vm = recommended && recommended.vm ? recommended.vm : {};
+      autoVmIdentity = vm || {};
+      const scriptText = recommended
+        ? (recommended.script_match || recommended.script_url || "已找到候选脚本")
+        : "首轮目标动作完成后自动推导";
+      const pcText = vm.pc_range || "等待 opcode 分析结果";
+      const dispatchText = vm.dispatch_pc || "等待高置信度分析结果";
+      const precision = ["script_line", "script_column", "script_bytecode_length"]
+        .map((key) => vm[key])
+        .filter((value) => value !== undefined && value !== null && String(value) !== "")
+        .join(" / ") || "首轮后自动套用";
+      $("vmScriptIdentity").textContent = scriptText;
+      $("vmPcRange").textContent = pcText;
+      $("vmDispatchPc").textContent = dispatchText;
+      $("vmScriptPrecision").textContent = precision;
+      ["vmScriptIdentity", "vmPcRange", "vmDispatchPc", "vmScriptPrecision"].forEach((id) => {
+        $(id).classList.toggle("pending", !recommended || !String($(id).textContent || "").trim());
+      });
+      if (!recommended) {
+        write("discovery", discovery && discovery.next_action
+          ? {status: discovery.status || "not-generated", next_action: discovery.next_action}
+          : {status: "not-generated", next_action: "先完成一次目标动作，停止整理后自动分析"});
+        updateVmHint();
+        return;
+      }
+      write("discovery", {
+        status: discovery.status || "ready",
+        selection: "automatic",
+        script_url: recommended.script_url || "",
+        script_match: recommended.script_match || "",
+        confidence: recommended.confidence || "",
+        reasons: recommended.reasons || [],
+        stage: recommended.stage || "",
+        vm: vm,
+        next_action: discovery.next_action || "重复同一个目标动作"
+      });
+      updateVmHint();
     }
     async function refreshStatus() {
       try {
@@ -622,6 +664,11 @@
       try { render(await api("/api/pause", body({label: "manual-pause"}))); }
       catch (error) { write("summary", error.error || error.message || String(error)); }
     }
+    async function newSegment() {
+      try {
+        render(await api("/api/new-segment", body({label: "auto-next-stage"})));
+      } catch (error) { write("summary", error.error || error.message || String(error)); }
+    }
     async function stopTrace() {
       try {
         const result = await api("/api/stop", body({label: "manual-stop", finalize: true}));
@@ -654,7 +701,7 @@
     async function copyTraceDir() {
       if (currentTraceDir) await navigator.clipboard.writeText(currentTraceDir);
     }
-    document.querySelectorAll("#vmOpcode, #vmOperands, #vmStack, #vmStackPrimitives, #vmStep, #vmWasmModule, #vmWasmDump, #vmWasmInsn, #vmUnlimited, #vmScriptContains, #vmDispatchPc")
+    document.querySelectorAll("#vmOpcode, #vmOperands, #vmStack, #vmStackPrimitives, #vmStep, #vmWasmModule, #vmWasmDump, #vmWasmInsn, #vmUnlimited")
       .forEach((input) => input.addEventListener("input", updateVmHint));
     document.querySelectorAll("#vmOpcode, #vmStackPrimitives, #vmStep")
       .forEach((input) => input.addEventListener("change", updateVmHint));

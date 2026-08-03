@@ -93,7 +93,7 @@ web-assets/
 - 首轮查链路：保持默认勾选，使用 `full-chain` + `打开即记录`。
 - 目标字段出现在哪就填哪：query 填 Query，body 填 Body，header 填 Request Header，cookie 填 Cookie。
 - JSVMP/WASM 是附加面板，不是替代前面模块；先让 Network/JS/Script/State 证据齐，再追加 VM/WASM。
-- `contains` 这类输入是收窄关键词；`PC range`、`dispatcher PC` 是 Agent 看完上一轮日志后回填的分析结果。
+- 脚本身份、PC range、dispatcher PC 都由工具从请求 caller、origin_call_id、JS 调用链和 opcode analyzer 自动推导；用户只需要重复同一个目标动作。
 
 ### 3.1 ① 会话
 
@@ -204,8 +204,8 @@ channel_id / offset / captured_size / payload_hex / url / browsing_context_id
 | UI 项 | 默认值 | 说明 |
 |---|---:|---|
 | JS mode | `boundary` | 首轮调用边界模式。 |
-| 脚本 contains | 空 | 只采集 URL/文件名包含指定片段的脚本。二轮收窄使用。 |
-| 函数 contains | 空 | 只采集函数名包含指定片段的调用。二轮收窄使用。 |
+| 脚本身份 | 自动 | 首轮整理后写入 `index/target-candidates.json`，下一轮由中控台自动套用脚本匹配片段、hash 和精确脚本信息。 |
+| 函数线索 | 自动 | 由请求 caller、`origin_call_id`、调用链和值匹配产生，用户无需猜函数名。 |
 | target_match | `auto` | 目标匹配策略。底层 target preset 常用 `all`。 |
 | 对象深度 | 默认强度写入 `1`；full-chain preset 内核默认浅层为 `0` | 对象递归展开深度。越大越重。 |
 | 对象 keys | `0` | `0=不按 key 数截断`。 |
@@ -259,11 +259,11 @@ VM/opcode 也不截断
 
 规则：
 
-- `目标脚本 contains` 是关键词/子字符串匹配；填脚本 URL、文件名或 chunk 名的一部分即可，不要求完整 URL。
+- `目标脚本 contains` 是运行时内部过滤值，由工具从 `index/target-candidates.json` 自动生成；用户不填写脚本 URL、文件名或 chunk 关键词。
 - `opcode PC 范围` 是 SpiderMonkey bytecode PC 的数字范围，格式 `START:END`。
 - `dispatcher PC` 是 JSVM/解释器分发循环所在的单个 bytecode PC。
-- “分析后填写”的意思是：先 trace 一轮，Agent 读 `wasm-vm/js/script` 日志和 `trace_opcode_analyzer.py` 输出，找出热点 PC 范围或 dispatcher PC；然后你把结果填回 UI，再 trace 第二轮更窄窗口。
-- JSVMP 常见顺序：第一轮普通 `full-chain` 找目标请求和脚本；第二轮只勾 `JS opcode`，填 `目标脚本 contains`，`opcode PC 范围 / dispatcher PC` 先留空；Agent 分析后第三轮填 `opcode PC 范围` 或打开 `VM step` 并填 `dispatcher PC`。
+- “分析后自动套用”的意思是：先 trace 一轮，工具把请求 caller、`origin_call_id`、JS 调用链、值匹配和脚本 artifact 汇总为候选；Agent 只审核候选，下一轮由中控台自动带入脚本身份和已确认的 PC 结果。
+- JSVMP 常见顺序：第一轮选择“自动定位（先全链路）”，不填写脚本关键词；第二轮选择“自动套用 PC 窄采”，工具自动带入脚本和 `START:END`；第三轮只有高置信度 dispatcher 结果才自动开启 VM step。
 - 做 JSVMP 时，前面的默认模块通常保留：JS、XHR、Fetch、DOM/BOM、Cookie、Storage、Script artifact 都继续开；VM 选项是附加细粒度证据。只有页面特别重或出现 degraded，再收窄脚本/函数或关闭无关模块。
 - “VM/opcode 也不截断”会写 `TRACE_UNSAFE_ALLOW=1`，只适合锁定脚本后的一次短目标动作。
 - 这些保护值是 VM/opcode/WASM 的保险丝，不是普通 full-chain 日志总上限。
@@ -275,12 +275,12 @@ UI 现在提供阶段预设，普通使用不需要手动研究每个 checkbox�
 | 预设 | 自动设置 | 你需要填写 |
 |---|---|---|
 | `默认关闭 VM（普通 full-chain）` | VM 关闭，保留轻量 WASM module 元数据 | 无 |
-| `JSVMP 第1轮：opcode 热点定位` | 勾 `JS opcode + raw operands`，关闭栈值、VM step、WASM artifact | 目标脚本关键词 contains |
-| `JSVMP 第2轮：填 PC 范围窄采` | 保留 opcode + raw operands | 目标脚本关键词 + Agent 给出的 `START:END` |
-| `JSVMP 第3轮：填 dispatcher 开 VM step` | 只开 VM step，减少 opcode 展开 | 目标脚本关键词 + dispatcher PC |
+| `JSVMP 第1轮：自动定位（先全链路）` | 若没有候选，自动回退为普通 full-chain；有候选时自动锁定脚本 | 只执行一次目标动作 |
+| `JSVMP 第2轮：自动套用 PC 窄采` | 自动带入脚本身份、line/column/bytecode length 和 `START:END` | 只执行同一个目标动作 |
+| `JSVMP 第3轮：自动套用 dispatcher` | 仅在 analyzer 高置信度时自动开启 VM step；否则保持 opcode | 只执行同一个目标动作 |
 | `WASM：只看模块元数据` | 只看 WASM module 元数据 | 无；需要完整模块时再单独勾 artifact |
 
-最常用的 JSVMP 操作就是：选择“第 1 轮”→ 填 contains → trace；Agent 分析完后选择“第 2 轮”或“第 3 轮”→ 回填结果 → 再 trace。
+最常用的 JSVMP 操作就是：选择“第 1 轮”→ 执行目标动作 → 停止整理；Agent 审核 `target-candidates.json` 后选择“第 2 轮”或“第 3 轮”→ 再执行同一个动作。整个过程不需要猜脚本关键词、PC range 或 dispatcher PC。
 
 前面的 JS、XHR、Fetch、DOM/BOM、Cookie、Storage、Script 默认模块继续保留，它们负责把 VM 结果和请求、环境、脚本来源连起来。
 
@@ -368,9 +368,10 @@ TRACE_DIR/
     wasm-vm.jsonl
     control-health.jsonl
     request-fields.jsonl
-  index/
-    summary.json
-    causal-index.json
+index/
+  summary.json
+  causal-index.json
+  target-candidates.json
     web-assets.json
 ```
 
@@ -387,6 +388,7 @@ TRACE_DIR/
 | `categorized/` | 停止后按用途归类的 JSONL，Agent 首选入口。 |
 | `index/summary.json` | 本轮总览、分类计数、目标字段命中、degraded 数、生成文件。 |
 | `index/causal-index.json` | 请求字段、JS value SHA-256、origin 上下文、候选 producer 的关联索引。 |
+| `index/target-candidates.json` | 工具自动排名的请求关联脚本、脚本匹配片段、精确脚本身份、opcode PC 范围和 dispatcher 候选；下一轮由中控台读取。 |
 
 ---
 
@@ -440,6 +442,7 @@ Agent 拿到一个 `TRACE_DIR` 后按这个顺序：
    - `origin_call_id`
 4. 读 `categorized/network.jsonl`：还原完整请求 URL、query/body、headers、response artifact。
 5. 读 `index/causal-index.json`：查看 `producer_candidates` 和 `same_origin_context`。
+6. 读 `index/target-candidates.json`：确认工具推荐的脚本、置信度、PC range 和下一轮阶段。
 6. 读 `categorized/js.jsonl`：用 `call_id / parent_call_id / origin_call_id` 回溯生成/传递链。
 7. 读 `categorized/script.jsonl` 和 `scripts/`：定位算法文件、hash、source map。
 8. 读 `categorized/state.jsonl`、`dom.jsonl`、`bom.jsonl`：列环境/state 依赖账本。
@@ -513,9 +516,9 @@ hash / crypto primitive
 1. 不要直接扩大到全站 deep。
 2. 先用 `request-fields` 和 `causal-index` 找候选脚本/函数。
 3. 同一个 Firefox 会话点“新分段”。
-4. 填 `脚本 contains` / `函数 contains`，切到更窄的 target/deep 配置。
+4. 选择下一阶段；中控台从 `index/target-candidates.json` 自动套用脚本/函数身份。
 5. 重新“开始记录 -> 操作一次 -> 停止并整理”。
-6. 对 VM/opcode，先填目标脚本 contains；opcode PC 范围和 dispatcher PC 由 analyzer 给出后再填。
+6. 对 VM/opcode，选择对应阶段即可；脚本、PC 范围和 dispatcher PC 由 analyzer 结果自动带入。
 
 ---
 
@@ -559,7 +562,7 @@ origin_call_id
 如果首轮只有候选，没有完整生成侧：
 
 ```text
-新分段 -> 填脚本/函数 contains -> target-values/deep-causal 风格配置 -> 再操作一次
+新分段 -> 选择下一阶段 -> target-values/deep-causal 风格配置自动套用候选 -> 再操作一次
 ```
 
 目标：
@@ -587,7 +590,7 @@ JS return/arg/object value metadata 与请求字段 SHA-256 对齐
 | `tools/trace-console.sh` | 启动 Web UI / HTTP API。 |
 | `tools/run-trace-firefox.sh` | 底层启动 Firefox。 |
 | `tools/trace-control.sh` | 对现有 `TRACE_DIR` start/stop/prewarm/config/new-segment/status。 |
-| `tools/trace_finalize.py` | 生成 `categorized/`、`index/summary.json`、`index/causal-index.json`。 |
+| `tools/trace_finalize.py` | 生成 `categorized/`、`index/summary.json`、`index/causal-index.json`、`index/target-candidates.json`。 |
 | `tools/trace_analyzer.py` | 离线找字段、脚本、函数和下一轮 env 建议。 |
 | `tools/trace_store.py` | 多轮导入 SQLite，按 field/value/call chain 查询。 |
 | `tools/trace_opcode_analyzer.py` | 分析 opcode 窗口，找热点 PC/dispatcher 线索。 |
@@ -631,6 +634,7 @@ tools/trace-control.sh "$TRACE_DIR" config \
 - `TRACE_DIR/manifest.json` 存在；
 - `TRACE_DIR/index/summary.json` 存在；
 - `TRACE_DIR/index/causal-index.json` 存在；
+- `TRACE_DIR/index/target-candidates.json` 存在；
 - `TRACE_DIR/categorized/request-fields.jsonl` 存在；
 - 目标操作确实发生在记录窗口内；
 - UI 健康状态没有显示严重 degraded；如果有，说明这轮只能当候选；

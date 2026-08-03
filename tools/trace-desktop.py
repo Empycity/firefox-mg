@@ -204,9 +204,9 @@ class ScrollFrame(ttk.Frame):
 
 VM_STAGE_CHOICES = [
     "默认关闭 VM（普通 full-chain）",
-    "JSVMP 第1轮：opcode 热点定位",
-    "JSVMP 第2轮：填 PC 范围窄采",
-    "JSVMP 第3轮：填 dispatcher 开 VM step",
+    "JSVMP 第1轮：自动定位（先全链路）",
+    "JSVMP 第2轮：自动套用 PC 窄采",
+    "JSVMP 第3轮：自动套用 dispatcher",
     "WASM：只看模块元数据",
 ]
 
@@ -229,6 +229,7 @@ class TraceDesktopApp(tk.Tk):
         self.current_trace_dir = ""
         self.status_timer = ""
         self.last_status: dict | None = None
+        self.last_discovery_signature = ""
 
         self._setup_style()
         self._build_ui()
@@ -340,6 +341,20 @@ class TraceDesktopApp(tk.Tk):
             ttk.Button(parent, text="选择…", command=lambda: self.browse_path(var, browse)).grid(row=row, column=3, sticky="ew", padx=(8, 0), pady=4)
         return entry
 
+    def _auto_row(self, parent, row: int, label: str, var: tk.StringVar):
+        """Display an analyzer-owned value without asking the user to guess it."""
+        ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", pady=4)
+        entry = ttk.Entry(parent, textvariable=var, state="readonly")
+        entry.grid(row=row, column=1, columnspan=3, sticky="ew", padx=(10, 0), pady=4)
+        entry.bind("<FocusIn>", lambda _event: entry.xview_moveto(1.0))
+        var.trace_add(
+            "write",
+            lambda *_args, widget=entry: widget.after_idle(
+                lambda: widget.xview_moveto(1.0)
+            ),
+        )
+        return entry
+
     def _path_row(self, parent, row: int, label: str, var: tk.StringVar, browse: str | None = None):
         ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, columnspan=4, sticky="w", pady=(8, 2))
         holder = ttk.Frame(parent, style="Panel.TFrame")
@@ -435,6 +450,7 @@ class TraceDesktopApp(tk.Tk):
         self.js_mode_var = tk.StringVar(value="boundary")
         self.target_match_var = tk.StringVar(value="auto")
         self.script_contains_var = tk.StringVar(value="")
+        self.script_sha256_var = tk.StringVar(value="")
         self.function_contains_var = tk.StringVar(value="")
         self.object_depth_var = tk.StringVar(value="1")
         self.object_keys_var = tk.StringVar(value="0")
@@ -459,9 +475,13 @@ class TraceDesktopApp(tk.Tk):
                 value=value,
             ).grid(row=row, column=col, sticky="w", pady=4)
         row += 1
-        self._entry_row(panel, row, "脚本 contains", self.script_contains_var); row += 1
-        self._entry_row(panel, row, "函数 contains", self.function_contains_var); row += 1
-        self._entry_row(panel, row, "target_match", self.target_match_var); row += 1
+        ttk.Label(
+            panel,
+            text="脚本、函数和目标匹配范围由请求调用链自动确定；这里不需要填写关键词。",
+            style="Muted.TLabel",
+            wraplength=760,
+        ).grid(row=row, column=0, columnspan=4, sticky="ew", pady=(2, 8))
+        row += 1
         grid = ttk.Frame(panel, style="Panel.TFrame")
         grid.grid(row=row, column=0, columnspan=4, sticky="ew")
         for c in range(4):
@@ -533,12 +553,13 @@ class TraceDesktopApp(tk.Tk):
         self.vm_wasm_dump_max_bytes_var = tk.StringVar(value=str(VM_SAFE_DEFAULTS["wasm_dump_max_bytes"]))
         self.vm_wasm_insn_limit_var = tk.StringVar(value=str(VM_SAFE_DEFAULTS["wasm_insn_limit"]))
         row = 6
-        for label, var in [
-            ("目标脚本关键词 contains", self.vm_script_contains_var),
-            ("opcode PC 范围（留空=自动）", self.vm_pc_range_var),
-            ("VM dispatcher PC（分析后填写）", self.vm_dispatch_pc_var),
-        ]:
-            self._entry_row(panel, row, label, var); row += 1
+        ttk.Label(
+            panel,
+            text="目标脚本、opcode PC 和 dispatcher PC 会在首轮整理后自动推导并套用；用户不填写这些内部参数。",
+            style="Muted.TLabel",
+            wraplength=760,
+        ).grid(row=row, column=0, columnspan=4, sticky="ew", pady=(2, 8))
+        row += 1
         grid2 = ttk.Frame(panel, style="Panel.TFrame")
         self.vm_limits_grid = grid2
         grid2.grid(row=row, column=0, columnspan=4, sticky="ew", pady=(6, 0))
@@ -567,7 +588,7 @@ class TraceDesktopApp(tk.Tk):
             ttk.Label(cell, text=label, style="Panel.TLabel").grid(row=0, column=0, sticky="w")
             ttk.Entry(cell, textvariable=var, width=12).grid(row=1, column=0, sticky="ew")
         row += 4
-        self.vm_hint_var = tk.StringVar(value="contains 是脚本 URL/文件名关键词；PC 范围和 dispatcher PC 初次留空，Agent 用 opcode analyzer 找到后再填。")
+        self.vm_hint_var = tk.StringVar(value="脚本身份、PC 范围和 dispatcher PC 由请求调用链与 analyzer 自动推导；你只需重复同一个目标动作。")
         ttk.Label(panel, textvariable=self.vm_hint_var, style="Muted.TLabel", wraplength=760).grid(row=row, column=0, columnspan=4, sticky="ew", pady=(8, 0))
 
         panel = self._panel(parent, "⑤ 额外环境变量（高级）", 5)
@@ -666,6 +687,32 @@ class TraceDesktopApp(tk.Tk):
         self.category_text = tk.Text(status, height=6, bg="#f8fcff", fg="#0b6fd3", relief="flat", font=("Menlo", 11), highlightthickness=1, highlightbackground="#cfe8ff")
         self.category_text.grid(row=path_row + 1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         self.category_text.configure(state="disabled")
+        ttk.Label(status, text="自动推导", style="Panel.TLabel").grid(
+            row=path_row + 2,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            pady=(10, 3),
+        )
+        self.discovery_text = tk.Text(
+            status,
+            height=7,
+            bg="#f8fcff",
+            fg="#0b6fd3",
+            relief="flat",
+            font=("Menlo", 10),
+            highlightthickness=1,
+            highlightbackground="#cfe8ff",
+            wrap="word",
+        )
+        self.discovery_text.grid(
+            row=path_row + 3,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(0, 0),
+        )
+        self.discovery_text.configure(state="disabled")
 
     def _build_log(self, parent):
         ttk.Label(parent, text="日志", style="Section.TLabel").grid(row=6, column=0, sticky="nw")
@@ -748,7 +795,7 @@ class TraceDesktopApp(tk.Tk):
         stage = self.vm_stage_var.get()
         self.vm_unlimited_var.set(False)
         if "第1轮" in stage:
-            self.vm_opcode_var.set(True)
+            self.vm_opcode_var.set(False)
             self.vm_operands_var.set(True)
             self.vm_stack_var.set(False)
             self.vm_stack_primitive_var.set(False)
@@ -756,7 +803,7 @@ class TraceDesktopApp(tk.Tk):
             self.vm_wasm_module_var.set(False)
             self.vm_wasm_dump_var.set(False)
             self.vm_wasm_insn_var.set(False)
-            self.vm_hint_var.set("JSVMP 第1轮：只填目标脚本关键词 contains；PC 范围和 dispatcher PC 留空，执行一次短目标动作。")
+            self.vm_hint_var.set("JSVMP 第1轮：工具先做一次普通全链路发现，不需要填写脚本关键词；执行一次短目标动作即可。")
         elif "第2轮" in stage:
             self.vm_opcode_var.set(True)
             self.vm_operands_var.set(True)
@@ -766,7 +813,7 @@ class TraceDesktopApp(tk.Tk):
             self.vm_wasm_module_var.set(False)
             self.vm_wasm_dump_var.set(False)
             self.vm_wasm_insn_var.set(False)
-            self.vm_hint_var.set("JSVMP 第2轮：填目标脚本 contains 和 Agent 给的 opcode PC 范围；dispatcher PC 仍可留空。")
+            self.vm_hint_var.set("JSVMP 第2轮：工具自动套用上一轮脚本身份和 PC 范围；执行同一个短目标动作即可。")
         elif "第3轮" in stage:
             self.vm_opcode_var.set(False)
             self.vm_operands_var.set(False)
@@ -776,7 +823,7 @@ class TraceDesktopApp(tk.Tk):
             self.vm_wasm_module_var.set(False)
             self.vm_wasm_dump_var.set(False)
             self.vm_wasm_insn_var.set(False)
-            self.vm_hint_var.set("JSVMP 第3轮：填目标脚本 contains 和 dispatcher PC；只记录 VM 分发点 step。")
+            self.vm_hint_var.set("JSVMP 第3轮：工具自动套用已确认的脚本身份和 dispatcher PC；执行同一个短目标动作即可。")
         elif "WASM" in stage:
             self.vm_opcode_var.set(False)
             self.vm_operands_var.set(False)
@@ -816,12 +863,10 @@ class TraceDesktopApp(tk.Tk):
             self.vm_stack_var.set(True)
         if self.vm_unlimited_var.get():
             self.vm_hint_var.set("VM/opcode 不截断已开启：opcode/VM step/rate/IPC 预算写 0，建议只记录一次短目标动作。")
-        elif (self.vm_opcode_var.get() or self.vm_step_var.get()) and not self.vm_script_contains_var.get().strip():
-            self.vm_hint_var.set("已开启 opcode/VM step：建议填写目标脚本 contains，缩小范围更稳。")
         elif self.vm_step_var.get() and not self.vm_dispatch_pc_var.get().strip():
-            self.vm_hint_var.set("已开启 VM step：dispatcher PC 是解释器分发循环的单个 bytecode PC，由 opcode 分析结果填写。")
+            self.vm_hint_var.set("已选择 VM step，但 dispatcher 尚未达到自动应用条件；工具会先回退到 opcode 采集，不需要你填写 PC。")
         else:
-            self.vm_hint_var.set("contains 是关键词；PC 范围格式 START:END，初次留空；普通 JS trace 默认不限总事件数，VM/opcode 保留预算。")
+            self.vm_hint_var.set("脚本身份与 PC 参数由上一轮日志自动推导；没有候选时，本轮先做普通全链路发现。普通 JS trace 默认完整落盘，VM/opcode 保留性能保险丝。")
 
     def modules_payload(self) -> dict[str, bool]:
         modules = {key: var.get() for key, var in self.module_vars.items()}
@@ -842,6 +887,7 @@ class TraceDesktopApp(tk.Tk):
             "wasm_insn": self.vm_wasm_insn_var.get(),
             "unlimited": self.vm_unlimited_var.get(),
             "script_contains": self.vm_script_contains_var.get().strip(),
+            "script_sha256": self.script_sha256_var.get().strip(),
             "pc_range": self.vm_pc_range_var.get().strip(),
             "script_line": self.vm_script_line_var.get().strip(),
             "script_column": self.vm_script_column_var.get().strip(),
@@ -870,6 +916,7 @@ class TraceDesktopApp(tk.Tk):
             "profile": profile,
             "js_mode": self.js_mode_var.get(),
             "script_contains": self.script_contains_var.get().strip(),
+            "script_sha256": self.script_sha256_var.get().strip(),
             "function_contains": self.function_contains_var.get().strip(),
             "target_match": self.target_match_var.get().strip(),
             "query_fields": self.query_fields_var.get().strip(),
@@ -1043,12 +1090,63 @@ class TraceDesktopApp(tk.Tk):
         self.trace_dir_display_var.set(str(trace_dir))
         if hasattr(self, "trace_dir_entry"):
             self.trace_dir_entry.xview_moveto(1.0)
+        self.render_discovery(status.get("target_discovery") or {})
         counts = metrics.get("category_counts") or {}
         lines = [f"{name:15s} {int(counts.get(name, 0))}" for name in CATEGORY_ORDER]
         self.category_text.configure(state="normal")
         self.category_text.delete("1.0", "end")
         self.category_text.insert("1.0", "\n".join(lines))
         self.category_text.configure(state="disabled")
+
+    def render_discovery(self, discovery: dict):
+        recommended = discovery.get("recommended") if isinstance(discovery, dict) else None
+        recommended = recommended if isinstance(recommended, dict) else None
+        vm = recommended.get("vm") if recommended else {}
+        vm = vm if isinstance(vm, dict) else {}
+        self.vm_script_contains_var.set(str(vm.get("script_contains") or ""))
+        self.vm_pc_range_var.set(str(vm.get("pc_range") or ""))
+        self.vm_dispatch_pc_var.set(str(vm.get("dispatch_pc") or ""))
+        self.vm_script_line_var.set(str(vm.get("script_line") or ""))
+        self.vm_script_column_var.set(str(vm.get("script_column") or ""))
+        self.vm_bytecode_length_var.set(str(vm.get("script_bytecode_length") or ""))
+        self.script_sha256_var.set(str(vm.get("script_sha256") or ""))
+        self.script_contains_var.set(str(vm.get("script_contains") or ""))
+        signature = json.dumps(
+            {
+                "status": discovery.get("status") if isinstance(discovery, dict) else "",
+                "script": recommended.get("script_url") if recommended else "",
+                "pc": vm.get("pc_range"),
+                "dispatch": vm.get("dispatch_pc"),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if signature != self.last_discovery_signature:
+            self.last_discovery_signature = signature
+            if recommended:
+                lines = [
+                    "选择方式：自动",
+                    f"脚本：{recommended.get('script_url') or '-'}",
+                    f"匹配片段：{recommended.get('script_match') or '-'}",
+                    f"置信度：{recommended.get('confidence') or '-'}",
+                    f"阶段：{recommended.get('stage') or '-'}",
+                    f"依据：{'、'.join(recommended.get('reasons') or []) or '-'}",
+                    f"PC：{vm.get('pc_range') or '等待 opcode 分析'}",
+                    f"dispatcher：{vm.get('dispatch_pc') or '等待高置信度分析'}",
+                    "下一步：重复同一个目标动作；参数会自动带入下一轮。",
+                ]
+            else:
+                lines = [
+                    f"状态：{discovery.get('status') or '尚未生成'}",
+                    discovery.get("next_action")
+                    or "先完成一次目标动作，停止整理后自动分析。",
+                    "这里不需要填写脚本关键词、PC 范围或 dispatcher PC。",
+                ]
+            self.discovery_text.configure(state="normal")
+            self.discovery_text.delete("1.0", "end")
+            self.discovery_text.insert("1.0", "\n".join(lines))
+            self.discovery_text.configure(state="disabled")
+        self.sync_vm_dependencies()
 
     def on_window_close(self):
         active = False

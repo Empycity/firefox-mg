@@ -109,10 +109,10 @@ Prefer the same session and a new segment:
 
 ```bash
 tools/trace-control.sh "$TRACE_DIR" new-segment target-values
+# UI/server normally reads index/target-candidates.json and supplies internal
+# script/function filters automatically; explicit flags are expert CLI overrides.
 tools/trace-control.sh "$TRACE_DIR" config \
   --preset target-values \
-  --script-contains 'SCRIPT_SUBSTRING' \
-  --function-contains 'FUNCTION_SUBSTRING' \
   --query-fields 'FIELD_A,FIELD_B' \
   --body-fields 'FIELD_C' \
   --header-fields 'HEADER_A' \
@@ -131,9 +131,9 @@ Broaden one filter at a time.
 When the target looks like JSVMP, keep the normal full-chain modules as context and add VM evidence in segments:
 
 1. Confirm target request and script first.
-2. Run an opcode segment with `JS opcode` enabled and `script_contains` set; leave PC range and dispatcher PC empty on this pass.
-3. Analyze with `tools/trace_opcode_analyzer.py`.
-4. Run a narrower segment with `TRACE_OPCODE_PC_RANGE=START:END` or enable `TRACE_VM_STEP=1` only after `TRACE_VM_DISPATCH_PC` is known.
+2. Select the automatic JSVMP discovery stage; the server derives `script_contains` from the first-pass request/call evidence. If no candidate exists yet, it records a normal full-chain discovery pass.
+3. Review `index/target-candidates.json` and `tools/trace_opcode_analyzer.py` output.
+4. Select the next automatic stage. The server applies `TRACE_OPCODE_PC_RANGE=START:END` and enables `TRACE_VM_STEP=1` only when an analyzer-confirmed dispatcher identity is available.
 
 Explain to the user that “fill after analysis” means a previous trace produced the PC value; it is not a value they should guess.
 
@@ -146,8 +146,8 @@ Use `references/report-template.md`. Include exact paths and hashes so another A
 
 At every VMP transition, output one concrete next action instead of exposing raw VM knobs:
 
-1. Target unknown: keep defaults; run `JSVMP round 1`, fill only the script substring.
-2. Hot PC found: report `START:END`; user runs round 2 with that range.
-3. Dispatcher confirmed: report one PC; user runs round 3 with VM step.
+1. Target unknown: keep defaults; run `JSVMP round 1`; user fills no script or VM identity fields.
+2. Hot PC found: report `START:END`; user selects round 2 and repeats the same action.
+3. Dispatcher confirmed: report one PC; user selects round 3 and repeats the same action.
 4. Dispatcher unconfirmed: keep opcode window; request no dispatcher PC and no VM step.
 5. Fixed bytes aligned: stop widening VM capture and move to dynamic-value/live-response validation.

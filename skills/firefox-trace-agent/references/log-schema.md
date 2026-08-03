@@ -27,6 +27,7 @@ TRACE_DIR/
 | `web-assets/` | Finalizer best-effort page and JS downloads. |
 | `index/summary.json` | Counts, target fields, degraded count, generated files, match count. |
 | `index/causal-index.json` | Target field forms, producer candidates, same-origin context. |
+| `index/target-candidates.json` | Automatically ranked request-associated scripts, script match token, exact script identity, opcode PC range and dispatcher candidate for the next segment. |
 
 ## Categorized logs
 
@@ -57,6 +58,12 @@ script_sha256
 ```
 
 A producer claim is strong when the request field SHA-256 equals a JS value SHA-256 and the request context matches by `origin_call_id` or explicit call/request linkage.
+
+`target-candidates.json` is the UI handoff file. The user does not provide
+`TRACE_OPCODE_SCRIPT_CONTAINS`, `TRACE_OPCODE_PC_RANGE`, or
+`TRACE_VM_DISPATCH_PC`; the server reads the recommended candidate and applies
+only the fields supported by the current evidence. Dispatcher PC is applied
+automatically only for a high-confidence heuristic result.
 
 ## Composite fields
 

@@ -67,6 +67,103 @@ VM_SAFE_DEFAULTS = {
 }
 
 
+def load_target_candidates(trace_dir: pathlib.Path) -> dict:
+    path = trace_dir / "index" / "target-candidates.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {
+            "schema": "firefox_trace.target_candidates.v1",
+            "trace_dir": str(trace_dir),
+            "status": "not-generated",
+            "candidate_count": 0,
+            "recommended": None,
+            "candidates": [],
+            "next_action": "先完成一次目标动作，停止整理后由工具自动推导脚本身份",
+        }
+    return data if isinstance(data, dict) else {}
+
+
+def resolve_vm_identity(
+    trace_dir: pathlib.Path, vm: object
+) -> tuple[dict, dict]:
+    """Merge analyzer output into VM settings without exposing guesswork."""
+    payload = dict(vm) if isinstance(vm, dict) else {}
+    requested_opcode = boolish(payload.get("opcode"))
+    requested_step = boolish(payload.get("vm_step"))
+    if not (requested_opcode or requested_step):
+        return payload, {
+            "status": "not-requested",
+            "applied": False,
+            "candidate": None,
+            "message": "当前阶段未开启 opcode/VM step",
+        }
+
+    discovery = load_target_candidates(trace_dir)
+    candidate = discovery.get("recommended")
+    if not isinstance(candidate, dict):
+        payload["opcode"] = False
+        payload["vm_step"] = False
+        return payload, {
+            "status": "pending-first-pass",
+            "applied": False,
+            "candidate": None,
+            "message": "尚未找到目标请求关联脚本；本轮自动回退为普通全链路，完成一次目标动作后再自动套用",
+        }
+
+    auto = candidate.get("vm") if isinstance(candidate.get("vm"), dict) else {}
+    applied: list[str] = []
+    for key in (
+        "script_contains",
+        "script_sha256",
+        "script_line",
+        "script_column",
+        "script_bytecode_length",
+        "pc_range",
+        "dispatch_pc",
+    ):
+        if str(payload.get(key) or "").strip():
+            continue
+        value = auto.get(key)
+        if value is not None and str(value).strip():
+            payload[key] = str(value)
+            applied.append(key)
+
+    if not str(payload.get("script_contains") or "").strip():
+        payload["opcode"] = False
+        payload["vm_step"] = False
+        return payload, {
+            "status": "pending-script-identity",
+            "applied": False,
+            "candidate": candidate,
+            "applied_keys": applied,
+            "message": "候选记录缺少可用脚本标识；本轮先保持普通全链路",
+        }
+
+    if requested_step and not str(payload.get("dispatch_pc") or "").strip():
+        # A dispatcher candidate with medium/low confidence remains visible
+        # for the Agent, but VM step is held back until a high-confidence PC is
+        # available.  Keep opcode enabled so the next segment still contains
+        # useful VM evidence.
+        payload["vm_step"] = False
+        payload["opcode"] = True
+        return payload, {
+            "status": "script-applied-dispatch-pending",
+            "applied": True,
+            "candidate": candidate,
+            "applied_keys": applied,
+            "message": "已自动套用脚本身份；dispatcher 尚未达到自动应用条件，暂以 opcode 采集",
+        }
+
+    return payload, {
+        "status": "applied",
+        "applied": True,
+        "candidate": candidate,
+        "applied_keys": applied,
+        "message": "已自动套用候选脚本及分析结果",
+    }
+
+
 def bounded_int(value: object, default: int, minimum: int, maximum: int) -> int:
     if value is None or str(value).strip() == "":
         return default
@@ -212,6 +309,7 @@ def vm_env_from_payload(vm: object) -> dict[str, str]:
 
     optional = {
         "script_contains": "TRACE_OPCODE_SCRIPT_CONTAINS",
+        "script_sha256": "TRACE_SCRIPT_SHA256",
         "script_line": "TRACE_OPCODE_SCRIPT_LINE",
         "script_column": "TRACE_OPCODE_SCRIPT_COLUMN",
         "script_bytecode_length": "TRACE_OPCODE_SCRIPT_BYTECODE_LENGTH",
@@ -274,8 +372,10 @@ RESTART_REQUIRED = [
     "TRACE_EXECUTION_MODE",
     "TRACE_OPCODE",
     "TRACE_OPCODE_SCRIPT_CONTAINS",
+    "TRACE_SCRIPT_SHA256",
     "TRACE_OPCODE_SCRIPT_LINE",
-    "TRACE_OPCODE_COLUMN",
+    "TRACE_OPCODE_SCRIPT_COLUMN",
+    "TRACE_OPCODE_SCRIPT_BYTECODE_LENGTH",
 ]
 
 
@@ -379,6 +479,21 @@ def startup_env_from_payload(payload: dict) -> dict[str, str]:
                 if env_key in {"TRACE_JS_MODE", "FIREFOX_TRACE_JS_MODE"}
                 else str(value)
             )
+
+    # VM stage selection is an internal preset, not a competing JS-mode
+    # choice.  Re-apply its controlled keys after ordinary UI options so a
+    # default `boundary` radio value cannot undo the automatic VM identity.
+    vm_payload = payload.get("vm") if isinstance(payload.get("vm"), dict) else {}
+    vm_interpreter = boolish(vm_payload.get("opcode")) or boolish(
+        vm_payload.get("vm_step")
+    )
+    explicit_env = {
+        str(key) for key in (payload.get("env") or {}) if str(key).strip()
+    }
+    if vm_interpreter:
+        for key, value in vm_env.items():
+            if key not in explicit_env:
+                env[key] = value
 
     aliases = [
         ("TRACE_PROFILE", "FIREFOX_TRACE_PROFILE"),
@@ -631,6 +746,11 @@ class TraceConsole:
                 )
             trace_dir = trace_dir.resolve()
             trace_dir.mkdir(parents=True, exist_ok=True)
+            effective_payload = dict(payload)
+            effective_vm, auto_vm = resolve_vm_identity(
+                trace_dir, payload.get("vm")
+            )
+            effective_payload["vm"] = effective_vm
             existing_manifest = trace_dir / "manifest.json"
             if existing_manifest.exists() and not boolish(payload.get("reuse_trace")):
                 raise RuntimeError(
@@ -685,7 +805,7 @@ class TraceConsole:
                 env["TRACE_HEADER_FIELDS"] = header_fields
             if cookie_fields:
                 env["TRACE_COOKIE_FIELDS"] = cookie_fields
-            env.update(startup_env_from_payload(payload))
+            env.update(startup_env_from_payload(effective_payload))
 
             command = [
                 str(TRACE_LAUNCHER),
@@ -723,6 +843,7 @@ class TraceConsole:
                 "recording": trace_start in {"active", "prewarm"},
                 "started_at_unix": now_unix(),
                 "process": process,
+                "auto_vm": auto_vm,
             }
             self._active = session
             self._last_trace_dir = trace_dir
@@ -909,6 +1030,7 @@ class TraceConsole:
                 )
             except (OSError, json.JSONDecodeError):
                 pass
+            target_discovery = load_target_candidates(trace_dir)
             health_status = "degraded" if self._degraded_total else "ok"
             result_session = {
                 key: value
@@ -961,6 +1083,7 @@ class TraceConsole:
                     trace_dir, control, target_pid
                 ),
                 "final_summary": final_summary,
+                "target_discovery": target_discovery,
             }
 
     def action(self, name: str, payload: dict) -> dict:
@@ -994,14 +1117,15 @@ class TraceConsole:
 
     def config(self, payload: dict) -> dict:
         trace_dir = safe_trace_dir(payload.get("trace_dir"), self.default_trace_dir)
+        effective_vm, auto_vm = resolve_vm_identity(
+            trace_dir, payload.get("vm")
+        )
         args: list[str] = []
         if payload.get("segment"):
             args += ["--segment", str(payload["segment"])]
         if payload.get("preset"):
             args += ["--preset", str(payload["preset"])]
-        vm_env = vm_env_from_payload(payload.get("vm"))
-        for key, value in vm_env.items():
-            args += ["--set", f"{key}={value}"]
+        vm_env = vm_env_from_payload(effective_vm)
         for key, value in (payload.get("options") or {}).items():
             if key not in OPTION_FLAGS:
                 continue
@@ -1013,7 +1137,7 @@ class TraceConsole:
         for module, enabled in (payload.get("modules") or {}).items():
             if module in MODULES:
                 args += ["--module", f"{module}={1 if enabled else 0}"]
-        vm_payload = payload.get("vm")
+        vm_payload = effective_vm
         if not isinstance(vm_payload, dict):
             vm_payload = {}
         wasm_selected = (
@@ -1038,6 +1162,13 @@ class TraceConsole:
                 args += ["--set", f"{env_key}={env_value}"]
         for key in payload.get("unset") or []:
             args += ["--unset", str(key)]
+        explicit_env = {
+            str(key) for key in (payload.get("env") or {}) if str(key).strip()
+        }
+        explicit_unset = {str(key) for key in payload.get("unset") or []}
+        for key, value in vm_env.items():
+            if key not in explicit_env and key not in explicit_unset:
+                args += ["--set", f"{key}={value}"]
         control = self.run_control(
             trace_dir, "config", args, payload.get("control_file")
         )
@@ -1049,6 +1180,7 @@ class TraceConsole:
             "trace_dir": str(trace_dir),
             "control": control,
             "restart_required_keys": restart_keys,
+            "auto_vm": auto_vm,
         }
 
     def finalize(self, trace_dir: pathlib.Path) -> dict:

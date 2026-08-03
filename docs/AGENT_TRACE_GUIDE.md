@@ -16,6 +16,7 @@ TRACE_DIR=/path/to/firefox-trace-...
 manifest.json
 index/summary.json
 index/causal-index.json
+index/target-candidates.json
 categorized/request-fields.jsonl
 categorized/network.jsonl
 categorized/js.jsonl
@@ -51,12 +52,13 @@ python3 tools/trace_finalize.py "$TRACE_DIR" --json
 2. 读 `index/summary.json`：看 `degraded_count`、分类计数、目标字段命中数、JS value capture 情况。
 3. 读 `categorized/request-fields.jsonl`：选目标字段记录，位置可能是 `url.query`、`body`、`headers`、`cookies`；保留 `request_id`、`origin_call_id`、raw/decoded SHA-256、`value_store_path`。
 4. 读 `categorized/network.jsonl`：还原完整 URL、headers、cookies、body 和 response；需要完整值就进 `values/`。
-5. 读 `index/causal-index.json`：查看 `producer_candidates`。`matched` 是强候选，但仍要核对 `call_id/origin_call_id`。
-6. 读 `categorized/js.jsonl`：用 `call_id -> parent_call_id` 回溯局部链，用 `origin_call_id` 和请求关联。
-7. 读 `categorized/script.jsonl`、`scripts/`、`web-assets/`、`source_maps/`：定位算法文件。
-8. 读 `state/dom/bom`：列出环境和状态依赖。
-9. 判断是纯算、补环境，还是混合。
-10. 如果缺证据，给出下一轮最窄采集计划，不直接扩大为全站 deep/opcode。
+5. 读 `index/target-candidates.json`：确认工具推荐脚本、置信度、自动匹配片段、PC range 和 dispatcher 状态。
+6. 读 `index/causal-index.json`：查看 `producer_candidates`。`matched` 是强候选，但仍要核对 `call_id/origin_call_id`。
+7. 读 `categorized/js.jsonl`：用 `call_id -> parent_call_id` 回溯局部链，用 `origin_call_id` 和请求关联。
+8. 读 `categorized/script.jsonl`、`scripts/`、`web-assets/`、`source_maps/`：定位算法文件。
+9. 读 `state/dom/bom`：列出环境和状态依赖。
+10. 判断是纯算、补环境，还是混合。
+11. 如果缺证据，给出下一轮最窄采集计划，不直接扩大为全站 deep/opcode。
 
 ## 4. 证据等级
 
@@ -125,7 +127,7 @@ hash/crypto primitive
 修复时优先收窄：
 
 ```text
-字段 -> 脚本 contains/hash -> 函数 contains -> target-values -> deep-causal -> opcode-window
+字段 -> 自动脚本候选 -> target-values -> deep-causal -> opcode-window
 ```
 
 ## 9. 下一轮采集建议模板
@@ -147,11 +149,11 @@ UI 设置：
   Body 字段:
   Header 字段:
   Cookie 字段:
-  脚本 contains:
-  函数 contains:
+  脚本身份: 由 `index/target-candidates.json` 自动推导
+  函数线索: 由调用链和值匹配自动推导
   JS mode:
   VM/WASM:
-    contains 是脚本关键词；opcode PC 范围和 dispatcher PC 初次留空，分析后再填。
+    脚本身份、opcode PC 范围和 dispatcher PC 由工具/Agent 自动推导，用户不填写内部过滤值。
 
 操作：
   打开 Firefox -> 等 ACK -> 开始记录 -> 执行目标动作一次 -> 停止并整理
@@ -166,18 +168,18 @@ UI 设置：
 
 ## 10. JSVMP / VM 面板解释
 
-给用户解释“分析后填写”时按这个说：
+给用户解释“分析后自动套用”时按这个说：
 
 ```text
-先 trace 一轮 -> Agent 找目标脚本和热点 PC -> 用户把 PC range / dispatcher PC 回填 -> 再 trace 一轮窄窗口
+先 trace 一轮 -> 工具生成 target-candidates.json -> Agent 审核脚本和热点 PC -> 中控台自动套用 -> 再 trace 一轮窄窗口
 ```
 
 推荐流程：
 
 1. `full-chain` 默认模块保持开启，先确认目标请求、字段、脚本 artifact、JS producer。
-2. 若像 JSVMP：新分段，勾 `JS opcode`，填 `目标脚本 contains`，`opcode PC 范围` 和 `dispatcher PC` 留空，执行短目标动作。
-3. Agent 跑 `trace_opcode_analyzer.py`，给出热点 `START:END` 或 dispatcher PC。
-4. 下一分段回填 `opcode PC 范围`；需要每轮 dispatcher marker 时再勾 `VM step` 并填写 dispatcher PC。
+2. 若像 JSVMP：新分段，选择“JSVMP 第1轮：自动定位（先全链路）”，不填写脚本关键词，执行短目标动作。
+3. 工具从请求 caller、`origin_call_id`、JS 调用链和值匹配生成候选，并由 `trace_opcode_analyzer.py` 产出热点 `START:END` 与 dispatcher 候选。
+4. 下一分段选择“自动套用 PC 窄采”或“自动套用 dispatcher”；中控台自动带入脚本、PC 和 dispatcher，用户只重复同一个动作。
 5. 前面的 JS/XHR/Fetch/DOM/BOM/Cookie/Storage/Script 默认模块通常保留；只有日志过重或 degraded 时才定向关闭无关模块。
 
 Raw HTTP 的定位：它是底层 HTTP channel payload chunk 证据，用于字节 diff、multipart、压缩、charset、边界字符串、逻辑层请求已对齐但响应异常的排查。普通生成链路优先使用 `network/request-fields/values`。
@@ -193,20 +195,20 @@ Agent reads the request field, producer chain, script identity and `wasm-vm` sig
 User reminder:
 
 ```text
-先保持默认模块不动；如果确认是 JSVMP，请选择“JSVMP 第1轮：opcode 热点定位”，只填目标脚本关键词 contains，PC range 和 dispatcher PC 留空，执行一次短目标动作。
+先保持默认模块不动；如果确认是 JSVMP，请选择“JSVMP 第1轮：自动定位（先全链路）”，不填写脚本关键词、PC range 或 dispatcher PC，执行一次短目标动作。
 ```
 
 ### Gate 1 — opcode hotspot pass
 
-Agent sets/uses the target script substring and analyzes `js.opcode` records with `trace_opcode_analyzer.py`. The Agent reports the exact script identity and, when present, a candidate `START:END` PC range. The Agent does not ask the user to guess a PC.
+The tool derives the target script substring from `request caller_url`, `origin_call_id`, the JS call chain and value matches, then analyzes `js.opcode` records with `trace_opcode_analyzer.py`. The Agent reviews the exact script identity and candidate `START:END` range; the UI applies them automatically.
 
 If a hotspot range exists, remind the user:
 
 ```text
-第一轮已找到 opcode 热点：SCRIPT_SUBSTRING，PC 范围：START:END。请选择“JSVMP 第2轮：填 PC 范围窄采”，回填这两个值，其他 VM 字段保持默认，再执行一次相同动作。
+第一轮已找到 opcode 热点：SCRIPT_SUBSTRING，PC 范围：START:END。请选择“JSVMP 第2轮：自动套用 PC 窄采”，不回填内部参数，再执行一次相同动作。
 ```
 
-If no stable hotspot exists, remind the user to repeat the same short action with the same script filter or report that the script identity/filter needs repair; do not request dispatcher PC yet.
+If no stable hotspot exists, remind the user to repeat the same short action; the tool keeps the discovered script identity and does not expose a manual filter field.
 
 ### Gate 2 — dispatcher decision
 
@@ -215,7 +217,7 @@ Agent compares opcode PC, function/script identity, call context and request tim
 If confirmed, remind the user:
 
 ```text
-已确认 dispatcher PC：DISPATCH_PC。请选择“JSVMP 第3轮：填 dispatcher 开 VM step”，保持目标脚本关键词，填入 dispatcher PC，执行一次短目标动作；PC range 可按提示保留或使用上一轮范围。
+已确认 dispatcher PC：DISPATCH_PC。请选择“JSVMP 第3轮：自动套用 dispatcher”，工具自动保持脚本与 PC identity 并开启 VM step，执行一次短目标动作。
 ```
 
 If not confirmed, keep the opcode-window route and ask for no VM step. Stack slot/type and primitive capture are follow-up evidence only when the unresolved question is VM state; WASM dump/raw bytes are follow-up evidence only when a WASM module is actually involved.
