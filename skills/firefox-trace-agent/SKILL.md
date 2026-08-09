@@ -40,6 +40,17 @@ For missing browser objects and direct Firefox page probes read
 `references/firefox-startup.md` only after the prescribed startup action fails;
 it is a recovery table, not a prerequisite reading step.
 
+When the user asks for the full operating manual, product defaults, release
+acceptance, or browser capability inventory, read the synchronized manuals:
+
+- `references/product-manual.md`: complete product and UI operating manual;
+- `references/trace-mode-operation-manual.md`: Trace mode selection and budgets;
+- `references/agent-trace-guide.md`: end-to-end Agent analysis workflow;
+- `references/browser-runtime-review.md`: runtime capability and release gates.
+
+These four files mirror the repository `docs/` sources and are checked for
+byte equality by the test suite. Do not edit only one copy.
+
 ## Mandatory Action Triggers
 
 Treat the following as executable triggers. Do the listed action in the same

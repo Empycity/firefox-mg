@@ -37,6 +37,15 @@ tools/trace-desktop.sh
 优先按 `references/environment-repair-playbook.md` 在当前 Firefox 控制台取值；
 启动缓慢或崩溃先读 `references/firefox-startup.md`。
 
+完整操作与验收手册：
+
+- `references/product-manual.md`
+- `references/trace-mode-operation-manual.md`
+- `references/agent-trace-guide.md`
+- `references/browser-runtime-review.md`
+
+这些文件与主仓库 `docs/` 对应文档保持字节一致，并由测试强制校验。
+
 当前面板契约：`full-chain` 默认使用 `boundary`、普通 JS 总事件 `0`、DOM/BOM
 `all` + 值/对象合同、Fetch/XHR request/response/header 完整制品、JS value/script raw/TypedArray/WebSocket 可用帧/IPC 的 `0=不截断`，VM/WASM（含 raw operands）全部关闭；
 `discover-light` 才使用显式 `50000` JS 事件预算。面板左、右两栏独立滚动，readonly
