@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import json
 import math
 import pathlib
@@ -261,10 +262,22 @@ def prioritize_findings(findings: list[Finding]) -> list[Finding]:
         "captchaid": 7,
         "high_entropy": 9,
     }
+
+    def event_priority(finding: Finding) -> int:
+        typ = str(finding.row.get("type") or "")
+        if typ in {"fetch.call", "fetch.request", "xhr.open", "xhr.send", "xhr.body"}:
+            return 0
+        if typ == "request.field":
+            return 1
+        if typ.startswith("js.call.") or typ == "js.value.store":
+            return 3
+        return 2
+
     return sorted(
         findings,
         key=lambda f: (
             priority.get(f.kind, 5),
+            event_priority(f),
             f.row.get("ts_us") or 0,
             f.row.get("_file") or "",
             f.row.get("_line") or 0,
@@ -284,6 +297,9 @@ class Index:
     script_counts: collections.Counter[str] = field(default_factory=collections.Counter)
     script_hash_counts: collections.Counter[str] = field(default_factory=collections.Counter)
     script_sources: dict[str, dict[str, Any]] = field(default_factory=dict)
+    value_events_by_sha: dict[str, list[dict[str, Any]]] = field(
+        default_factory=lambda: collections.defaultdict(list)
+    )
 
 
 def call_key(row: dict[str, Any], call_id: str | None = None) -> tuple[str, str, str] | None:
@@ -334,6 +350,36 @@ def build_index(rows: list[dict[str, Any]]) -> Index:
                     )
             if script or fn:
                 idx.function_counts[(script, fn)] += 1
+        seen_digests: set[str] = set()
+
+        def index_sha_values(value: Any, value_path: str) -> None:
+            if isinstance(value, dict):
+                digest = value.get("sha256")
+                if isinstance(digest, str) and len(digest) == 64 and digest not in seen_digests:
+                    seen_digests.add(digest)
+                    indexed = dict(row)
+                    indexed["_value_path"] = value_path
+                    indexed["_value_role"] = (
+                        "return"
+                        if value_path.startswith("data.return")
+                        else "arg"
+                        if value_path.startswith("data.args")
+                        else row.get("value_role")
+                    )
+                    idx.value_events_by_sha[digest].append(indexed)
+                for key, child in value.items():
+                    index_sha_values(child, f"{value_path}.{key}" if value_path else key)
+            elif isinstance(value, list):
+                for index, child in enumerate(value):
+                    index_sha_values(child, f"{value_path}[{index}]")
+
+        if isinstance(row.get("sha256"), str) and len(row["sha256"]) == 64:
+            indexed = dict(row)
+            indexed["_value_path"] = str(row.get("value_path") or "")
+            indexed["_value_role"] = row.get("value_role")
+            idx.value_events_by_sha[row["sha256"]].append(indexed)
+            seen_digests.add(row["sha256"])
+        index_sha_values(row.get("data"), "data")
     idx.call_events.sort(key=lambda r: r.get("ts_us") or 0)
     return idx
 
@@ -380,6 +426,61 @@ def nearby_calls(
         out.append(item)
     out.sort(key=lambda c: (not c.get("_same_context"), abs(c.get("_delta_us") or 0)))
     return out[:max_items]
+
+
+def value_producer_chain(
+    idx: Index,
+    finding: Finding,
+    window_us: int = 5_000_000,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Resolve a request value to the deepest preceding JS return with the same SHA."""
+    digest = hashlib.sha256(finding.value.encode("utf-8")).hexdigest()
+    request_ts = finding.row.get("ts_us")
+    request_pid = str(finding.row.get("pid") or "unknown")
+    request_segment = str(finding.row.get("segment_id") or "initial")
+    ranked: list[tuple[int, int, int, dict[str, Any], list[dict[str, Any]]]] = []
+    for candidate in idx.value_events_by_sha.get(digest, []):
+        candidate_ts = candidate.get("ts_us")
+        if isinstance(request_ts, int) and isinstance(candidate_ts, int):
+            delta = request_ts - candidate_ts
+            if delta < 0 or delta > window_us:
+                continue
+        else:
+            delta = window_us
+        if str(candidate.get("pid") or "unknown") != request_pid:
+            continue
+        if str(candidate.get("segment_id") or "initial") != request_segment:
+            continue
+        chain = call_chain(idx, candidate, candidate.get("call_id"))
+        if not chain:
+            continue
+        typ = str(candidate.get("type") or "")
+        role = str(candidate.get("_value_role") or candidate.get("value_role") or "")
+        return_rank = 2 if typ == "js.call.return" and role == "return" else 1 if role == "return" else 0
+        ranked.append((return_rank, len(chain), -delta, candidate, chain))
+    if not ranked:
+        return None, []
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    _return_rank, _depth, _delta, match, chain = ranked[0]
+    resolved = {
+        "sha256": digest,
+        "event_type": match.get("type"),
+        "value_role": match.get("_value_role") or match.get("value_role"),
+        "value_path": match.get("_value_path") or match.get("value_path"),
+        "call_id": match.get("call_id"),
+        "parent_call_id": match.get("parent_call_id"),
+        "function_name": match.get("function_name"),
+        "script_url": match.get("script_url"),
+        "script_sha256": match.get("script_sha256"),
+        "line": match.get("line"),
+        "column": match.get("column"),
+        "delta_us": (
+            int(request_ts) - int(match["ts_us"])
+            if isinstance(request_ts, int) and isinstance(match.get("ts_us"), int)
+            else None
+        ),
+    }
+    return resolved, chain
 
 
 def candidate_filters(
@@ -469,9 +570,15 @@ def build_next_trace_env(
 
 
 def summarize_finding(
-    finding: Finding, idx: Index, nearby_window_us: int
+    finding: Finding, idx: Index, nearby_window_us: int, producer_window_us: int
 ) -> dict[str, Any]:
     chain = call_chain(idx, finding.row, finding.origin_call_id)
+    producer_match = None
+    chain_source = "origin_call_id" if chain else ""
+    if not chain:
+        producer_match, chain = value_producer_chain(idx, finding, producer_window_us)
+        if chain:
+            chain_source = "value_sha256"
     nearby = nearby_calls(idx, finding.row, nearby_window_us)
     row = finding.row
     summary: dict[str, Any] = {
@@ -483,6 +590,8 @@ def summarize_finding(
         "request_id": row.get("request_id"),
         "query_fields": row.get("query_fields"),
         "chain_found": bool(chain),
+        "chain_source": chain_source,
+        "producer_match": producer_match,
         "chain": [
             {
                 "call_id": c.get("call_id"),
@@ -540,6 +649,12 @@ def main(argv: list[str]) -> int:
         default=5000,
         help="fallback JS-call time window when origin_call_id has no exact chain",
     )
+    parser.add_argument(
+        "--producer-window-us",
+        type=int,
+        default=5_000_000,
+        help="maximum time before a request for exact JS value-SHA producer matching",
+    )
     parser.add_argument("--json", action="store_true", help="emit JSON instead of text")
     parser.add_argument(
         "--write-next-env",
@@ -565,7 +680,12 @@ def main(argv: list[str]) -> int:
     findings = prioritize_findings(find_interesting_fields(rows, fields))[
         : args.max_findings
     ]
-    chains = [call_chain(idx, f.row, f.origin_call_id) for f in findings]
+    chains = []
+    for finding in findings:
+        chain = call_chain(idx, finding.row, finding.origin_call_id)
+        if not chain:
+            _match, chain = value_producer_chain(idx, finding, args.producer_window_us)
+        chains.append(chain)
     nearby_groups = [nearby_calls(idx, f.row, args.nearby_window_us) for f in findings]
     scripts, funcs, script_hashes = candidate_filters(chains, nearby_groups, idx)
 
@@ -578,7 +698,8 @@ def main(argv: list[str]) -> int:
         "degraded": idx.degraded,
         "finding_count": len(findings),
         "findings": [
-            summarize_finding(f, idx, args.nearby_window_us) for f in findings
+            summarize_finding(f, idx, args.nearby_window_us, args.producer_window_us)
+            for f in findings
         ],
         "candidate_next_trace": {
             "TRACE_JS_MODE": "target",
@@ -622,7 +743,16 @@ def main(argv: list[str]) -> int:
         print(f"    origin_call_id={item['origin_call_id']} caller={item['caller_url']}")
         print(f"    value={item.get('value_preview')}")
         if item["chain_found"]:
-            print("    chain:")
+            source = item.get("chain_source") or "unknown"
+            match = item.get("producer_match")
+            if match:
+                print(
+                    f"    producer: {match['call_id']} {match['function_name']} "
+                    f"{match['script_url']}:{match['line']}:{match['column']} "
+                    f"role={match['value_role']} sha256={match['sha256'][:12]} "
+                    f"delta_us={match['delta_us']}"
+                )
+            print(f"    chain ({source}):")
             for c in item["chain"][:8]:
                 script_hash = c.get("script_sha256")
                 hash_note = f" sha256={script_hash[:12]}" if isinstance(script_hash, str) and script_hash else ""

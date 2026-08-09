@@ -22,6 +22,73 @@ SERVER_SPEC.loader.exec_module(trace_console_server)
 
 
 class TraceFinalizeTest(unittest.TestCase):
+    def test_jsonl_reader_preserves_unicode_line_separator_in_string(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            trace_dir = pathlib.Path(raw_dir)
+            path = trace_dir / "firefox-js-1.jsonl"
+            rows = [
+                {"type": "js.call.enter", "call_id": "call_1", "preview": "a\u0085b"},
+                {"type": "js.call.return", "call_id": "call_1"},
+            ]
+            path.write_text(
+                "\n".join(trace_finalize.json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+                encoding="utf-8",
+            )
+
+            parsed = list(trace_finalize.jsonl_rows(trace_dir))
+
+            self.assertEqual([item[2]["type"] for item in parsed], ["js.call.enter", "js.call.return"])
+            self.assertEqual(parsed[0][2]["preview"], "a\u0085b")
+
+    def test_select_producer_chain_prefers_deepest_exact_return(self):
+        shared = {
+            "pid": 7,
+            "segment_id": "seg_001",
+            "function_name": "v",
+            "script_url": "https://fixture.test/sdk.js",
+            "script_sha256": "a" * 64,
+            "line": 1,
+        }
+        outer = dict(shared, type="js.call.enter", call_id="outer", parent_call_id=None, column=80)
+        inner = dict(shared, type="js.call.enter", call_id="inner", parent_call_id="outer", column=20)
+        enters = {
+            ("7", "seg_001", "outer"): outer,
+            ("7", "seg_001", "inner"): inner,
+        }
+        candidates = [
+            dict(
+                shared,
+                event_type="js.call.return",
+                call_id="outer",
+                parent_call_id=None,
+                column=80,
+                ts_us=130,
+                value_path="data.return",
+                match_type="exact_raw",
+                target_sha256="b" * 64,
+            ),
+            dict(
+                shared,
+                event_type="js.call.return",
+                call_id="inner",
+                parent_call_id="outer",
+                column=20,
+                ts_us=120,
+                value_path="data.return",
+                match_type="exact_raw",
+                target_sha256="b" * 64,
+            ),
+        ]
+
+        match, chain = trace_finalize.select_producer_chain(
+            {"pid": 7, "segment_id": "seg_001", "ts_us": 200},
+            candidates,
+            enters,
+        )
+
+        self.assertEqual(match["call_id"], "inner")
+        self.assertEqual([row["call_id"] for row in chain], ["inner", "outer"])
+
     def test_vm_window_analyzer_rejects_missing_artifact(self):
         with tempfile.TemporaryDirectory() as raw_dir:
             result = subprocess.run(

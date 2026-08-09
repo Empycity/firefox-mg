@@ -32,6 +32,7 @@ export FIREFOX_TRACE_REPO=/absolute/path/to/firefoxTrace
 
 ```bash
 TRACE_DIR="$HOME/Desktop/firefox-trace-outputs/firefox-trace-$(date +%Y%m%d-%H%M%S)" \
+TRACE_HEADLESS=0 \
 TRACE_QUERY_FIELDS='sign,signature,token' \
 TRACE_BODY_FIELDS='sign,signature,token' \
 tools/run-trace-firefox.sh \
@@ -68,6 +69,11 @@ and runs `trace_finalize.py`. It performs the same stop/finalize sequence at
 120 seconds or 2 GiB. Keep its PID, inspect the receipt, and stop collection
 immediately if the process exits without one.
 
+Agent runs must set `TRACE_HEADLESS=0` explicitly. Confirm the headed Firefox
+window/process after launch. Once the watchdog receipt reports finalized, close
+the Firefox process group; stopping trace collection alone does not close the
+browser.
+
 When the same configured field occurs on several endpoints, add
 `--url-contains '/exact/endpoint/'`. The target receipt then requires both the
 field and that URL substring, so an earlier unrelated request does not stop the
@@ -82,3 +88,8 @@ python3 tools/trace_store.py import "$TRACE_DIR" --db /tmp/firefox-trace.sqlite
 python3 tools/trace_opcode_analyzer.py "$TRACE_DIR" --width 64 --top-windows 3
 python3 tools/trace_vm_window.py "$TRACE_DIR"
 ```
+
+The analyzer first follows `origin_call_id`. If that reaches only a request
+wrapper, it hashes the request field value, selects the deepest preceding exact
+JS return in the same process/segment, and reports
+`chain_source=value_sha256`, the producer call site, and its parent chain.

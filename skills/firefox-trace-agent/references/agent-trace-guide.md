@@ -65,6 +65,7 @@ python3 tools/trace_finalize.py "$TRACE_DIR" --json
 4. 读 `categorized/network.jsonl`：还原完整 URL、headers、cookies、body 和 response；需要完整值就进 `values/`。
 5. 读 `index/target-candidates.json`：确认工具推荐脚本、置信度、自动匹配片段、PC range 和 dispatcher 状态。
 6. 读 `index/causal-index.json`：查看 `producer_candidates`。`matched` 是强候选，但仍要核对 `call_id/origin_call_id`。
+7. `origin_call_id` 只落到请求 wrapper 时，运行 `tools/trace_analyzer.py`，用请求字段 SHA-256 对齐同进程、同 segment、请求前的 JS return；优先父链最深的 exact return，并沿 `parent_call_id` 输出 producer 链。
 7. 读 `categorized/js.jsonl`：用 `call_id -> parent_call_id` 回溯局部链，用 `origin_call_id` 和请求关联。
 8. 读 `categorized/script.jsonl`、`scripts/`、`web-assets/`、`source_maps/`：定位算法文件。
 9. 读 `state/dom/bom`：列出环境和状态依赖。
@@ -84,6 +85,10 @@ python3 tools/trace_finalize.py "$TRACE_DIR" --json
 | `reproduced` | 本地补环境或纯算输出与浏览器 vector 相等。 |
 
 不要把 `same_origin_context` 单独当 producer 结论。producer 至少需要请求字段 SHA-256 与 JS value SHA-256 对齐，并保留 `request_id/origin_call_id/call_id/script_sha256`。
+
+Agent 自己启动 trace 时显式设置 `TRACE_HEADLESS=0`，确认有头 Firefox
+窗口/进程存在；watchdog 完成 stop/finalize 后关闭 Firefox 进程组。只关闭采集
+而保留 Agent 启动的浏览器不算任务收尾。
 
 ## 5. 复现与验收顺序
 

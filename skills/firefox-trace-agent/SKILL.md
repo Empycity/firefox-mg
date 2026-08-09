@@ -83,6 +83,13 @@ fuses. A target hit, 120-second limit, or 2 GiB limit must immediately issue
 stop and finalize. Do not claim a trace is controlled when the watchdog was not
 started or its PID has exited without a receipt.
 
+Agent-started browser traces are headed by default. Set `TRACE_HEADLESS=0`
+explicitly, verify that the Firefox application process/window exists, and use
+the complete `Nightly.app/Contents/MacOS/firefox` runtime. After the watchdog
+has stopped and finalized the run, close the Firefox process group before
+analysis or cleanup. Headless runs require an explicit user request or a test
+whose acceptance contract specifically requires headless behavior.
+
 ## Mandatory artifact cleanup gate
 
 Track every path the Agent creates. Before the final response:
@@ -148,6 +155,18 @@ TRACE_DIR health
 ```
 
 Use `value_store_path` and SHA-256 alignment as the main bridge between request fields and JS values. `origin_call_id` gives request context; `call_id` and `parent_call_id` give local call graph context. Keep all three together in reports. In one-pass full-chain, values are content-addressed and delivered through an asynchronous spool without changing historical event coverage. DOM/BOM defaults include values, object contracts and Promise settlement with no count/depth ceiling; only an Agent-supplied non-zero env limit narrows them. Iframe `load` dispatch is retained in `lifecycle_events` with the same object identity as its listener registration and node insertion. The trace also includes `js.random` with the exact `Math.random` double and `js.time` with the exact clipped `Date.now`/no-arg `new Date()` millisecond value, each with sequence and active call id. First make fixed URL, headers, cookies and body bytes match a retained vector. Trace time/random values may freeze a diagnostic vector, but they are never final runtime inputs: final generation must use fresh time, randomness, nonce and session-derived state.
+
+When a request `origin_call_id` points only to a transport wrapper, resolve the
+field value SHA-256 against JS return/value artifacts. Prefer the deepest
+preceding exact return in the same process and segment, then walk its
+`parent_call_id` chain to the request builder. `tools/trace_analyzer.py` performs
+this fallback and labels it `chain_source=value_sha256`; do not report only the
+request capture when an exact producer chain is present.
+
+Treat JSONL as LF-delimited records, not generic Unicode lines. Captured JS
+strings may contain U+0085, U+2028, or U+2029; readers must iterate the file
+stream by physical newline and must not use `str.splitlines()`, which can split
+a valid event inside its JSON string and silently remove call frames.
 
 ## Evidence levels
 
@@ -251,6 +270,13 @@ full-chain/一轮还原（默认已含值制品） -> VM window -> 局部 opcode
 Narrow one dimension at a time: field location/name, automatically derived script identity, producer evidence, then VM/opcode PC range. The UI and server derive script substring/hash, PC range (`START:END`) and dispatcher PC from `index/target-candidates.json`; do not ask the user to invent internal filter values. The first trace does not need a handoff file: after stop/finalize, write visible UI changes and long next-pass `TRACE_*` variables to `$TRACE_DIR/agent-next.json` and tell the user to click `② 首轮采集 / 目标字段 -> 加载当前目录 agent-next.json`. For an env-only handoff, use `$PWD/agent-next.env` and the `加载 env 文件…` picker.
 
 For a first or one-pass trace, instruct `JS mode=boundary`, not `target` or `deep`: those precise modes require at least one loaded script, function, or SHA-256 candidate. An empty target set emits no JS calls by design. The desktop console visibly falls back to `boundary` and logs the reason; report that as a configuration correction, never as missing page activity. Do not promote a static source keyword candidate over a runtime request-field/value match: report roles separately as `request-writer`, `request-sink-frame`, `value-producer`, `internal-algorithm`, or `static-fallback`.
+
+A script SHA alone can still be too broad for a high-frequency SDK. During a
+target-values run, inspect event growth before the target action completes. If
+the selected script consumes the JS event budget, retain that run only for
+function discovery and rerun with `script_sha256 + exact function names`.
+Verify the final field SHA against the selected function return; a successful
+script match by itself is not producer proof.
 
 ## Reference routing
 

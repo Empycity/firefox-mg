@@ -159,18 +159,22 @@ def target_fields(manifest: dict[str, Any]) -> set[str]:
 def jsonl_rows(trace_dir: pathlib.Path) -> Iterable[tuple[pathlib.Path, int, dict[str, Any]]]:
     for path in sorted(trace_dir.glob("firefox-*.jsonl")):
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            stream = path.open("r", encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for line_number, line in enumerate(lines, 1):
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(row, dict):
-                yield path, line_number, row
+        with stream:
+            # Iterate physical LF-delimited records. str.splitlines() also
+            # splits on U+0085/U+2028/U+2029, which can legitimately occur in
+            # captured JS string previews and would corrupt a JSONL record.
+            for line_number, line in enumerate(stream, 1):
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict):
+                    yield path, line_number, row
 
 
 def event_type(row: dict[str, Any]) -> str:
@@ -1294,6 +1298,99 @@ def dedupe_matches(matches: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         seen.add(key)
         rows.append(item)
     return rows
+
+
+def select_producer_chain(
+    field: dict[str, Any],
+    candidates: Iterable[dict[str, Any]],
+    call_enters: dict[tuple[str, str, str], dict[str, Any]],
+    window_us: int = 5_000_000,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Select the deepest exact JS return before a request field is emitted."""
+
+    def call_key(row: dict[str, Any], call_id: Any = None) -> tuple[str, str, str] | None:
+        cid = call_id if call_id is not None else row.get("call_id")
+        if not isinstance(cid, str) or not cid:
+            return None
+        return (
+            str(row.get("pid") or "unknown"),
+            str(row.get("segment_id") or "initial"),
+            cid,
+        )
+
+    field_ts = field.get("ts_us")
+    field_pid = str(field.get("pid") or "unknown")
+    field_segment = str(field.get("segment_id") or "initial")
+    ranked: list[tuple[int, int, dict[str, Any], list[dict[str, Any]]]] = []
+    for candidate in candidates:
+        if not str(candidate.get("match_type") or "").startswith("exact_"):
+            continue
+        if candidate.get("event_type") != "js.call.return":
+            continue
+        if not str(candidate.get("value_path") or "").startswith("data.return"):
+            continue
+        if str(candidate.get("pid") or "unknown") != field_pid:
+            continue
+        if str(candidate.get("segment_id") or "initial") != field_segment:
+            continue
+        candidate_ts = candidate.get("ts_us")
+        if isinstance(field_ts, int) and isinstance(candidate_ts, int):
+            delta = field_ts - candidate_ts
+            if delta < 0 or delta > window_us:
+                continue
+        else:
+            delta = window_us
+
+        chain: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        current = call_key(candidate)
+        while current and current not in seen and len(chain) < 80:
+            seen.add(current)
+            row = call_enters.get(current)
+            if not row:
+                break
+            chain.append(row)
+            current = call_key(row, row.get("parent_call_id"))
+        if chain:
+            ranked.append((len(chain), -delta, candidate, chain))
+
+    if not ranked:
+        return None, []
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    _depth, neg_delta, candidate, chain = ranked[0]
+    match = {
+        key: candidate.get(key)
+        for key in (
+            "call_id",
+            "parent_call_id",
+            "function_name",
+            "script_url",
+            "script_sha256",
+            "line",
+            "column",
+            "value_path",
+            "value_store_path",
+            "target_sha256",
+            "match_type",
+        )
+    }
+    match["delta_us"] = -neg_delta
+    compact_chain = [
+        {
+            key: row.get(key)
+            for key in (
+                "call_id",
+                "parent_call_id",
+                "function_name",
+                "script_url",
+                "script_sha256",
+                "line",
+                "column",
+            )
+        }
+        for row in chain
+    ]
+    return match, compact_chain
 
 
 def write_jsonl(path: pathlib.Path, rows: Iterable[dict[str, Any]]) -> int:
@@ -2461,7 +2558,16 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
 
     js_by_sha: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     js_artifacts_by_path: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    js_call_enters: dict[tuple[str, str, str], dict[str, Any]] = {}
     for row in buckets.get("js", []):
+        if row.get("type") == "js.call.enter" and row.get("call_id"):
+            js_call_enters[
+                (
+                    str(row.get("pid") or "unknown"),
+                    str(row.get("segment_id") or "initial"),
+                    str(row.get("call_id")),
+                )
+            ] = row
         for item in walk_sha_values(row):
             meta = {
                 "source_file": row.get("_source_file"),
@@ -2473,6 +2579,11 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
                 "function_name": row.get("function_name"),
                 "script_url": row.get("script_url"),
                 "script_sha256": row.get("script_sha256"),
+                "pid": row.get("pid"),
+                "segment_id": row.get("segment_id"),
+                "ts_us": row.get("ts_us"),
+                "line": row.get("line"),
+                "column": row.get("column"),
                 "value_store_path": item.get("value_store_path"),
                 "value_path": item.get("value_path"),
             }
@@ -2555,6 +2666,9 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
                                 }
                             )
         producer_candidates = dedupe_matches(producer_matches)
+        producer_match, producer_chain = select_producer_chain(
+            field, producer_candidates, js_call_enters
+        )
         origin = field.get("origin_call_id")
         context = context_by_origin.get(origin, []) if origin else []
         targets.append(
@@ -2562,6 +2676,8 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
                 "field": field,
                 "target_value_forms": [public_value_form(item) for item in forms],
                 "producer_candidates": producer_candidates,
+                "producer_match": producer_match,
+                "producer_chain": producer_chain,
                 "same_origin_context": context,
                 "evidence_level": "matched" if producer_candidates else "candidate",
             }
@@ -2622,6 +2738,7 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
         "degraded_count": len(degraded),
         "notes": [
             "matched means a request field raw/decoded/segment value equals or is contained by a JS-captured value artifact.",
+            "producer_match selects the deepest exact JS return before the request; producer_chain walks its parent_call_id lineage.",
             "same_origin_context is correlation evidence; dependency confirmation still needs a controlled A/B run.",
         ],
     }
