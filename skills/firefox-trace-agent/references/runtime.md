@@ -75,4 +75,5 @@ python3 tools/trace_finalize.py "$TRACE_DIR" --json
 python3 tools/trace_analyzer.py "$TRACE_DIR" --preset generic --json
 python3 tools/trace_store.py import "$TRACE_DIR" --db /tmp/firefox-trace.sqlite
 python3 tools/trace_opcode_analyzer.py "$TRACE_DIR" --width 64 --top-windows 3
+python3 tools/trace_vm_window.py "$TRACE_DIR"
 ```

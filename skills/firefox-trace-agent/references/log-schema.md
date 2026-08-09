@@ -28,6 +28,7 @@ TRACE_DIR/
 | `index/summary.json` | Counts, target fields, degraded count, generated files, match count. |
 | `index/causal-index.json` | Target field forms, producer candidates, same-origin context. |
 | `index/target-candidates.json` | Automatically ranked request-associated scripts, script match token, exact script identity, opcode PC range and dispatcher candidate for the next segment. |
+| `index/trace-health.json` | Loss markers plus runtime ACK and configured-target observation gates. |
 
 ## Categorized logs
 
@@ -40,7 +41,7 @@ TRACE_DIR/
 | `state` | Cookie/storage/IndexedDB records. | Identify persistent/session dependencies. |
 | `dom` | Document, nodes, canvas, DOM calls/events. | Supplement DOM environment. |
 | `bom` | Navigator, screen, location, history, performance, crypto. | Supplement browser environment. |
-| `wasm-vm` | WASM modules, opcode, VM step. | Route JSVM/WASM cases. |
+| `wasm-vm` | WASM modules, compact VM window metadata, opcode, VM step. | Route JSVM/WASM cases. |
 
 ## JSONL consumer contract
 
@@ -89,6 +90,21 @@ A producer claim is strong when the request field SHA-256 equals a JS value SHA-
 `TRACE_VM_DISPATCH_PC`; the server reads the recommended candidate and applies
 only the fields supported by the current evidence. Dispatcher PC is applied
 automatically only for a high-confidence heuristic result.
+
+`js.vm_window` points to `firefox-vm-window-*.bin`. Format `ftvmw1-le` has a
+64-byte header followed by fixed 80-byte records containing seq/time/call/PC,
+SpiderMonkey op and operand bytes, stack depth, and exact top-two primitive
+payloads when present. Run `tools/trace_vm_window.py TRACE_DIR`; do not expand
+the whole artifact into categorized JSONL. Sandboxed content sends the complete
+binary to the parent in one IPC message; the parent writes one accepted window
+per segment before the metadata event is observed.
+
+For a run with explicit query/body/header/cookie targets, health is incomplete
+when either `control:runtime_config_not_acknowledged` or
+`request:configured_target_not_observed` is present. A manifest, static web
+asset, or source candidate does not prove that Firefox entered the configured
+runtime. The VM-window analyzer also exits non-zero when no window metadata is
+present.
 
 ## Composite fields
 

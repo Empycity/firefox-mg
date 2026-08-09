@@ -32,7 +32,7 @@ index 8e839c497b..588b98f72b 100644
      if (remoteControlComponent) {
        mainWindow.setAttribute("remotecontrol", "true");
 diff --git a/dom/base/Document.cpp b/dom/base/Document.cpp
-index b90f5c9c22..b0fc9d1189 100644
+index b90f5c9c22..0b208c1bec 100644
 --- a/dom/base/Document.cpp
 +++ b/dom/base/Document.cpp
 @@ -12,8 +12,13 @@
@@ -49,13 +49,13 @@ index b90f5c9c22..b0fc9d1189 100644
  #include <algorithm>
  #include <cstddef>
  #include <cstdint>
-@@ -488,6 +493,302 @@ using namespace net;
+@@ -488,6 +493,402 @@ using namespace net;
  
  namespace dom {
  
 +extern "C" uint64_t FirefoxTraceCurrentJSCallId();
-+extern "C" void FirefoxTraceFlushJSBoundaryBuffer(const char* aReason)
-+    __attribute__((weak));
++extern "C" void FirefoxTraceFlushJSBoundaryBuffer(const char* aReason);
++extern "C" void FirefoxTraceTriggerVMWindow(const char* aReason);
 +#if defined(__APPLE__)
 +extern "C" bool FirefoxTraceRuntimeActive() __attribute__((weak_import));
 +#elif defined(__GNUC__)
@@ -280,6 +280,90 @@ index b90f5c9c22..b0fc9d1189 100644
 +  aName.Assign(Substring(start, trimmedEnd));
 +}
 +
++bool FirefoxTraceCookieConfiguredName(const nsACString& aName) {
++  const char* configured = getenv("FIREFOX_TRACE_COOKIE_FIELDS");
++  if (!configured || !configured[0]) {
++    configured = getenv("TRACE_COOKIE_FIELDS");
++  }
++  if (!configured || !configured[0] || aName.IsEmpty()) {
++    return false;
++  }
++  const char* p = configured;
++  while (*p) {
++    while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t' ||
++           *p == '\n' || *p == '\r') {
++      ++p;
++    }
++    const char* start = p;
++    while (*p && *p != ',' && *p != ';') {
++      ++p;
++    }
++    const char* end = p;
++    while (end > start &&
++           (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' ||
++            end[-1] == '\r')) {
++      --end;
++    }
++    if (static_cast<size_t>(end - start) == aName.Length() &&
++        !strncmp(start, aName.BeginReading(), aName.Length())) {
++      return true;
++    }
++  }
++  return false;
++}
++
++bool FirefoxTraceCookieFindTarget(const nsAString* aKey,
++                                  const nsAString* aValue,
++                                  nsACString& aMatchedName,
++                                  nsACString& aMatchedValue) {
++  if (aKey && !aKey->IsEmpty()) {
++    NS_ConvertUTF16toUTF8 name(*aKey);
++    if (!FirefoxTraceCookieConfiguredName(name)) {
++      return false;
++    }
++    aMatchedName.Assign(name);
++    nsAutoCString raw;
++    if (aValue) {
++      CopyUTF16toUTF8(*aValue, raw);
++    }
++    int32_t equals = raw.FindChar('=');
++    uint32_t start = equals >= 0 ? static_cast<uint32_t>(equals + 1) : 0;
++    int32_t semicolon = raw.FindChar(';', start);
++    uint32_t length = semicolon >= 0 ? static_cast<uint32_t>(semicolon) - start
++                                    : raw.Length() - start;
++    aMatchedValue.Assign(Substring(raw, start, length));
++    return true;
++  }
++  if (!aValue) {
++    return false;
++  }
++  NS_ConvertUTF16toUTF8 cookies(*aValue);
++  uint32_t itemStart = 0;
++  while (itemStart < cookies.Length()) {
++    int32_t separator = cookies.FindChar(';', itemStart);
++    uint32_t itemEnd = separator >= 0 ? static_cast<uint32_t>(separator)
++                                      : cookies.Length();
++    nsAutoCString pair(Substring(cookies, itemStart, itemEnd - itemStart));
++    pair.Trim(" \t\r\n");
++    int32_t equals = pair.FindChar('=');
++    if (equals <= 0) {
++      continue;
++    }
++    nsAutoCString name(Substring(pair, 0, equals));
++    name.Trim(" \t\r\n");
++    if (FirefoxTraceCookieConfiguredName(name)) {
++      aMatchedName.Assign(name);
++      aMatchedValue.Assign(Substring(pair, equals + 1));
++      return true;
++    }
++    if (separator < 0) {
++      break;
++    }
++    itemStart = itemEnd + 1;
++  }
++  return false;
++}
++
 +void FirefoxTraceDocumentCookieEvent(Document* aDocument, const char* aType,
 +                                     const nsAString* aKey,
 +                                     const nsAString* aValue, bool aFound) {
@@ -324,6 +408,16 @@ index b90f5c9c22..b0fc9d1189 100644
 +    line.AppendLiteral(",\"value_preview\":");
 +    FirefoxTraceCookieAppendJsonString(line, valuePreview);
 +  }
++  nsAutoCString matchedCookieName;
++  nsAutoCString matchedCookieValue;
++  if (FirefoxTraceCookieFindTarget(aKey, aValue, matchedCookieName,
++                                   matchedCookieValue)) {
++    line.AppendLiteral(",\"cookie_fields\":{");
++    FirefoxTraceCookieAppendJsonString(line, matchedCookieName);
++    line.Append(':');
++    FirefoxTraceCookieAppendJsonString(line, matchedCookieValue);
++    line.Append('}');
++  }
 +  line.AppendLiteral(",\"page_url\":");
 +  FirefoxTraceCookieAppendJsonString(line, pageURL);
 +  line.AppendLiteral(",\"origin_call_id\":");
@@ -341,8 +435,14 @@ index b90f5c9c22..b0fc9d1189 100644
 +  line.AppendLiteral(",\"caller_column\":");
 +  line.AppendInt(callerColumn);
 +  line.Append('}');
-+  if (FirefoxTraceFlushJSBoundaryBuffer && originCallId) {
++  if (originCallId) {
 +    FirefoxTraceFlushJSBoundaryBuffer(aType);
++    if (!matchedCookieName.IsEmpty()) {
++      nsAutoCString reason(aType);
++      reason.Append('.');
++      reason.Append(matchedCookieName);
++      FirefoxTraceTriggerVMWindow(reason.get());
++    }
 +  }
 +  FirefoxTraceWriteCookieLine(line);
 +}
@@ -352,7 +452,7 @@ index b90f5c9c22..b0fc9d1189 100644
  class Document::HeaderData {
   public:
    HeaderData(nsAtom* aField, const nsAString& aData)
-@@ -6827,6 +7128,8 @@ void Document::GetCookie(nsAString& aCookie, ErrorResult& aRv) {
+@@ -6827,6 +7228,8 @@ void Document::GetCookie(nsAString& aCookie, ErrorResult& aRv) {
    }
  
    if (cookieList.IsEmpty()) {
@@ -361,7 +461,7 @@ index b90f5c9c22..b0fc9d1189 100644
      return;
    }
  
-@@ -6847,6 +7150,7 @@ void Document::GetCookie(nsAString& aCookie, ErrorResult& aRv) {
+@@ -6847,6 +7250,7 @@ void Document::GetCookie(nsAString& aCookie, ErrorResult& aRv) {
    // CopyUTF8toUTF16 doesn't handle error
    // because it assumes that the input is valid.
    UTF_8_ENCODING->DecodeWithoutBOMHandling(cookieString, aCookie);
@@ -369,7 +469,7 @@ index b90f5c9c22..b0fc9d1189 100644
  }
  
  void Document::SetCookie(const nsAString& aCookieString, ErrorResult& aRv) {
-@@ -6948,6 +7252,11 @@ void Document::SetCookie(const nsAString& aCookieString, ErrorResult& aRv) {
+@@ -6948,6 +7352,11 @@ void Document::SetCookie(const nsAString& aCookieString, ErrorResult& aRv) {
    service->AddCookieFromDocument(cookieParser, baseDomain, attrs, *cookie,
                                   currentTimeInUsec, documentURI, thirdParty,
                                   this);
@@ -2468,7 +2568,7 @@ index dedc201579..ddf709f7a8 100644
  
  class CGAbstractBindingMethod(CGAbstractStaticMethod):
 diff --git a/dom/cookiestore/CookieStore.cpp b/dom/cookiestore/CookieStore.cpp
-index b88350d050..7c77c54019 100644
+index b88350d050..6875af923b 100644
 --- a/dom/cookiestore/CookieStore.cpp
 +++ b/dom/cookiestore/CookieStore.cpp
 @@ -9,6 +9,15 @@
@@ -2506,8 +2606,8 @@ index b88350d050..7c77c54019 100644
  namespace mozilla::dom {
  
 +extern "C" uint64_t FirefoxTraceCurrentJSCallId();
-+extern "C" void FirefoxTraceFlushJSBoundaryBuffer(const char* aReason)
-+    __attribute__((weak));
++extern "C" void FirefoxTraceFlushJSBoundaryBuffer(const char* aReason);
++extern "C" void FirefoxTraceTriggerVMWindow(const char* aReason);
 +#if defined(__APPLE__)
 +extern "C" bool FirefoxTraceRuntimeActive() __attribute__((weak_import));
 +#elif defined(__GNUC__)
@@ -2517,7 +2617,7 @@ index b88350d050..7c77c54019 100644
  namespace {
  
  int64_t ComputeExpiry(const CookieInit& aOptions) {
-@@ -217,6 +239,283 @@ bool ValidateCookieNamePrefix(const nsAString& aName, const nsAString& aValue,
+@@ -217,6 +239,338 @@ bool ValidateCookieNamePrefix(const nsAString& aName, const nsAString& aValue,
    return true;
  }
  
@@ -2723,6 +2823,42 @@ index b88350d050..7c77c54019 100644
 +  FirefoxTraceCookieStoreAppendJsonString16(aLine, *aValue);
 +}
 +
++bool FirefoxTraceCookieStoreConfiguredName(const nsAString* aName) {
++  if (!aName || aName->IsEmpty()) {
++    return false;
++  }
++  const char* configured = getenv("FIREFOX_TRACE_COOKIE_FIELDS");
++  if (!configured || !configured[0]) {
++    configured = getenv("TRACE_COOKIE_FIELDS");
++  }
++  NS_ConvertUTF16toUTF8 name(*aName);
++  if (!configured || !configured[0]) {
++    return false;
++  }
++  const char* p = configured;
++  while (*p) {
++    while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t' ||
++           *p == '\n' || *p == '\r') {
++      ++p;
++    }
++    const char* start = p;
++    while (*p && *p != ',' && *p != ';') {
++      ++p;
++    }
++    const char* end = p;
++    while (end > start &&
++           (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' ||
++            end[-1] == '\r')) {
++      --end;
++    }
++    if (static_cast<size_t>(end - start) == name.Length() &&
++        !strncmp(start, name.get(), name.Length())) {
++      return true;
++    }
++  }
++  return false;
++}
++
 +void FirefoxTraceCookieStoreEvent(CookieStore* aStore, const char* aType,
 +                                  const nsAString* aName,
 +                                  const nsAString* aValue,
@@ -2770,6 +2906,18 @@ index b88350d050..7c77c54019 100644
 +    line.AppendLiteral(",\"value_preview\":");
 +    FirefoxTraceCookieStoreAppendJsonString(line, valuePreview);
 +  }
++  bool matchedCookie = FirefoxTraceCookieStoreConfiguredName(aName);
++  if (matchedCookie) {
++    line.AppendLiteral(",\"cookie_fields\":{");
++    FirefoxTraceCookieStoreAppendJsonString16(line, *aName);
++    line.Append(':');
++    if (aValue && !aValue->IsVoid()) {
++      FirefoxTraceCookieStoreAppendJsonString16(line, *aValue);
++    } else {
++      line.AppendLiteral("null");
++    }
++    line.Append('}');
++  }
 +  FirefoxTraceCookieStoreAppendMaybeString16(line, "url", aURL);
 +  FirefoxTraceCookieStoreAppendMaybeString16(line, "domain", aDomain);
 +  FirefoxTraceCookieStoreAppendMaybeString16(line, "path", aPath);
@@ -2792,8 +2940,15 @@ index b88350d050..7c77c54019 100644
 +  line.AppendLiteral(",\"caller_column\":");
 +  line.AppendInt(callerColumn);
 +  line.Append('}');
-+  if (FirefoxTraceFlushJSBoundaryBuffer && originCallId) {
++  if (originCallId) {
 +    FirefoxTraceFlushJSBoundaryBuffer(aType);
++    if (matchedCookie) {
++      NS_ConvertUTF16toUTF8 cookieName(*aName);
++      nsAutoCString reason(aType);
++      reason.Append('.');
++      reason.Append(cookieName);
++      FirefoxTraceTriggerVMWindow(reason.get());
++    }
 +  }
 +  FirefoxTraceWriteCookieStoreLine(line);
 +}
@@ -2801,7 +2956,7 @@ index b88350d050..7c77c54019 100644
  void CookieStructToList(const nsTArray<CookieStruct>& aData,
                          nsTArray<CookieListItem>& aResult) {
    for (const CookieStruct& data : aData) {
-@@ -366,6 +665,10 @@ already_AddRefed<Promise> CookieStore::Set(const CookieInit& aOptions,
+@@ -366,6 +720,10 @@ already_AddRefed<Promise> CookieStore::Set(const CookieInit& aOptions,
      return nullptr;
    }
  
@@ -2812,7 +2967,7 @@ index b88350d050..7c77c54019 100644
    nsCOMPtr<nsIPrincipal> cookiePrincipal;
    switch (CookieCommons::CheckGlobalAndRetrieveCookiePrincipals(
        MaybeGetDocument(), getter_AddRefs(cookiePrincipal), nullptr)) {
-@@ -485,6 +788,10 @@ already_AddRefed<Promise> CookieStore::Delete(
+@@ -485,6 +843,10 @@ already_AddRefed<Promise> CookieStore::Delete(
      return nullptr;
    }
  
@@ -2823,7 +2978,7 @@ index b88350d050..7c77c54019 100644
    nsCOMPtr<nsIPrincipal> cookiePrincipal;
    switch (CookieCommons::CheckGlobalAndRetrieveCookiePrincipals(
        MaybeGetDocument(), getter_AddRefs(cookiePrincipal), nullptr)) {
-@@ -622,6 +929,15 @@ already_AddRefed<Promise> CookieStore::GetInternal(
+@@ -622,6 +984,15 @@ already_AddRefed<Promise> CookieStore::GetInternal(
      return nullptr;
    }
  
@@ -2867,10 +3022,10 @@ index a0d36a3049..9661cd78cf 100644
    RefPtr<PerformanceEventTiming> eventTimingEntry;
    // Similar to PerformancePaintTiming, we don't need to
 diff --git a/dom/fetch/Fetch.cpp b/dom/fetch/Fetch.cpp
-index 52cf33bfc8..0eecb4f4a2 100644
+index 52cf33bfc8..a4cc278d6c 100644
 --- a/dom/fetch/Fetch.cpp
 +++ b/dom/fetch/Fetch.cpp
-@@ -6,19 +6,38 @@
+@@ -6,19 +6,39 @@
  
  #include "Fetch.h"
  
@@ -2880,6 +3035,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
 +#include <stdio.h>
 +#include <stdlib.h>
 +#include <string.h>
++#include <strings.h>
 +#if defined(__APPLE__)
 +#  include <CommonCrypto/CommonDigest.h>
 +#endif
@@ -2909,13 +3065,13 @@ index 52cf33bfc8..0eecb4f4a2 100644
  #include "nsJSUtils.h"
  #include "nsNetUtil.h"
  #include "nsReadableUtils.h"
-@@ -61,8 +80,1909 @@
+@@ -61,8 +81,1974 @@
  
  namespace mozilla::dom {
  
 +extern "C" uint64_t FirefoxTraceCurrentJSCallId();
-+extern "C" void FirefoxTraceFlushJSBoundaryBuffer(const char* aReason)
-+    __attribute__((weak));
++extern "C" void FirefoxTraceFlushJSBoundaryBuffer(const char* aReason);
++extern "C" void FirefoxTraceTriggerVMWindow(const char* aReason);
 +#if defined(__APPLE__)
 +extern "C" bool FirefoxTraceSendEventToParent(const char* aLine, size_t aLen)
 +    __attribute__((weak_import));
@@ -2981,6 +3137,39 @@ index 52cf33bfc8..0eecb4f4a2 100644
 +    }
 +    if (static_cast<size_t>(end - start) == tokenLen &&
 +        strncmp(start, aToken, tokenLen) == 0) {
++      return true;
++    }
++  }
++  return false;
++}
++
++bool FirefoxTraceFetchConfiguredHeader(const char* aName) {
++  const char* configured = getenv("FIREFOX_TRACE_HEADER_FIELDS");
++  if (!configured || !configured[0]) {
++    configured = getenv("TRACE_HEADER_FIELDS");
++  }
++  if (!configured || !configured[0] || !aName || !aName[0]) {
++    return false;
++  }
++  size_t nameLength = strlen(aName);
++  const char* p = configured;
++  while (*p) {
++    while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t' ||
++           *p == '\n' || *p == '\r') {
++      ++p;
++    }
++    const char* start = p;
++    while (*p && *p != ',' && *p != ';') {
++      ++p;
++    }
++    const char* end = p;
++    while (end > start &&
++           (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' ||
++            end[-1] == '\r')) {
++      --end;
++    }
++    if (static_cast<size_t>(end - start) == nameLength &&
++        strncasecmp(start, aName, nameLength) == 0) {
 +      return true;
 +    }
 +  }
@@ -4025,7 +4214,8 @@ index 52cf33bfc8..0eecb4f4a2 100644
 +}
 +
 +void FirefoxTraceFetchAppendRequestHeaders(nsACString& aLine,
-+                                           InternalRequest& aRequest) {
++                                           InternalRequest& aRequest,
++                                           nsACString* aMatchedField = nullptr) {
 +  const char* mode = FirefoxTraceFetchRequestHeadersMode();
 +  if (!FirefoxTraceFetchRequestHeadersEnabled()) {
 +    aLine.AppendLiteral(",\"request_headers_enabled\":false");
@@ -4045,6 +4235,8 @@ index 52cf33bfc8..0eecb4f4a2 100644
 +  const bool full = !strcmp(mode, "full");
 +  bool truncated = false;
 +  uint32_t emitted = 0;
++  nsAutoCString targetFields;
++  bool firstTarget = true;
 +
 +  aLine.AppendLiteral(
 +      ",\"request_headers_enabled\":true,\"request_headers_mode\":");
@@ -4052,6 +4244,18 @@ index 52cf33bfc8..0eecb4f4a2 100644
 +  aLine.AppendLiteral(",\"request_headers\":{");
 +  bool first = true;
 +  for (const auto& entry : entries) {
++    if (FirefoxTraceFetchConfiguredHeader(entry.mName.get())) {
++      if (aMatchedField && aMatchedField->IsEmpty()) {
++        aMatchedField->Assign(entry.mName);
++      }
++      if (!firstTarget) {
++        targetFields.Append(',');
++      }
++      firstTarget = false;
++      FirefoxTraceFetchAppendJsonString(targetFields, entry.mName);
++      targetFields.Append(':');
++      FirefoxTraceFetchAppendJsonString(targetFields, entry.mValue);
++    }
 +    if (names && names[0] &&
 +        !FirefoxTraceFetchContainsToken(names, entry.mName.get())) {
 +      continue;
@@ -4087,6 +4291,11 @@ index 52cf33bfc8..0eecb4f4a2 100644
 +  aLine.AppendInt(emitted);
 +  aLine.AppendLiteral(",\"request_headers_truncated\":");
 +  aLine.Append(truncated ? "true" : "false");
++  if (!targetFields.IsEmpty()) {
++    aLine.AppendLiteral(",\"header_fields\":{");
++    aLine.Append(targetFields);
++    aLine.Append('}');
++  }
 +}
 +
 +bool FirefoxTraceFetchExtractQueryParam(const nsACString& aURL,
@@ -4677,11 +4886,14 @@ index 52cf33bfc8..0eecb4f4a2 100644
 +  line.AppendLiteral(",\"caller_column\":");
 +  line.AppendInt(callerColumn);
 +  line.Append('}');
-+  if (FirefoxTraceFlushJSBoundaryBuffer && originCallId) {
++  if (originCallId) {
 +    nsAutoCString flushReason;
 +    FirefoxTraceFetchBuildFieldFlushReason(flushReason, "fetch.call",
 +                                           matchedQueryField);
 +    FirefoxTraceFlushJSBoundaryBuffer(flushReason.get());
++    if (!matchedQueryField.IsEmpty()) {
++      FirefoxTraceTriggerVMWindow(flushReason.get());
++    }
 +  }
 +  FirefoxTraceWriteFetchLine(line);
 +  return fetchId;
@@ -4731,16 +4943,25 @@ index 52cf33bfc8..0eecb4f4a2 100644
 +  line.Append(aRequest.GetKeepalive() ? "true" : "false");
 +  line.AppendLiteral(",\"referrer\":");
 +  FirefoxTraceFetchAppendJsonString(line, referrer);
-+  FirefoxTraceFetchAppendRequestHeaders(line, aRequest);
++  nsAutoCString matchedHeaderField;
++  FirefoxTraceFetchAppendRequestHeaders(line, aRequest, &matchedHeaderField);
 +  nsAutoCString matchedBodyField;
 +  FirefoxTraceFetchAppendRequestBodyPreview(line, aRequest,
 +                                            &matchedBodyField);
 +  line.Append('}');
-+  if (FirefoxTraceFlushJSBoundaryBuffer) {
++  {
 +    nsAutoCString flushReason;
 +    FirefoxTraceFetchBuildFieldFlushReason(flushReason, "fetch.request",
 +                                           matchedBodyField);
 +    FirefoxTraceFlushJSBoundaryBuffer(flushReason.get());
++    if (!matchedBodyField.IsEmpty()) {
++      FirefoxTraceTriggerVMWindow(flushReason.get());
++    } else if (!matchedHeaderField.IsEmpty()) {
++      nsAutoCString headerReason;
++      FirefoxTraceFetchBuildFieldFlushReason(
++          headerReason, "fetch.request.header", matchedHeaderField);
++      FirefoxTraceTriggerVMWindow(headerReason.get());
++    }
 +  }
 +  FirefoxTraceWriteFetchLine(line);
 +}
@@ -4819,7 +5040,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
  // Step 17.2.1.2 and 17.2.2 of
  // https://fetch.spec.whatwg.org/#concept-http-network-fetch
  // If stream is readable, then error stream with ...
-@@ -84,8 +2004,6 @@ void AbortStream(JSContext* aCx, ReadableStream* aReadableStream,
+@@ -84,8 +2070,6 @@ void AbortStream(JSContext* aCx, ReadableStream* aReadableStream,
    aReadableStream->ErrorNative(aCx, value, aRv);
  }
  
@@ -4828,7 +5049,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
  class AbortSignalMainThread final : public AbortSignalImpl {
   public:
    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-@@ -218,6 +2136,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -218,6 +2202,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
    RefPtr<FetchObserver> mFetchObserver;
    RefPtr<WeakWorkerRef> mWorkerRef;
    bool mIsShutdown;
@@ -4836,7 +5057,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
  
    Atomic<bool> mNeedOnDataAvailable;
  
-@@ -225,7 +2144,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -225,7 +2210,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
    // Returns null if worker is shutting down.
    static already_AddRefed<WorkerFetchResolver> Create(
        WorkerPrivate* aWorkerPrivate, Promise* aPromise,
@@ -4846,7 +5067,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
      MOZ_ASSERT(aWorkerPrivate);
      aWorkerPrivate->AssertIsOnWorkerThread();
      RefPtr<PromiseWorkerProxy> proxy =
-@@ -241,7 +2161,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -241,7 +2227,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
      }
  
      RefPtr<WorkerFetchResolver> r =
@@ -4855,7 +5076,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
  
      RefPtr<WeakWorkerRef> workerRef = WeakWorkerRef::Create(
          aWorkerPrivate, [r]() { r->Shutdown(r->mWorkerRef->GetPrivate()); });
-@@ -279,6 +2199,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -279,6 +2265,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
      return mPromiseProxy;
    }
  
@@ -4864,7 +5085,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
    Promise* WorkerPromise(WorkerPrivate* aWorkerPrivate) const {
      MOZ_ASSERT(aWorkerPrivate);
      aWorkerPrivate->AssertIsOnWorkerThread();
-@@ -329,11 +2251,13 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -329,11 +2317,13 @@ class WorkerFetchResolver final : public FetchDriverObserver {
  
   private:
    WorkerFetchResolver(PromiseWorkerProxy* aProxy,
@@ -4879,7 +5100,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
          mNeedOnDataAvailable(!!aObserver) {
      MOZ_ASSERT(!NS_IsMainThread());
      MOZ_ASSERT(mPromiseProxy);
-@@ -357,17 +2281,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -357,17 +2347,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
    RefPtr<FetchObserver> mFetchObserver;
    RefPtr<AbortSignalImpl> mSignalImpl;
    const bool mMozErrors;
@@ -4902,7 +5123,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
  
    void OnResponseAvailableInternal(
        SafeRefPtr<InternalResponse> aResponse) override;
-@@ -376,6 +2303,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -376,6 +2369,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
  
    void OnResponseEnd(FetchDriverObserver::EndReason aReason,
                       JS::Handle<JS::Value> aReasonDetails) override {
@@ -4911,7 +5132,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
      if (aReason == eAborted) {
        if (!aReasonDetails.isUndefined()) {
          mPromise->MaybeReject(aReasonDetails);
-@@ -452,7 +2381,9 @@ class MainThreadFetchRunnable : public Runnable {
+@@ -452,7 +2447,9 @@ class MainThreadFetchRunnable : public Runnable {
                                workerPrivate->MainThreadEventTarget(),
                                workerPrivate->CookieJarSettings(),
                                workerPrivate->GetPerformanceStorage(),
@@ -4922,7 +5143,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
        nsAutoCString spec;
        if (proxy->GetWorkerPrivate()->GetBaseURI()) {
          proxy->GetWorkerPrivate()->GetBaseURI()->GetAsciiSpec(spec);
-@@ -510,6 +2441,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -510,6 +2507,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
    }
  
    SafeRefPtr<InternalRequest> internalRequest = request->GetInternalRequest();
@@ -4930,7 +5151,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
  
    // Restore information of InterceptedHttpChannel if they are passed with the
    // Request. Since Request::Constructor would not copy these members.
-@@ -593,12 +2525,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -593,12 +2591,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
      }
  
      RefPtr<MainThreadFetchResolver> resolver = new MainThreadFetchResolver(
@@ -4946,7 +5167,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
      fetch->SetDocument(doc);
      resolver->SetLoadGroup(loadGroup);
      aRv = fetch->Fetch(signalImpl, resolver);
-@@ -703,6 +2636,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -703,6 +2702,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
  
      ipcArgs.hasCSPEventListener() = false;
      ipcArgs.isWorkerRequest() = false;
@@ -4954,7 +5175,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
  
      actor->DoFetchOp(ipcArgs);
  
-@@ -793,6 +2727,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -793,6 +2793,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
        ipcArgs.isOn3PCBExceptionList() = worker->IsOn3PCBExceptionList();
  
        ipcArgs.isWorkerRequest() = true;
@@ -4962,7 +5183,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
  
        actor->DoFetchOp(ipcArgs);
  
-@@ -808,7 +2743,8 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -808,7 +2809,8 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
      // We do not check if keepalive flag is set for ChromeWorkers
      // See Bug 1898664
      RefPtr<WorkerFetchResolver> resolver =
@@ -4972,7 +5193,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
      if (!resolver) {
        NS_WARNING("Could not keep the worker alive.");
        aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
-@@ -856,6 +2792,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
+@@ -856,6 +2858,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
    NS_ASSERT_OWNINGTHREAD(MainThreadFetchResolver);
    AssertIsOnMainThread();
  
@@ -4981,7 +5202,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
    if (aResponse->Type() != ResponseType::Error) {
      nsCOMPtr<nsIGlobalObject> go = mPromise->GetParentObject();
      nsCOMPtr<nsPIDOMWindowInner> inner = do_QueryInterface(go);
-@@ -1074,6 +3012,8 @@ void WorkerFetchResolver::OnResponseAvailableInternal(
+@@ -1074,6 +3078,8 @@ void WorkerFetchResolver::OnResponseAvailableInternal(
      SafeRefPtr<InternalResponse> aResponse) {
    AssertIsOnMainThread();
  
@@ -4990,7 +5211,7 @@ index 52cf33bfc8..0eecb4f4a2 100644
    MutexAutoLock lock(mPromiseProxy->Lock());
    if (mPromiseProxy->CleanedUp()) {
      return;
-@@ -1108,6 +3048,7 @@ void WorkerFetchResolver::OnDataAvailable() {
+@@ -1108,6 +3114,7 @@ void WorkerFetchResolver::OnDataAvailable() {
  void WorkerFetchResolver::OnResponseEnd(FetchDriverObserver::EndReason aReason,
                                          JS::Handle<JS::Value> aReasonDetails) {
    AssertIsOnMainThread();
@@ -5907,7 +6128,7 @@ index a2e3b14d29..f6fd01976a 100644
  
  protocol PFetch {
 diff --git a/dom/ipc/ContentChild.cpp b/dom/ipc/ContentChild.cpp
-index dc0a572729..36cfaf95ed 100644
+index dc0a572729..b452982ae1 100644
 --- a/dom/ipc/ContentChild.cpp
 +++ b/dom/ipc/ContentChild.cpp
 @@ -13,8 +13,10 @@
@@ -5936,7 +6157,7 @@ index dc0a572729..36cfaf95ed 100644
  
  #include "ChildProfilerController.h"
  
-@@ -313,6 +323,845 @@ using namespace mozilla::net;
+@@ -313,6 +323,873 @@ using namespace mozilla::net;
  using namespace mozilla::widget;
  using mozilla::loader::PScriptCacheChild;
  
@@ -6581,6 +6802,8 @@ index dc0a572729..36cfaf95ed 100644
 +
 +extern "C" bool FirefoxTraceSendWasmArtifactToParent(
 +    const char* aModuleId, const char* aData, size_t aLen);
++extern "C" bool FirefoxTraceSendVMWindowArtifactToParent(
++    const char* aFileName, const char* aData, size_t aLen);
 +
 +extern "C" bool FirefoxTraceQueueEventToParent(const char* aLine,
 +                                                size_t aLen);
@@ -6730,6 +6953,32 @@ index dc0a572729..36cfaf95ed 100644
 +  return child->SendFirefoxTraceWasmArtifact(moduleId, data);
 +}
 +
++extern "C" bool FirefoxTraceSendVMWindowArtifactToParent(
++    const char* aFileName, const char* aData, size_t aLen) {
++  if (!aFileName || !aFileName[0] || !aData || !aLen) {
++    return false;
++  }
++  if (!NS_IsMainThread()) {
++    nsCString fileName(aFileName);
++    nsCString data(aData, aLen);
++    NS_DispatchToMainThread(NS_NewRunnableFunction(
++        "FirefoxTraceQueuedVMWindowArtifact",
++        [fileName = std::move(fileName), data = std::move(data)]() {
++          Unused << FirefoxTraceSendVMWindowArtifactToParent(
++              fileName.BeginReading(), data.BeginReading(), data.Length());
++        }));
++    return true;
++  }
++  mozilla::dom::ContentChild* child =
++      mozilla::dom::ContentChild::GetSingleton();
++  if (!child || !FirefoxTraceRuntimeAllowsArtifact()) {
++    return child != nullptr;
++  }
++  nsDependentCString fileName(aFileName);
++  nsDependentCSubstring data(aData, aLen);
++  return child->SendFirefoxTraceVMWindowArtifact(fileName, data);
++}
++
 +extern "C" bool FirefoxTraceSendScriptSourceToParent(
 +    const char* aScriptSha256, const char* aData, size_t aLen) {
 +  if (!aScriptSha256 || !aScriptSha256[0] || !aData) {
@@ -6797,7 +7046,7 @@ index f22b544499..d73f14408d 100644
    virtual void OnChannelReceivedMessage(const Message& aMsg) override;
  
 diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
-index aa775fdf14..bc324e11ce 100644
+index aa775fdf14..f46b932c0a 100644
 --- a/dom/ipc/ContentParent.cpp
 +++ b/dom/ipc/ContentParent.cpp
 @@ -26,6 +26,11 @@
@@ -6848,7 +7097,7 @@ index aa775fdf14..bc324e11ce 100644
  }
  
  void ContentParent::AsyncSendShutDownMessage() {
-@@ -5662,6 +5675,1001 @@ mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
+@@ -5662,6 +5675,1056 @@ mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
    return IPC_OK();
  }
  
@@ -7721,8 +7970,11 @@ index aa775fdf14..bc324e11ce 100644
 +    return IPC_OK();
 +  }
 +
-+  fwrite(aData.BeginReading(), 1, aData.Length(), file);
++  size_t written = fwrite(aData.BeginReading(), 1, aData.Length(), file);
 +  fclose(file);
++  if (written != aData.Length()) {
++    unlink(path.get());
++  }
 +  return IPC_OK();
 +}
 +
@@ -7763,6 +8015,58 @@ index aa775fdf14..bc324e11ce 100644
 +  path.Append('/');
 +  path.Append(aModuleId);
 +  path.Append(".wasm");
++  FILE* file = fopen(path.get(), "wb");
++  if (!file) {
++    return IPC_OK();
++  }
++  fwrite(aData.BeginReading(), 1, aData.Length(), file);
++  fclose(file);
++  return IPC_OK();
++}
++
++mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceVMWindowArtifact(
++    const nsACString& aFileName, const nsACString& aData) {
++  const char* enabled = PR_GetEnv("FIREFOX_TRACE_VM_WINDOW");
++  if (!enabled || !enabled[0]) {
++    enabled = PR_GetEnv("TRACE_VM_WINDOW");
++  }
++  if (!enabled || !enabled[0] || strcmp(enabled, "0") == 0 ||
++      strcmp(enabled, "false") == 0 || strcmp(enabled, "off") == 0 ||
++      !FirefoxTraceRuntimeAllowsArtifact() || aFileName.IsEmpty() ||
++      aFileName.Length() > 255 || aData.IsEmpty()) {
++    return IPC_OK();
++  }
++
++  nsCString flatFileName(aFileName);
++  const char* fileName = flatFileName.get();
++  constexpr const char kPrefix[] = "firefox-vm-window-";
++  if (aFileName.Length() < sizeof(kPrefix) - 1 + 5 ||
++      strncmp(fileName, kPrefix, sizeof(kPrefix) - 1) != 0 ||
++      strcmp(fileName + aFileName.Length() - 4, ".bin") != 0) {
++    return IPC_OK();
++  }
++  for (uint32_t i = 0; i < aFileName.Length(); ++i) {
++    char c = fileName[i];
++    bool safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
++                (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.';
++    if (!safe) {
++      return IPC_OK();
++    }
++  }
++
++  const char* logDir = PR_GetEnv("FIREFOX_TRACE_LOG_DIR");
++  if (!logDir || !logDir[0]) {
++    logDir = PR_GetEnv("TRACE_LOG_DIR");
++  }
++  if (!logDir || !logDir[0]) {
++    return IPC_OK();
++  }
++  mkdir(logDir, 0755);
++  nsAutoCString path(logDir);
++  if (!path.IsEmpty() && path.Last() != '/') {
++    path.Append('/');
++  }
++  path.Append(aFileName);
 +  FILE* file = fopen(path.get(), "wb");
 +  if (!file) {
 +    return IPC_OK();
@@ -7851,10 +8155,10 @@ index aa775fdf14..bc324e11ce 100644
      const uint32_t& aGuardType, bool* aOutCrashed) {
    // Only one driver crash guard should be active at a time, per-process.
 diff --git a/dom/ipc/ContentParent.h b/dom/ipc/ContentParent.h
-index 57a215b06b..235e570118 100644
+index 57a215b06b..4b5a86e1a4 100644
 --- a/dom/ipc/ContentParent.h
 +++ b/dom/ipc/ContentParent.h
-@@ -1089,6 +1089,18 @@ class ContentParent final : public PContentParent,
+@@ -1089,6 +1089,20 @@ class ContentParent final : public PContentParent,
  
    mozilla::ipc::IPCResult RecvGraphicsError(const nsACString& aError);
  
@@ -7863,6 +8167,8 @@ index 57a215b06b..235e570118 100644
 +  mozilla::ipc::IPCResult RecvFirefoxTraceJSValue(
 +      const nsACString& aValueId, const nsACString& aArtifactKey,
 +      const nsACString& aData);
++  mozilla::ipc::IPCResult RecvFirefoxTraceVMWindowArtifact(
++      const nsACString& aFileName, const nsACString& aData);
 +  mozilla::ipc::IPCResult RecvFirefoxTraceWasmArtifact(
 +      const nsACString& aModuleId, const nsACString& aData);
 +  mozilla::ipc::IPCResult RecvFirefoxTraceRuntimeConfigApplied(
@@ -7874,7 +8180,7 @@ index 57a215b06b..235e570118 100644
                                                      bool* aOutCrashed);
  
 diff --git a/dom/ipc/PContent.ipdl b/dom/ipc/PContent.ipdl
-index 7c3fd341d9..d6eb937a6f 100644
+index 7c3fd341d9..c9cbbbce8e 100644
 --- a/dom/ipc/PContent.ipdl
 +++ b/dom/ipc/PContent.ipdl
 @@ -1075,6 +1075,10 @@ child:
@@ -7888,7 +8194,7 @@ index 7c3fd341d9..d6eb937a6f 100644
  both:
      // Update the "History Action Activation" timestamp for all parents in the
      // subtree beginning at `aTop`.
-@@ -1269,6 +1273,21 @@ parent:
+@@ -1269,6 +1273,22 @@ parent:
      // Graphics errors
      async GraphicsError(nsCString aError);
  
@@ -7904,13 +8210,14 @@ index 7c3fd341d9..d6eb937a6f 100644
 +    // their SHA-256 here so repeated values share one on-disk artifact.
 +    async FirefoxTraceJSValue(nsCString aValueId, nsCString aArtifactKey,
 +                              nsCString aData);
++    async FirefoxTraceVMWindowArtifact(nsCString aFileName, nsCString aData);
 +    async FirefoxTraceWasmArtifact(nsCString aModuleId, nsCString aData);
 +    async FirefoxTraceJSScriptSource(nsCString aScriptSha256, nsCString aData);
 +
      // Driver crash guards. aGuardType must be a member of CrashGuardType.
      sync BeginDriverCrashGuard(uint32_t aGuardType) returns (bool crashDetected);
      sync EndDriverCrashGuard(uint32_t aGuardType);
-@@ -1902,6 +1921,9 @@ both:
+@@ -1902,6 +1922,9 @@ both:
      async FinalizeFocusOuter(MaybeDiscardedBrowsingContext aContext, bool aCanFocus,
                               CallerType aCallerType);
  parent:
@@ -9501,10 +9808,10 @@ index ea692b1f6e..0b3ab06830 100644
  }
  
 diff --git a/dom/xhr/XMLHttpRequestMainThread.cpp b/dom/xhr/XMLHttpRequestMainThread.cpp
-index 1a8e264644..4032c2df60 100644
+index 1a8e264644..100e4f41f6 100644
 --- a/dom/xhr/XMLHttpRequestMainThread.cpp
 +++ b/dom/xhr/XMLHttpRequestMainThread.cpp
-@@ -7,7 +7,16 @@
+@@ -7,7 +7,17 @@
  #include "XMLHttpRequestMainThread.h"
  
  #include <algorithm>
@@ -9513,6 +9820,7 @@ index 1a8e264644..4032c2df60 100644
 +#include <stdio.h>
 +#include <stdlib.h>
 +#include <string.h>
++#include <strings.h>
 +#if defined(__APPLE__)
 +#  include <CommonCrypto/CommonDigest.h>
 +#endif
@@ -9521,7 +9829,7 @@ index 1a8e264644..4032c2df60 100644
  #  include <unistd.h>
  #endif
  #include "mozilla/AppShutdown.h"
-@@ -17,7 +26,9 @@
+@@ -17,7 +27,9 @@
  #include "mozilla/Components.h"
  #include "mozilla/dom/AutoSuppressEventHandlingAndSuspend.h"
  #include "mozilla/dom/BlobBinding.h"
@@ -9531,7 +9839,7 @@ index 1a8e264644..4032c2df60 100644
  #include "mozilla/dom/DocGroup.h"
  #include "mozilla/dom/DOMString.h"
  #include "mozilla/dom/File.h"
-@@ -77,6 +88,7 @@
+@@ -77,6 +89,7 @@
  #include "nsXPCOM.h"
  #include "nsIDOMEventListener.h"
  #include "nsVariant.h"
@@ -9539,13 +9847,13 @@ index 1a8e264644..4032c2df60 100644
  #include "nsIScriptError.h"
  #include "nsICachingChannel.h"
  #include "nsICookieJarSettings.h"
-@@ -126,6 +138,1220 @@ namespace mozilla::dom {
+@@ -126,6 +139,1253 @@ namespace mozilla::dom {
  using EventType = XMLHttpRequest::EventType;
  using Events = XMLHttpRequest::Events;
  
 +extern "C" uint64_t FirefoxTraceCurrentJSCallId();
-+extern "C" void FirefoxTraceFlushJSBoundaryBuffer(const char* aReason)
-+    __attribute__((weak));
++extern "C" void FirefoxTraceFlushJSBoundaryBuffer(const char* aReason);
++extern "C" void FirefoxTraceTriggerVMWindow(const char* aReason);
 +#if defined(__APPLE__)
 +extern "C" bool FirefoxTraceSendValueToParent(const char* aValueId,
 +                                              const char* aArtifactKey,
@@ -9604,6 +9912,39 @@ index 1a8e264644..4032c2df60 100644
 +    }
 +    if (static_cast<size_t>(end - start) == tokenLen &&
 +        strncmp(start, aToken, tokenLen) == 0) {
++      return true;
++    }
++  }
++  return false;
++}
++
++bool FirefoxTraceXHRConfiguredHeader(const nsACString& aName) {
++  const char* configured = getenv("FIREFOX_TRACE_HEADER_FIELDS");
++  if (!configured || !configured[0]) {
++    configured = getenv("TRACE_HEADER_FIELDS");
++  }
++  nsCString flatName(PromiseFlatCString(aName));
++  if (!configured || !configured[0] || flatName.IsEmpty()) {
++    return false;
++  }
++  const char* p = configured;
++  while (*p) {
++    while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t' ||
++           *p == '\n' || *p == '\r') {
++      ++p;
++    }
++    const char* start = p;
++    while (*p && *p != ',' && *p != ';') {
++      ++p;
++    }
++    const char* end = p;
++    while (end > start &&
++           (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' ||
++            end[-1] == '\r')) {
++      --end;
++    }
++    if (static_cast<size_t>(end - start) == flatName.Length() &&
++        strncasecmp(start, flatName.get(), flatName.Length()) == 0) {
 +      return true;
 +    }
 +  }
@@ -10760,7 +11101,7 @@ index 1a8e264644..4032c2df60 100644
  // Maximum size that we'll grow an ArrayBuffer instead of doubling,
  // once doubling reaches this threshold
  const uint32_t XML_HTTP_REQUEST_ARRAYBUFFER_MAX_GROWTH = 32 * 1024 * 1024;
-@@ -1517,6 +2743,340 @@ bool XMLHttpRequestMainThread::InUploadPhase() const {
+@@ -1517,6 +2777,358 @@ bool XMLHttpRequestMainThread::InUploadPhase() const {
    return mState == XMLHttpRequest_Binding::OPENED;
  }
  
@@ -10819,6 +11160,16 @@ index 1a8e264644..4032c2df60 100644
 +  FirefoxTraceAppendConfiguredQueryFields(line, url);
 +  nsAutoCString matchedQueryField;
 +  Unused << FirefoxTraceFirstConfiguredQueryField(url, matchedQueryField);
++  nsAutoCString matchedHeaderField;
++  if (aDetailName && aDetailValue && strcmp(aType, "xhr.header") == 0 &&
++      FirefoxTraceXHRConfiguredHeader(*aDetailName)) {
++    matchedHeaderField.Assign(*aDetailName);
++    line.AppendLiteral(",\"header_fields\":{");
++    FirefoxTraceAppendJsonString(line, *aDetailName);
++    line.Append(':');
++    FirefoxTraceAppendJsonString(line, *aDetailValue);
++    line.Append('}');
++  }
 +  line.AppendLiteral(",\"async\":");
 +  line.Append(mFlagSynchronous ? "false" : "true");
 +  line.AppendLiteral(",\"with_credentials\":");
@@ -10876,10 +11227,15 @@ index 1a8e264644..4032c2df60 100644
 +  }
 +
 +  line.Append('}');
-+  if (aFlushBoundary && FirefoxTraceFlushJSBoundaryBuffer && originCallId) {
++  if (aFlushBoundary && originCallId) {
 +    nsAutoCString flushReason;
-+    FirefoxTraceBuildFieldFlushReason(flushReason, aType, matchedQueryField);
++    FirefoxTraceBuildFieldFlushReason(
++        flushReason, aType,
++        !matchedHeaderField.IsEmpty() ? matchedHeaderField : matchedQueryField);
 +    FirefoxTraceFlushJSBoundaryBuffer(flushReason.get());
++    if (!matchedQueryField.IsEmpty() || !matchedHeaderField.IsEmpty()) {
++      FirefoxTraceTriggerVMWindow(flushReason.get());
++    }
 +  }
 +  FirefoxTraceWriteXHRLine(line);
 +  return true;
@@ -10981,7 +11337,7 @@ index 1a8e264644..4032c2df60 100644
 +  }
 +  line.Append('}');
 +  uint64_t originCallId = FirefoxTraceCurrentJSCallId();
-+  if (FirefoxTraceFlushJSBoundaryBuffer && originCallId) {
++  if (originCallId) {
 +    nsAutoCString matchedBodyField;
 +    Unused << FirefoxTraceFirstConfiguredBodyField(aBodyPreview,
 +                                                  matchedBodyField);
@@ -10989,6 +11345,9 @@ index 1a8e264644..4032c2df60 100644
 +    FirefoxTraceBuildFieldFlushReason(flushReason, "xhr.body",
 +                                      matchedBodyField);
 +    FirefoxTraceFlushJSBoundaryBuffer(flushReason.get());
++    if (!matchedBodyField.IsEmpty()) {
++      FirefoxTraceTriggerVMWindow(flushReason.get());
++    }
 +  }
 +  FirefoxTraceWriteXHRLine(line);
 +}
@@ -11101,7 +11460,7 @@ index 1a8e264644..4032c2df60 100644
  // This case is hit when the async parameter is outright omitted, which
  // should set it to true (and the username and password to null).
  void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
-@@ -1664,6 +3224,13 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
+@@ -1664,6 +3276,13 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
    mAuthorRequestHeaders.Clear();
    ResetResponse();
  
@@ -11115,7 +11474,7 @@ index 1a8e264644..4032c2df60 100644
    // Gecko-specific
    mFlagHadUploadListenersOnSend = false;
    mFlagAborted = false;
-@@ -1679,7 +3246,10 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
+@@ -1679,7 +3298,10 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
    // Step 12
    if (mState != XMLHttpRequest_Binding::OPENED) {
      mState = XMLHttpRequest_Binding::OPENED;
@@ -11126,7 +11485,7 @@ index 1a8e264644..4032c2df60 100644
    }
  }
  
-@@ -2033,6 +3603,7 @@ XMLHttpRequestMainThread::OnStartRequest(nsIRequest* request) {
+@@ -2033,6 +3655,7 @@ XMLHttpRequestMainThread::OnStartRequest(nsIRequest* request) {
    if (mErrorLoad == ErrorType::eOK) {
      ChangeState(XMLHttpRequest_Binding::HEADERS_RECEIVED);
    }
@@ -11134,7 +11493,7 @@ index 1a8e264644..4032c2df60 100644
  
    ResetResponse();
  
-@@ -2540,6 +4111,11 @@ void XMLHttpRequestMainThread::ChangeStateToDoneInternal() {
+@@ -2540,6 +4163,11 @@ void XMLHttpRequestMainThread::ChangeStateToDoneInternal() {
  
    // Per spec, fire readystatechange=4/done before final error events.
    ChangeState(XMLHttpRequest_Binding::DONE, true);
@@ -11146,7 +11505,7 @@ index 1a8e264644..4032c2df60 100644
  
    // Per spec, if we failed in the upload phase, fire a final error
    // and loadend events for the upload after readystatechange=4/done.
-@@ -3024,6 +4600,12 @@ void XMLHttpRequestMainThread::Send(
+@@ -3024,6 +4652,12 @@ void XMLHttpRequestMainThread::Send(
      return;
    }
  
@@ -11159,7 +11518,7 @@ index 1a8e264644..4032c2df60 100644
    if (aData.IsNull()) {
      SendInternal(nullptr, false, aRv);
      return;
-@@ -3368,6 +4950,7 @@ void XMLHttpRequestMainThread::SetRequestHeader(const nsACString& aName,
+@@ -3368,6 +5002,7 @@ void XMLHttpRequestMainThread::SetRequestHeader(const nsACString& aName,
    } else {
      mAuthorRequestHeaders.MergeOrSet(aName, value);
    }
@@ -11283,10 +11642,10 @@ index 7fe5f3a8cc..d3f022c9a2 100644
    return true;
  }
 diff --git a/js/src/vm/Interpreter.cpp b/js/src/vm/Interpreter.cpp
-index 81a10dba41..ebe39ed258 100644
+index 81a10dba41..8a76a4b6d1 100644
 --- a/js/src/vm/Interpreter.cpp
 +++ b/js/src/vm/Interpreter.cpp
-@@ -17,73 +17,4095 @@
+@@ -17,73 +17,4519 @@
  #include "mozilla/Sprintf.h"
  #include "mozilla/TimeStamp.h"
  
@@ -11304,6 +11663,7 @@ index 81a10dba41..ebe39ed258 100644
 +#include "jsapi.h"
 +#include "jsfriendapi.h"  // js::GetPropertyKeys, JSITER_OWNONLY
 +#include "jsnum.h"
++#include "prthread.h"
 +
 +#include "builtin/Array.h"
 +#include "builtin/Eval.h"
@@ -11437,6 +11797,57 @@ index 81a10dba41..ebe39ed258 100644
 +static thread_local size_t sFirefoxTraceJSBatchCapacity = 0;
 +static constexpr size_t kFirefoxTraceJSBatchBytes = 512 * 1024;
 +
++// VM-window records stay compact on the interpreter hot path. They are
++// written as one binary artifact when a configured request field is observed;
++// JSON formatting and per-op IPC are deliberately kept out of dispatch.
++struct FirefoxTraceVMWindowRecord {
++  uint64_t seq = 0;
++  uint64_t tsUS = 0;
++  uint64_t originCallId = 0;
++  uint64_t pc = 0;
++  uint64_t stackValue0 = 0;
++  uint64_t stackValue1 = 0;
++  uint32_t op = 0;
++  uint32_t bytecodeLength = 0;
++  uint32_t stackDepth = 0;
++  uint8_t operandLength = 0;
++  uint8_t operands[16] = {};
++  uint8_t stackType0 = 0;
++  uint8_t stackType1 = 0;
++  uint8_t stackFlags = 0;
++};
++
++static_assert(sizeof(FirefoxTraceVMWindowRecord) == 80,
++              "VM-window record format must remain stable");
++
++struct FirefoxTraceVMWindowHeader {
++  char magic[8] = {};
++  uint32_t version = 1;
++  uint32_t recordSize = sizeof(FirefoxTraceVMWindowRecord);
++  uint64_t firstSeq = 0;
++  uint64_t lastSeq = 0;
++  uint64_t totalWritten = 0;
++  uint64_t overwritten = 0;
++  uint32_t capacity = 0;
++  uint32_t count = 0;
++  uint64_t triggerTsUS = 0;
++};
++
++static_assert(sizeof(FirefoxTraceVMWindowHeader) == 64,
++              "VM-window header format must remain stable");
++
++static thread_local FirefoxTraceVMWindowRecord* sFirefoxTraceVMWindow = nullptr;
++static thread_local uint32_t sFirefoxTraceVMWindowCapacity = 0;
++static thread_local uint64_t sFirefoxTraceVMWindowWritten = 0;
++static thread_local uint64_t sFirefoxTraceVMWindowOverwritten = 0;
++static thread_local uint64_t sFirefoxTraceVMWindowFlushIndex = 0;
++static thread_local bool sFirefoxTraceVMWindowBeginWritten = false;
++static thread_local char sFirefoxTraceVMWindowFlushedSegmentId[128] = "";
++static thread_local char sFirefoxTraceVMWindowScriptURL[1024] = "";
++static thread_local uint32_t sFirefoxTraceVMWindowScriptLine = 0;
++static thread_local uint32_t sFirefoxTraceVMWindowScriptColumn = 0;
++static thread_local size_t sFirefoxTraceVMWindowScriptLength = 0;
++
 +extern "C" uint64_t FirefoxTraceCurrentJSCallId() {
 +  return sFirefoxTraceCurrentScriptedJSCallId
 +             ? sFirefoxTraceCurrentScriptedJSCallId
@@ -11444,6 +11855,7 @@ index 81a10dba41..ebe39ed258 100644
 +}
 +
 +extern "C" void FirefoxTraceFlushJSBoundaryBuffer(const char* aReason);
++extern "C" void FirefoxTraceTriggerVMWindow(const char* aReason);
 +
 +#if defined(__APPLE__)
 +extern "C" bool FirefoxTraceSendEventToParent(const char* aLine, size_t aLen)
@@ -11454,6 +11866,9 @@ index 81a10dba41..ebe39ed258 100644
 +extern "C" bool FirefoxTraceSendValueToParent(const char* aValueId,
 +                                              const char* aArtifactKey,
 +                                              const char* aData, size_t aLen)
++    __attribute__((weak_import));
++extern "C" bool FirefoxTraceSendVMWindowArtifactToParent(
++    const char* aFileName, const char* aData, size_t aLen)
 +    __attribute__((weak_import));
 +extern "C" bool FirefoxTraceSendScriptSourceToParent(
 +    const char* aScriptSha256, const char* aData, size_t aLen)
@@ -11468,6 +11883,9 @@ index 81a10dba41..ebe39ed258 100644
 +extern "C" bool FirefoxTraceSendValueToParent(const char* aValueId,
 +                                              const char* aArtifactKey,
 +                                              const char* aData, size_t aLen)
++    __attribute__((weak));
++extern "C" bool FirefoxTraceSendVMWindowArtifactToParent(
++    const char* aFileName, const char* aData, size_t aLen)
 +    __attribute__((weak));
 +extern "C" bool FirefoxTraceSendScriptSourceToParent(
 +    const char* aScriptSha256, const char* aData, size_t aLen)
@@ -11720,6 +12138,13 @@ index 81a10dba41..ebe39ed258 100644
 +  sFirefoxTraceOpcodeRateEvents = 0;
 +  sFirefoxTraceOpcodeRateBytes = 0;
 +  sFirefoxTraceOpcodeRateSentinelWritten = false;
++  sFirefoxTraceVMWindowWritten = 0;
++  sFirefoxTraceVMWindowOverwritten = 0;
++  sFirefoxTraceVMWindowScriptURL[0] = '\0';
++  sFirefoxTraceVMWindowScriptLine = 0;
++  sFirefoxTraceVMWindowScriptColumn = 0;
++  sFirefoxTraceVMWindowScriptLength = 0;
++  sFirefoxTraceVMWindowBeginWritten = false;
 +
 +  for (size_t i = 0; i < kFirefoxTraceJSBoundaryBufferMaxCapacity; i++) {
 +    if (sFirefoxTraceJSBoundaryBuffer[i].line) {
@@ -11980,6 +12405,13 @@ index 81a10dba41..ebe39ed258 100644
 +    return true;
 +  }
 +
++  if (FirefoxTraceEnvEnabledAlias("FIREFOX_TRACE_VM_WINDOW",
++                                  "TRACE_VM_WINDOW", false)) {
++    // VM-window work is bounded by its ring capacity and does no per-op IPC.
++    // Keep the selected script in the interpreter until the request trigger.
++    return true;
++  }
++
 +  uint32_t limit = FirefoxTraceOpcodeExecutionLimit();
 +  // A zero limit is an explicitly unbounded mode. Keep it behind the
 +  // opt-in escape hatch; the normal VM UI and presets always use a finite
@@ -12073,9 +12505,12 @@ index 81a10dba41..ebe39ed258 100644
 +    const char* opcode = FirefoxTraceEnv("FIREFOX_TRACE_OPCODE", "TRACE_OPCODE");
 +    const char* vmStep =
 +        FirefoxTraceEnv("FIREFOX_TRACE_VM_STEP", "TRACE_VM_STEP");
++    const char* vmWindow =
++        FirefoxTraceEnv("FIREFOX_TRACE_VM_WINDOW", "TRACE_VM_WINDOW");
 +    bool interpreterTrace =
 +        (opcode && opcode[0] && strcmp(opcode, "0") != 0) ||
-+        (vmStep && vmStep[0] && strcmp(vmStep, "0") != 0);
++        (vmStep && vmStep[0] && strcmp(vmStep, "0") != 0) ||
++        (vmWindow && vmWindow[0] && strcmp(vmWindow, "0") != 0);
 +    return interpreterTrace && FirefoxTraceOpcodeScriptIdentityMatches(aScript) &&
 +           FirefoxTraceOpcodeBudgetAvailable(aScript);
 +  }
@@ -13462,9 +13897,13 @@ index 81a10dba41..ebe39ed258 100644
 +bool FirefoxTraceOpcodeConfigured() {
 +  const char* opcode = FirefoxTraceEnv("FIREFOX_TRACE_OPCODE", "TRACE_OPCODE");
 +  const char* vmStep = FirefoxTraceEnv("FIREFOX_TRACE_VM_STEP", "TRACE_VM_STEP");
++  const char* vmWindow =
++      FirefoxTraceEnv("FIREFOX_TRACE_VM_WINDOW", "TRACE_VM_WINDOW");
 +  bool opcodeEnabled = opcode && opcode[0] && strcmp(opcode, "0") != 0;
 +  bool vmStepEnabled = vmStep && vmStep[0] && strcmp(vmStep, "0") != 0;
-+  if (!opcodeEnabled && !vmStepEnabled) {
++  bool vmWindowEnabled =
++      vmWindow && vmWindow[0] && strcmp(vmWindow, "0") != 0;
++  if (!opcodeEnabled && !vmStepEnabled && !vmWindowEnabled) {
 +    return false;
 +  }
 +
@@ -13487,6 +13926,334 @@ index 81a10dba41..ebe39ed258 100644
 +bool FirefoxTraceOpcodeEventLoggingEnabled() {
 +  const char* opcode = FirefoxTraceEnv("FIREFOX_TRACE_OPCODE", "TRACE_OPCODE");
 +  return opcode && opcode[0] && strcmp(opcode, "0") != 0;
++}
++
++bool FirefoxTraceVMWindowEnabled() {
++  return FirefoxTraceEnvEnabledAlias("FIREFOX_TRACE_VM_WINDOW",
++                                     "TRACE_VM_WINDOW", false);
++}
++
++uint32_t FirefoxTraceVMWindowRequestedCapacity() {
++  return FirefoxTraceParseUintEnv("FIREFOX_TRACE_VM_WINDOW_RECORDS",
++                                  "TRACE_VM_WINDOW_RECORDS", 65536, 262144);
++}
++
++enum FirefoxTraceVMValueType : uint8_t {
++  FirefoxTraceVMValueUnknown = 0,
++  FirefoxTraceVMValueUndefined = 1,
++  FirefoxTraceVMValueNull = 2,
++  FirefoxTraceVMValueBoolean = 3,
++  FirefoxTraceVMValueInt32 = 4,
++  FirefoxTraceVMValueDouble = 5,
++  FirefoxTraceVMValueString = 6,
++  FirefoxTraceVMValueObject = 7,
++  FirefoxTraceVMValueBigInt = 8,
++  FirefoxTraceVMValueSymbol = 9,
++  FirefoxTraceVMValueMagic = 10,
++};
++
++uint8_t FirefoxTraceVMWindowCaptureValue(const Value& aValue,
++                                         uint64_t* aPayload,
++                                         bool* aHasPayload) {
++  *aPayload = 0;
++  *aHasPayload = false;
++  if (aValue.isUndefined()) {
++    return FirefoxTraceVMValueUndefined;
++  }
++  if (aValue.isNull()) {
++    return FirefoxTraceVMValueNull;
++  }
++  if (aValue.isBoolean()) {
++    *aPayload = aValue.toBoolean() ? 1 : 0;
++    *aHasPayload = true;
++    return FirefoxTraceVMValueBoolean;
++  }
++  if (aValue.isInt32()) {
++    *aPayload = static_cast<uint64_t>(static_cast<int64_t>(aValue.toInt32()));
++    *aHasPayload = true;
++    return FirefoxTraceVMValueInt32;
++  }
++  if (aValue.isDouble()) {
++    double number = aValue.toDouble();
++    memcpy(aPayload, &number, sizeof(number));
++    *aHasPayload = true;
++    return FirefoxTraceVMValueDouble;
++  }
++  if (aValue.isString()) {
++    return FirefoxTraceVMValueString;
++  }
++  if (aValue.isObject()) {
++    return FirefoxTraceVMValueObject;
++  }
++  if (aValue.isBigInt()) {
++    return FirefoxTraceVMValueBigInt;
++  }
++  if (aValue.isSymbol()) {
++    return FirefoxTraceVMValueSymbol;
++  }
++  if (aValue.isMagic()) {
++    return FirefoxTraceVMValueMagic;
++  }
++  return FirefoxTraceVMValueUnknown;
++}
++
++bool FirefoxTraceEnsureVMWindow(JSScript* aScript) {
++  uint32_t requested = FirefoxTraceVMWindowRequestedCapacity();
++  if (!requested) {
++    return false;
++  }
++  if (!sFirefoxTraceVMWindow || sFirefoxTraceVMWindowCapacity != requested) {
++    void* memory = realloc(
++        sFirefoxTraceVMWindow,
++        static_cast<size_t>(requested) * sizeof(FirefoxTraceVMWindowRecord));
++    if (!memory) {
++      return false;
++    }
++    sFirefoxTraceVMWindow =
++        static_cast<FirefoxTraceVMWindowRecord*>(memory);
++    sFirefoxTraceVMWindowCapacity = requested;
++    sFirefoxTraceVMWindowWritten = 0;
++    sFirefoxTraceVMWindowOverwritten = 0;
++  }
++
++  const char* scriptURL = aScript && aScript->filename() ? aScript->filename() : "";
++  uint32_t line = aScript ? aScript->lineno() : 0;
++  uint32_t column = aScript ? aScript->column().oneOriginValue() : 0;
++  size_t length = aScript ? aScript->length() : 0;
++  if (sFirefoxTraceVMWindowScriptURL[0] &&
++      (strcmp(sFirefoxTraceVMWindowScriptURL, scriptURL) != 0 ||
++       sFirefoxTraceVMWindowScriptLine != line ||
++       sFirefoxTraceVMWindowScriptColumn != column ||
++       sFirefoxTraceVMWindowScriptLength != length)) {
++    sFirefoxTraceVMWindowWritten = 0;
++    sFirefoxTraceVMWindowOverwritten = 0;
++  }
++  strncpy(sFirefoxTraceVMWindowScriptURL, scriptURL,
++          sizeof(sFirefoxTraceVMWindowScriptURL) - 1);
++  sFirefoxTraceVMWindowScriptURL[sizeof(sFirefoxTraceVMWindowScriptURL) - 1] =
++      '\0';
++  sFirefoxTraceVMWindowScriptLine = line;
++  sFirefoxTraceVMWindowScriptColumn = column;
++  sFirefoxTraceVMWindowScriptLength = length;
++  if (!sFirefoxTraceVMWindowBeginWritten) {
++    sFirefoxTraceVMWindowBeginWritten = true;
++    char* buffer = nullptr;
++    size_t bufferSize = 0;
++    FILE* line = open_memstream(&buffer, &bufferSize);
++    if (line) {
++      fprintf(line,
++              "{\"schema\":\"firefox_trace.vm_window.v1\","
++              "\"type\":\"js.vm_window.begin\",\"ts_us\":%llu,"
++              "\"pid\":%d,\"capacity\":%u,\"record_size\":%zu,"
++              "\"script_url\":",
++              static_cast<unsigned long long>(FirefoxTraceNowUS()), getpid(),
++              sFirefoxTraceVMWindowCapacity,
++              sizeof(FirefoxTraceVMWindowRecord));
++      FirefoxTraceWriteJsonString(line, sFirefoxTraceVMWindowScriptURL);
++      fputs("}\n", line);
++      fclose(line);
++      FirefoxTraceWriteJSEventLineRaw(buffer, bufferSize);
++      free(buffer);
++    }
++  }
++  return true;
++}
++
++void FirefoxTraceAppendVMWindowRecord(JSScript* aScript, jsbytecode* aPC,
++                                      uint64_t aPCOffset,
++                                      const InterpreterRegs& aRegs) {
++  if (!FirefoxTraceEnsureVMWindow(aScript)) {
++    return;
++  }
++  uint64_t seq = ++sFirefoxTraceVMWindowWritten;
++  if (seq > sFirefoxTraceVMWindowCapacity) {
++    ++sFirefoxTraceVMWindowOverwritten;
++  }
++  FirefoxTraceVMWindowRecord& record =
++      sFirefoxTraceVMWindow[(seq - 1) % sFirefoxTraceVMWindowCapacity];
++  record = FirefoxTraceVMWindowRecord();
++  record.seq = seq;
++  record.tsUS = FirefoxTraceNowUS();
++  record.originCallId = FirefoxTraceCurrentJSCallId();
++  record.pc = aPCOffset;
++  JSOp op = JSOp(*aPC);
++  record.op = static_cast<uint32_t>(uint8_t(op));
++  record.bytecodeLength = GetBytecodeLength(aPC);
++  record.stackDepth = aRegs.stackDepth();
++  record.operandLength = static_cast<uint8_t>(
++      std::min<unsigned>(record.bytecodeLength > 0 ? record.bytecodeLength - 1
++                                                   : 0,
++                         sizeof(record.operands)));
++  if (record.operandLength) {
++    memcpy(record.operands, aPC + 1, record.operandLength);
++  }
++  uint32_t stackCount = std::min<uint32_t>(2, aRegs.stackDepth());
++  if (stackCount >= 1) {
++    bool hasPayload = false;
++    record.stackType0 = FirefoxTraceVMWindowCaptureValue(
++        aRegs.sp[-1], &record.stackValue0, &hasPayload);
++    if (hasPayload) {
++      record.stackFlags |= 1;
++    }
++  }
++  if (stackCount >= 2) {
++    bool hasPayload = false;
++    record.stackType1 = FirefoxTraceVMWindowCaptureValue(
++        aRegs.sp[-2], &record.stackValue1, &hasPayload);
++    if (hasPayload) {
++      record.stackFlags |= 2;
++    }
++  }
++}
++
++extern "C" void FirefoxTraceTriggerVMWindow(const char* aReason) {
++  bool enabled = FirefoxTraceVMWindowEnabled();
++  if (!enabled) {
++    return;
++  }
++  const char* segmentId = FirefoxTraceEnv("FIREFOX_TRACE_SEGMENT_ID",
++                                          "TRACE_SEGMENT_ID");
++  if (!segmentId || !segmentId[0]) {
++    segmentId = "__process__";
++  }
++  if (sFirefoxTraceVMWindowFlushedSegmentId[0] &&
++      strcmp(sFirefoxTraceVMWindowFlushedSegmentId, segmentId) == 0) {
++    return;
++  }
++  if (!sFirefoxTraceVMWindow || !sFirefoxTraceVMWindowWritten ||
++      !sFirefoxTraceVMWindowCapacity) {
++    char line[512];
++    int len = SprintfLiteral(
++        line,
++        "{\"schema\":\"firefox_trace.event.v1\","
++        "\"type\":\"trace.degraded\",\"ts_us\":%llu,\"pid\":%d,"
++        "\"module\":\"vm_window\","
++        "\"reason\":\"target_trigger_without_records\"}\n",
++        static_cast<unsigned long long>(FirefoxTraceNowUS()), getpid());
++    if (len > 0) {
++      FirefoxTraceWriteJSEventLineRaw(line, static_cast<size_t>(len));
++    }
++    return;
++  }
++  uint64_t flushIndex = ++sFirefoxTraceVMWindowFlushIndex;
++  char fileName[256];
++  SprintfLiteral(fileName, "firefox-vm-window-%d-%p-%llu.bin", getpid(),
++                 PR_GetCurrentThread(),
++                 static_cast<unsigned long long>(flushIndex));
++
++  uint32_t count = static_cast<uint32_t>(std::min<uint64_t>(
++      sFirefoxTraceVMWindowWritten, sFirefoxTraceVMWindowCapacity));
++  uint64_t firstSeq = sFirefoxTraceVMWindowWritten - count + 1;
++  uint32_t firstIndex = static_cast<uint32_t>(
++      (firstSeq - 1) % sFirefoxTraceVMWindowCapacity);
++  FirefoxTraceVMWindowHeader header;
++  memcpy(header.magic, "FTVMW1\0", 7);
++  header.firstSeq = firstSeq;
++  header.lastSeq = sFirefoxTraceVMWindowWritten;
++  header.totalWritten = sFirefoxTraceVMWindowWritten;
++  header.overwritten = sFirefoxTraceVMWindowOverwritten;
++  header.capacity = sFirefoxTraceVMWindowCapacity;
++  header.count = count;
++  header.triggerTsUS = FirefoxTraceNowUS();
++  size_t artifactSize = sizeof(header) +
++                        static_cast<size_t>(count) *
++                            sizeof(FirefoxTraceVMWindowRecord);
++  char* artifact = static_cast<char*>(malloc(artifactSize));
++  if (!artifact) {
++    return;
++  }
++  memcpy(artifact, &header, sizeof(header));
++  uint32_t firstCount =
++      std::min<uint32_t>(count, sFirefoxTraceVMWindowCapacity - firstIndex);
++  memcpy(artifact + sizeof(header), &sFirefoxTraceVMWindow[firstIndex],
++         static_cast<size_t>(firstCount) *
++             sizeof(FirefoxTraceVMWindowRecord));
++  uint32_t secondCount = count - firstCount;
++  if (secondCount) {
++    memcpy(artifact + sizeof(header) +
++               static_cast<size_t>(firstCount) *
++                   sizeof(FirefoxTraceVMWindowRecord),
++           sFirefoxTraceVMWindow,
++           static_cast<size_t>(secondCount) *
++               sizeof(FirefoxTraceVMWindowRecord));
++  }
++
++  bool wrote = false;
++#if defined(__APPLE__) || defined(__GNUC__)
++  if (FirefoxTraceSendVMWindowArtifactToParent) {
++    wrote = FirefoxTraceSendVMWindowArtifactToParent(fileName, artifact,
++                                                     artifactSize);
++  }
++#endif
++  if (!wrote) {
++    const char* logDir =
++        FirefoxTraceEnv("FIREFOX_TRACE_LOG_DIR", "TRACE_LOG_DIR");
++    if (logDir && logDir[0]) {
++      mkdir(logDir, 0755);
++      char path[2048];
++      SprintfLiteral(path, "%s/%s", logDir, fileName);
++      FILE* file = fopen(path, "wb");
++      if (file) {
++        wrote = fwrite(artifact, 1, artifactSize, file) == artifactSize;
++        fclose(file);
++        if (!wrote) {
++          unlink(path);
++        }
++      }
++    }
++  }
++  free(artifact);
++  if (!wrote) {
++    return;
++  }
++  strncpy(sFirefoxTraceVMWindowFlushedSegmentId, segmentId,
++          sizeof(sFirefoxTraceVMWindowFlushedSegmentId) - 1);
++  sFirefoxTraceVMWindowFlushedSegmentId
++      [sizeof(sFirefoxTraceVMWindowFlushedSegmentId) - 1] = '\0';
++
++  char* lineBuffer = nullptr;
++  size_t lineSize = 0;
++  FILE* line = open_memstream(&lineBuffer, &lineSize);
++  if (line) {
++    fprintf(line,
++            "{\"schema\":\"firefox_trace.vm_window.v1\","
++            "\"type\":\"js.vm_window\",\"ts_us\":%llu,\"pid\":%d,"
++            "\"trigger_reason\":",
++            static_cast<unsigned long long>(header.triggerTsUS), getpid());
++    FirefoxTraceWriteJsonString(line, aReason ? aReason : "target-field");
++    fputs(",\"artifact_path\":", line);
++    FirefoxTraceWriteJsonString(line, fileName);
++    fprintf(line,
++            ",\"format\":\"ftvmw1-le\",\"record_size\":%zu,"
++            "\"first_seq\":%llu,\"last_seq\":%llu,\"record_count\":%u,"
++            "\"capacity\":%u,\"pretrigger_overwritten\":%llu,"
++            "\"retained_window_complete\":true,\"script_url\":",
++            sizeof(FirefoxTraceVMWindowRecord),
++            static_cast<unsigned long long>(header.firstSeq),
++            static_cast<unsigned long long>(header.lastSeq), count,
++            header.capacity,
++            static_cast<unsigned long long>(header.overwritten));
++    FirefoxTraceWriteJsonString(line, sFirefoxTraceVMWindowScriptURL);
++    fprintf(line,
++            ",\"script_line\":%u,\"script_column\":%u,"
++            "\"script_bytecode_length\":%zu,\"origin_call_id\":",
++            sFirefoxTraceVMWindowScriptLine,
++            sFirefoxTraceVMWindowScriptColumn,
++            sFirefoxTraceVMWindowScriptLength);
++    uint64_t originCallId = FirefoxTraceCurrentJSCallId();
++    if (originCallId) {
++      fprintf(line, "\"call_%llu\"",
++              static_cast<unsigned long long>(originCallId));
++    } else {
++      fputs("null", line);
++    }
++    fputs("}\n", line);
++    fclose(line);
++    FirefoxTraceWriteJSEventLineRaw(lineBuffer, lineSize);
++    free(lineBuffer);
++  }
++  sFirefoxTraceVMWindowWritten = 0;
++  sFirefoxTraceVMWindowOverwritten = 0;
 +}
 +
 +bool FirefoxTraceOpcodeTracingEnabled() {
@@ -13770,8 +14537,24 @@ index 81a10dba41..ebe39ed258 100644
 +
 +  uint64_t pcOffset = aScript->pcToOffset(aPC);
 +  bool opcodeLogEnabled = FirefoxTraceOpcodeEventLoggingEnabled();
++  bool vmWindowEnabled = FirefoxTraceVMWindowEnabled();
 +  bool vmStepMatch = FirefoxTraceVMStepMatches(pcOffset);
 +  bool opcodePCMatch = opcodeLogEnabled && FirefoxTraceOpcodePCMatches(pcOffset);
++  bool vmWindowMatch =
++      vmWindowEnabled && FirefoxTraceOpcodePCMatches(pcOffset);
++  if (!vmStepMatch && !opcodePCMatch && !vmWindowMatch) {
++    return;
++  }
++  if (vmWindowMatch) {
++    FirefoxTraceAppendVMWindowRecord(aScript, aPC, pcOffset, aRegs);
++  }
++  // The execution budget applies only to instructions selected for verbose
++  // opcode/VM-step output. A narrow PC range must not spend its budget on
++  // unrelated bytecodes executed earlier in the same script.
++  if ((vmStepMatch || opcodePCMatch) &&
++      !FirefoxTraceConsumeOpcodeExecutionBudget(aScript)) {
++    return;
++  }
 +  if (!vmStepMatch && !opcodePCMatch) {
 +    return;
 +  }
@@ -15441,7 +16224,7 @@ index 81a10dba41..ebe39ed258 100644
  
  template <bool Eq>
  static MOZ_ALWAYS_INLINE bool LooseEqualityOp(JSContext* cx,
-@@ -433,6 +4455,8 @@ bool js::RunScript(JSContext* cx, RunState& state) {
+@@ -433,6 +4879,8 @@ bool js::RunScript(JSContext* cx, RunState& state) {
      return false;
    }
  
@@ -15450,7 +16233,7 @@ index 81a10dba41..ebe39ed258 100644
    GeckoProfilerEntryMarker marker(cx, state.script());
  
    // If the isExecuting flag was not set, then enable it.
-@@ -458,21 +4482,23 @@ bool js::RunScript(JSContext* cx, RunState& state) {
+@@ -458,21 +4906,23 @@ bool js::RunScript(JSContext* cx, RunState& state) {
      }
    });
  
@@ -15483,7 +16266,7 @@ index 81a10dba41..ebe39ed258 100644
  }
  #ifdef _MSC_VER
  #  pragma optimize("", on)
-@@ -564,23 +4590,26 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
+@@ -564,23 +5014,26 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
      return ReportIsNotFunction(cx, args.calleev(), skipForCallee, construct);
    }
  
@@ -15513,7 +16296,7 @@ index 81a10dba41..ebe39ed258 100644
    }
  
    /* Invoke native functions. */
-@@ -594,19 +4623,19 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
+@@ -594,19 +5047,19 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
          native = jitInfo->ignoresReturnValueMethod;
        }
      }
@@ -15536,7 +16319,7 @@ index 81a10dba41..ebe39ed258 100644
    }
  
    /* Run function until JSOp::RetRval, JSOp::Return or error. */
-@@ -616,20 +4645,20 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
+@@ -616,20 +5069,20 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
    // ensure this object has the correct realm.
    AutoRealm ar(cx, state.script());
    if (construct && !MaybeCreateThisForConstructor(cx, args)) {
@@ -15560,7 +16343,7 @@ index 81a10dba41..ebe39ed258 100644
  }
  
  // Returns true if the callee needs an outerized |this| object. Outerization
-@@ -1817,6 +5846,19 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -1817,6 +6270,15 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
  #define ADVANCE_AND_DISPATCH(N)                  \
    JS_BEGIN_MACRO                                 \
      REGS.pc += (N);                              \
@@ -15570,17 +16353,13 @@ index 81a10dba41..ebe39ed258 100644
 +        firefoxTraceOpcodeTraceEnabled = FirefoxTraceOpcodeTracingEnabled(); \
 +      }                                                                  \
 +      if (MOZ_LIKELY(firefoxTraceOpcodeTraceEnabled)) {                 \
-+        if (MOZ_LIKELY(FirefoxTraceConsumeOpcodeExecutionBudget(script))) { \
-+          FirefoxTraceWriteOpcodeEvent(script, REGS.pc, REGS);          \
-+        } else {                                                        \
-+          firefoxTraceOpcodeTraceEnabled = false;                       \
-+        }                                                               \
++        FirefoxTraceWriteOpcodeEvent(script, REGS.pc, REGS);            \
 +      }                                                                  \
 +    }                                                                    \
      SANITY_CHECKS();                             \
      DISPATCH_TO(*REGS.pc | activation.opMask()); \
    JS_END_MACRO
-@@ -1928,6 +5970,13 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -1928,6 +6390,13 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
    RootedScript script(cx);
    SET_SCRIPT(REGS.fp()->script());
  
@@ -15594,7 +16373,7 @@ index 81a10dba41..ebe39ed258 100644
    /*
     * Pool of rooters for use in this interpreter frame. References to these
     * are used for local variables within interpreter cases. This avoids
-@@ -2025,11 +6074,12 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -2025,11 +6494,12 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
      COUNT_COVERAGE();
      END_CASE(JumpTarget)
  
@@ -15609,7 +16388,7 @@ index 81a10dba41..ebe39ed258 100644
          script->incWarmUpCounter();
  
          jit::MethodStatus status =
-@@ -3320,20 +7370,55 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -3320,20 +7790,55 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
            goto error;
          }
  

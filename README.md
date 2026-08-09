@@ -163,6 +163,7 @@ args/return 采集；事件带 `capture_tier=boundary_auto`。UI full-chain 对�
 | 已找到候选函数，要确认返回值 | `target-return` | 配合 `TRACE_SCRIPT_CONTAINS` / `TRACE_FUNCTION_CONTAINS` / `TRACE_SCRIPT_SHA256` 使用 |
 | 要看目标函数输入依赖 | `target-values` | 打开 args/return preview、object preview 和 value_store |
 | 需要目标局部调用树 | `deep-causal` | 只在目标脚本已收窄后使用 |
+| JSVMP 目标前完整执行窗口 | `vm-window` | 固定 80-byte record，默认 65,536 条；目标字段命中后冻结二进制 artifact |
 | VM/opcode 场景 | `opcode-window` | 必须锁脚本；可再锁 PC 范围，默认 4,096 条，并有 rate/IPC 预算 |
 | 一次手动操作收集完整证据面 | `full-chain` | 中控台默认计划；浅值、预算、ring buffer 控制性能 |
 

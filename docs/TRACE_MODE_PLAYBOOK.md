@@ -12,6 +12,7 @@
 | 请求已存在，JS 参数/返回/对象在 producer 附近缺失 | 沿用原启动时机 | `full-chain` + `boundary`，定向 object overlay | 已证实脚本/函数/SHA 与字段 | VM、全站深对象 |
 | 本地 host 缺一个明确 DOM/BOM API 或返回值 | 沿用原启动时机 | `full-chain` + `boundary`，定向 DOM overlay | 目标字段和 `Interface.member` | 全站 DOM、VM |
 | 逻辑请求已对齐，仍需检查 multipart/压缩/编码/原始 chunk | 短动作 | `full-chain` + `boundary` + Raw HTTP | 同一目标字段 | VM、对象扩展 |
+| 已证实 JSVMP，需保留目标请求前完整执行窗口 | 短动作 | `vm-window` + 普通请求/boundary 锚点 | 脚本身份、目标字段；PC range 可选 | 逐条 opcode JSON、VM step、WASM |
 | 已证实本地解释器/JSVMP，缺局部 bytecode 事实 | 短动作 | `opcode-window` | Agent 给出的脚本身份和 PC 范围 | VM step、栈 primitive |
 | dispatcher PC 已被上一轮确认 | 短动作 | `VM step` | Agent 写入的 dispatcher PC | 全站 opcode、WASM dump |
 | 已证实目标进入 WASM | 短动作 | WASM module metadata | 脚本/模块身份 | WASM artifact/raw bytes，直到需要 |
@@ -32,7 +33,7 @@
 | Query/Body/Header/Cookie | 只在真实位置填写字段名；其他位置填 `__disabled__` 并关闭对应 scope。 |
 | 采集计划 | 默认 `full-chain`；只有首轮页面负载明确过高时才用 `discover-light`。 |
 | 强度 | 默认“通用完整值落盘”；短窗口、确认需要更深 JS 值时用高保真；不要为 DOM 指纹直接提高全局对象深度。 |
-| VM 阶段 | 普通 JS/补环境选“默认关闭 VM”；由 Agent 确认 JSVM 后才选择局部 opcode/VM step。 |
+| VM 阶段 | 普通 JS/补环境选“默认关闭 VM”；确认 JSVM 后优先选择 VM window，只有局部缺口再开 opcode/VM step。 |
 
 ### 2.2 模块
 
@@ -62,16 +63,23 @@
 
 ### 2.4 VM / WASM
 
-| 阶段 | JS opcode | raw operands | 栈 slot/type | 栈 primitive | VM step | WASM module/artifact/raw |
+| 阶段 | VM window | JS opcode | raw operands | 栈 primitive | VM step | WASM module/artifact/raw |
 |---|---:|---:|---:|---:|---:|---:|
 | 默认关闭 VM | 关 | 关 | 关 | 关 | 关 | 全关 |
 | 一轮还原 | 关 | 关 | 关 | 关 | 关 | 全关 |
-| 局部 opcode | 开 | 开 | 关 | 关 | 关 | 全关 |
-| VM step dispatcher | 关 | 关 | 关 | 关 | 开 | 全关 |
-| VM 状态补证 | 由 Agent 指定 | 由 Agent 指定 | 可开 | 只在需要时开 | 由 Agent 指定 | 全关 |
+| VM window | 开，默认 65536 条 | 关 | 记录二进制 operand | 自动记录 top-2 primitive | 关 | 全关 |
+| 局部 opcode | 关 | 开 | 开 | 按缺口开启 | 关 | 全关 |
+| VM step dispatcher | 关 | 关 | 关 | 按缺口开启 | 开 | 全关 |
 | WASM 元数据 | 关 | 关 | 关 | 关 | 关 | 仅 module 开 |
 
 安全参数默认：opcode limit `4096`、opcode execution `65536`、VM step `2048`、opcode `2000 events/s`、opcode `4194304 bytes/s`。这些只属于 VM/opcode 细粒度模式。普通 full-chain 的 IPC 为 `0`（不按每秒事件/字节数丢弃），DOM/BOM、JS value、Fetch/XHR body/header、script raw 也不设 trace-side 截断；`0` 表示不截断。`VM/opcode 也不截断` 只用于已锁定脚本的一次短操作。
+
+VM window 热路径不生成 JSON、不逐条 IPC。每条固定 `80` bytes，默认
+`65536` 条约占 `5 MiB/目标线程`；query/body/header/cookie 任一配置字段命中后
+通过 parent IPC 每个 segment 首次命中冻结为一个
+`firefox-vm-window-*.bin`，并写一条 `js.vm_window` 元数据事件。普通
+Fetch/XHR/Cookie、script artifact 和 boundary 锚点继续保留。使用
+`python3 tools/trace_vm_window.py TRACE_DIR` 检查 PC、转移边和 primitive 覆盖率。
 
 Agent 配置已经写入脚本 token、line/column、bytecode length 或 PC range 时，这些显式身份在新输出目录中仍然生效；`target-candidates.json` 只用于补全空白字段，不会覆盖一份完整的 Agent handoff。局部 opcode 需要中间数值时，再在同一脚本/PC 窗口打开 stack slots/primitive；不要把栈采集扩展到全站。
 

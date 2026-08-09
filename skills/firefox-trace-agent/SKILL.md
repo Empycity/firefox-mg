@@ -234,7 +234,7 @@ Do not ask the user to manually transfer filters. Write visible UI values and lo
 VM/opcode follows only after the final full-chain overlay still lacks required evidence:
 
 ```text
-full-chain/一轮还原（默认已含值制品） -> 局部 opcode -> VM step
+full-chain/一轮还原（默认已含值制品） -> VM window -> 局部 opcode -> VM step
 ```
 
 Narrow one dimension at a time: field location/name, automatically derived script identity, producer evidence, then VM/opcode PC range. The UI and server derive script substring/hash, PC range (`START:END`) and dispatcher PC from `index/target-candidates.json`; do not ask the user to invent internal filter values. The first trace does not need a handoff file: after stop/finalize, write visible UI changes and long next-pass `TRACE_*` variables to `$TRACE_DIR/agent-next.json` and tell the user to click `② 首轮采集 / 目标字段 -> 加载当前目录 agent-next.json`. For an env-only handoff, use `$PWD/agent-next.env` and the `加载 env 文件…` picker.

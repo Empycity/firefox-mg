@@ -312,6 +312,7 @@ VM/WASM 细粒度默认不是全站深抓。它用于脚本已经锁定后分析
 
 ```text
 JS opcode
+VM window
 raw operands
 栈 slot 类型
 栈 primitive 值
@@ -326,6 +327,7 @@ VM/opcode 也不截断
 
 | 项 | 默认 |
 |---|---:|
+| VM window records | 65536（约 5 MiB/目标线程） |
 | opcode 上限 | 4096 |
 | opcode 执行预算 | 65536 |
 | VM step 上限 | 2048 |
@@ -345,7 +347,7 @@ VM/opcode 也不截断
 - `opcode PC 范围` 是 SpiderMonkey bytecode PC 的数字范围，格式 `START:END`。
 - `dispatcher PC` 是 JSVM/解释器分发循环所在的单个 bytecode PC。
 - “分析后自动套用”的意思是：先 trace 一轮，工具把请求 caller、`origin_call_id`、JS 调用链、值匹配和脚本 artifact 汇总为候选；Agent 只审核候选，下一轮由中控台自动带入脚本身份和已确认的 PC 结果。
-- JSVMP 常见顺序：先选“一轮还原模式”拿请求/脚本/value 证据；需要下一轮时 Agent 写 `$TRACE_DIR/agent-next.json`（仅 env 变化时写 `.env`），用户在 UI 一键加载；确认 opcode 热点后选“局部 opcode”；确认 dispatcher PC 后才选“VM step”。用户不填写脚本关键词、PC range 或 dispatcher PC。
+- JSVMP 常见顺序：先选“一轮还原模式”拿请求/脚本/value 证据；Agent 写下一轮配置后优先选“VM window”取得目标前完整紧凑窗口；只有窗口摘要仍缺局部事实时才选“局部 opcode”，确认 dispatcher 后再选“VM step”。
 - 做 JSVMP 时，前面的默认模块通常保留：JS、XHR、Fetch、DOM/BOM、Cookie、Storage、Script artifact 都继续开；VM 选项是附加细粒度证据。只有页面特别重或出现 degraded，再收窄脚本/函数或关闭无关模块。
 - “VM/opcode 也不截断”会写 `TRACE_UNSAFE_ALLOW=1`，只适合锁定脚本后的一次短目标动作。
 - 这些保护值是 VM/opcode/WASM 的保险丝，不是普通 full-chain 日志总上限。
@@ -357,12 +359,13 @@ UI 现在提供阶段预设，普通使用不需要手动研究每个 checkbox�
 | 预设 | 自动设置 | 你需要填写 |
 |---|---|---|
 | `一轮还原模式（推荐：请求触发回溯）` | 不开全站 opcode/VM step/raw operands；用请求命中回溯 JS/value/source ring buffer | 执行一次目标动作 |
+| `VM window：目标触发环形缓冲` | 目标脚本写固定 80-byte 二进制记录；目标字段命中后一次落盘，不逐条 JSON/IPC | 加载 Agent 配置后执行同一个目标动作 |
 | `局部 opcode：自动候选脚本` | 只在已有候选脚本/范围时开 JS opcode + raw operands；用于补 VM 证据 | 执行同一个目标动作 |
 | `VM step：已确认 dispatcher` | 仅在 dispatcher PC 已确认后启用 VM step；否则保持局部 opcode/回溯策略 | 执行同一个目标动作 |
 | `默认关闭 VM（普通 full-chain）` | VM/WASM 细粒度全部关闭 | 无 |
 | `WASM：只看模块元数据` | 只看 WASM module 元数据 | 无；需要完整模块时再单独勾 artifact |
 
-最常用的 JSVMP 操作就是：先选择“一轮还原模式”→ 执行目标动作 → 停止整理；Agent 审核 `target-candidates.json` 后再决定是否选择“局部 opcode”或“VM step”。整个过程不需要用户猜脚本关键词、PC range 或 dispatcher PC。
+最常用的 JSVMP 操作是：一轮还原 → VM window → 按窗口摘要决定局部 opcode / VM step。多轮只传递脚本、PC 和状态角色，不跨轮复制动态值。
 
 Agent 每到一个 VM 阶段都应该给用户明确提醒：
 
@@ -370,6 +373,7 @@ Agent 每到一个 VM 阶段都应该给用户明确提醒：
 |---|---|
 | 请求/字段还没稳定 | 选“一轮还原模式”；JS opcode/VM step/WASM dump/raw 都不勾；只执行一次目标动作；请求出现后停止整理。 |
 | target/value 第二轮 | Agent 先写 `$TRACE_DIR/agent-next.json`；用户点“② 首轮采集 / 目标字段 -> 加载当前目录 agent-next.json”。只有 env 文件时才展开“显示高级 / Agent 配置 -> ⑥ 额外环境变量”。 |
+| VM window 轮 | 选“VM window：目标触发环形缓冲”；保持 opcode/VM step 关闭；目标字段命中后由 watchdog 停止整理。 |
 | opcode 热点轮 | 选“局部 opcode：自动候选脚本”；JS opcode 和 raw operands 勾；VM step、栈 primitive、WASM dump/raw 先不勾；执行同一个短动作一次。 |
 | dispatcher 轮 | 只有 Agent 明确给出 dispatcher PC 后选“VM step：已确认 dispatcher”；不要手填 PC；执行同一个短动作一次。 |
 | VM 状态补证 | 只有 Agent 指出缺 VM state 时，才短窗口勾“栈 slot 类型”或“栈 primitive 值”。 |

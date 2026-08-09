@@ -10,7 +10,7 @@ Usage:
 
 Config options:
   --segment LABEL
-  --preset full-chain|discover-light|target-return|target-values|deep-causal|opcode-window|manual
+  --preset full-chain|discover-light|target-return|target-values|deep-causal|vm-window|opcode-window|manual
   --profile VALUE
   --js-mode boundary|target|deep|off
   --script-contains CSV
@@ -221,6 +221,24 @@ PRESETS = {
         "TRACE_IPC_MAX_EVENTS_PER_SECOND": "0",
         "TRACE_IPC_MAX_BYTES_PER_SECOND": "0",
         "FIREFOX_TRACE_JS_LIMIT_EVENTS": "0",
+    },
+    "vm-window": {
+        "TRACE_PLAN": "vm-window",
+        "TRACE_CAPTURE_PLAN": "vm-window",
+        "TRACE_PROFILE": "vm",
+        "TRACE_JS_MODE": "boundary",
+        "TRACE_EXECUTION_MODE": "opcode",
+        "TRACE_VM_WINDOW": "1",
+        "TRACE_VM_WINDOW_RECORDS": "65536",
+        "TRACE_OPCODE": "0",
+        "TRACE_VM_STEP": "0",
+        "TRACE_JS_CAPTURE_VALUES": "0",
+        "TRACE_JS_AUTO_CAPTURE_VALUES": "0",
+        "TRACE_JS_BOUNDARY_BUFFER": "1",
+        "TRACE_JS_FULL_SPOOL": "0",
+        "FIREFOX_TRACE_JS_LIMIT_EVENTS": "0",
+        "TRACE_IPC_MAX_EVENTS_PER_SECOND": "6000",
+        "TRACE_IPC_MAX_BYTES_PER_SECOND": "4194304",
     },
     "opcode-window": {
         "TRACE_PLAN": "opcode-window",
@@ -579,7 +597,8 @@ def apply_vm_safety_defaults(env):
         "TRACE_EXECUTION_MODE", "FIREFOX_TRACE_EXECUTION_MODE"
     ).lower()
     vm_step_enabled = boolish(value("TRACE_VM_STEP", "FIREFOX_TRACE_VM_STEP"))
-    if opcode_enabled or execution_mode == "opcode" or vm_step_enabled:
+    vm_window_enabled = boolish(value("TRACE_VM_WINDOW", "FIREFOX_TRACE_VM_WINDOW"))
+    if opcode_enabled or execution_mode == "opcode" or vm_step_enabled or vm_window_enabled:
         out.setdefault("TRACE_OPCODE_LIMIT", "4096")
         out.setdefault("TRACE_OPCODE_EXECUTION_LIMIT", "65536")
         out.setdefault("TRACE_VM_STEP_LIMIT", "2048")
@@ -587,6 +606,7 @@ def apply_vm_safety_defaults(env):
         out.setdefault("TRACE_OPCODE_MAX_BYTES_PER_SECOND", "4194304")
         out.setdefault("TRACE_IPC_MAX_EVENTS_PER_SECOND", "6000")
         out.setdefault("TRACE_IPC_MAX_BYTES_PER_SECOND", "4194304")
+        out.setdefault("TRACE_VM_WINDOW_RECORDS", "65536")
     return with_aliases(out)
 
 
@@ -642,10 +662,13 @@ def enforce_safety(record):
         "TRACE_EXECUTION_MODE", "FIREFOX_TRACE_EXECUTION_MODE"
     ).lower()
     vm_step_enabled = boolish(value("TRACE_VM_STEP", "FIREFOX_TRACE_VM_STEP"))
+    vm_window_enabled = boolish(value("TRACE_VM_WINDOW", "FIREFOX_TRACE_VM_WINDOW"))
     wasm_insn_enabled = boolish(value("TRACE_WASM_INSN", "FIREFOX_TRACE_WASM_INSN"))
     wasm_dump_enabled = boolish(value("TRACE_WASM_DUMP", "FIREFOX_TRACE_WASM_DUMP"))
 
-    if opcode_enabled or execution_mode == "opcode" or vm_step_enabled:
+    if opcode_enabled or execution_mode == "opcode" or vm_step_enabled or vm_window_enabled:
+        if vm_window_enabled and (opcode_enabled or vm_step_enabled):
+            raise SystemExit("TRACE_VM_WINDOW must run separately from TRACE_OPCODE/TRACE_VM_STEP")
         has_opcode_filter = any(
             value(key).strip()
             for key in (
@@ -657,7 +680,20 @@ def enforce_safety(record):
         )
         if not has_opcode_filter:
             raise SystemExit(
-                "opcode/vm_step requires an automatically resolved script identity"
+                "opcode/vm_step/vm-window requires an automatically resolved script identity"
+            )
+        if vm_window_enabled and not any(
+            value(name).strip().lower()
+            not in {"", "__disabled__", "__off__", "off", "none", "false", "0"}
+            for name in (
+                "TRACE_QUERY_FIELDS",
+                "TRACE_BODY_FIELDS",
+                "TRACE_HEADER_FIELDS",
+                "TRACE_COOKIE_FIELDS",
+            )
+        ):
+            raise SystemExit(
+                "TRACE_VM_WINDOW requires at least one configured request target field"
             )
         if vm_step_enabled and not value(
             "TRACE_VM_DISPATCH_PC", "FIREFOX_TRACE_VM_DISPATCH_PC"
@@ -673,6 +709,7 @@ def enforce_safety(record):
         bounded("TRACE_IPC_MAX_BYTES_PER_SECOND", 4194304, 65536, 8388608)
         bounded("TRACE_OPCODE_STACK_SLOTS", 0, 0, 4)
         bounded("TRACE_VM_STEP_LIMIT", 2048, 1, 20000)
+        bounded("TRACE_VM_WINDOW_RECORDS", 65536, 1024, 262144)
 
     if not record.get("enabled"):
         return

@@ -1,5 +1,9 @@
 import importlib.util
 import pathlib
+import subprocess
+import struct
+import sys
+import tempfile
 import unittest
 
 
@@ -18,6 +22,38 @@ SERVER_SPEC.loader.exec_module(trace_console_server)
 
 
 class TraceFinalizeTest(unittest.TestCase):
+    def test_vm_window_analyzer_rejects_missing_artifact(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "tools/trace_vm_window.py"),
+                    raw_dir,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('"windows": []', result.stdout)
+
+    def test_vm_window_artifact_validation(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            trace_dir = pathlib.Path(raw_dir)
+            record = trace_finalize.VM_WINDOW_RECORD.pack(
+                7, 100, 3, 12, 0, 0, 5, 2, 1, 1, b"x" + b"\0" * 15, 0, 0, 0
+            )
+            header = trace_finalize.VM_WINDOW_HEADER.pack(
+                b"FTVMW1\0\0", 1, len(record), 7, 7, 7, 0, 16, 1, 101
+            )
+            (trace_dir / "window.bin").write_bytes(header + record)
+            result = trace_finalize.inspect_vm_window_artifact(
+                trace_dir, {"artifact_path": "window.bin"}
+            )
+            self.assertTrue(result["valid"])
+            self.assertEqual(result["first_seq"], 7)
+            self.assertEqual(result["record_count"], 1)
+
     def test_promise_ledger_pairs_settlement(self):
         rows = [
             {
@@ -191,6 +227,54 @@ class TraceFinalizeTest(unittest.TestCase):
         self.assertTrue(health["evidence_complete"])
         self.assertEqual(health["incomplete_reasons"], [])
 
+    def test_trace_health_rejects_unstarted_target_run(self):
+        health = trace_finalize.build_trace_health(
+            {"env": {"TRACE_QUERY_FIELDS": "trace_token"}},
+            [],
+            [],
+            {"coverage": {}},
+        )
+        self.assertFalse(health["evidence_complete"])
+        self.assertIn(
+            "request:configured_target_not_observed",
+            health["incomplete_reasons"],
+        )
+        self.assertIn(
+            "control:runtime_config_not_acknowledged",
+            health["incomplete_reasons"],
+        )
+        self.assertEqual(health["counts"]["target_field_matches"], 0)
+        self.assertEqual(health["counts"]["runtime_config_acks"], 0)
+
+    def test_trace_health_accepts_acknowledged_target_run(self):
+        health = trace_finalize.build_trace_health(
+            {"env": {"TRACE_QUERY_FIELDS": "trace_token"}},
+            [{"type": "trace.config.applied"}],
+            [{"field_name": "trace_token", "target": True, "value": "x"}],
+            {"coverage": {}},
+        )
+        self.assertTrue(health["evidence_complete"])
+        self.assertEqual(health["incomplete_reasons"], [])
+
+    def test_trace_health_requires_requested_vm_window_artifact(self):
+        health = trace_finalize.build_trace_health(
+            {
+                "env": {
+                    "TRACE_QUERY_FIELDS": "trace_token",
+                    "TRACE_VM_WINDOW": "1",
+                }
+            },
+            [{"type": "trace.config.applied"}],
+            [{"field_name": "trace_token", "target": True, "value": "x"}],
+            {"coverage": {}},
+        )
+        self.assertFalse(health["evidence_complete"])
+        self.assertIn(
+            "vm_window:artifact_not_emitted",
+            health["incomplete_reasons"],
+        )
+        self.assertEqual(health["counts"]["vm_window_artifacts"], 0)
+
     def test_full_chain_overrides_inactive_vm_ipc_defaults(self):
         env = trace_console_server.startup_env_from_payload(
             {
@@ -209,6 +293,28 @@ class TraceFinalizeTest(unittest.TestCase):
         )
         self.assertEqual(env["TRACE_IPC_MAX_EVENTS_PER_SECOND"], "0")
         self.assertEqual(env["TRACE_IPC_MAX_BYTES_PER_SECOND"], "0")
+
+    def test_vm_window_uses_compact_mode_without_opcode_json(self):
+        env = trace_console_server.vm_env_from_payload(
+            {
+                "vm_window": True,
+                "vm_window_records": 32768,
+                "script_contains": "target.js",
+            }
+        )
+        self.assertEqual(env["TRACE_EXECUTION_MODE"], "opcode")
+        self.assertEqual(env["TRACE_VM_WINDOW"], "1")
+        self.assertEqual(env["TRACE_VM_WINDOW_RECORDS"], "32768")
+        self.assertEqual(env["TRACE_OPCODE"], "0")
+        self.assertEqual(env["TRACE_VM_STEP"], "0")
+        self.assertEqual(env["TRACE_JS_MODE"], "boundary")
+        self.assertEqual(env["TRACE_JS_BOUNDARY_BUFFER"], "1")
+
+    def test_vm_window_rejects_verbose_opcode_combination(self):
+        with self.assertRaisesRegex(ValueError, "必须分阶段运行"):
+            trace_console_server.vm_env_from_payload(
+                {"vm_window": True, "opcode": True}
+            )
 
 
 if __name__ == "__main__":

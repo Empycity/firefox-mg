@@ -67,6 +67,23 @@ TRACE_WATCHDOG_PID=$!
 
 ## Bounded opcode window
 
+Before verbose opcode, prefer a compact VM window:
+
+```bash
+tools/trace-control.sh "$TRACE_DIR" new-segment vm-window
+tools/trace-control.sh "$TRACE_DIR" config \
+  --preset vm-window \
+  --query-fields 'FIELD_A'
+tools/trace-control.sh "$TRACE_DIR" start vm-window
+python3 tools/trace-stop-on-target.py "$TRACE_DIR" \
+  --max-seconds 120 --max-bytes 2147483648 \
+  >"$TRACE_DIR/stop-on-target-receipt.json" 2>&1 &
+# repeat the target action once; target hit freezes the binary window
+python3 tools/trace_vm_window.py "$TRACE_DIR"
+```
+
+## Bounded verbose opcode window
+
 ```bash
 tools/trace-control.sh "$TRACE_DIR" new-segment opcode-window
 tools/trace-control.sh "$TRACE_DIR" config \

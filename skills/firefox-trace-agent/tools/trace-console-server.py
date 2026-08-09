@@ -55,6 +55,7 @@ OPTION_FLAGS = {
 }
 
 VM_SAFE_DEFAULTS = {
+    "vm_window_records": 65536,
     "opcode_limit": 4096,
     "opcode_execution_limit": 65536,
     "vm_step_limit": 2048,
@@ -130,7 +131,8 @@ def resolve_vm_identity(
     payload = dict(vm) if isinstance(vm, dict) else {}
     requested_opcode = boolish(payload.get("opcode"))
     requested_step = boolish(payload.get("vm_step"))
-    if not (requested_opcode or requested_step):
+    requested_window = boolish(payload.get("vm_window"))
+    if not (requested_opcode or requested_step or requested_window):
         return payload, {
             "status": "not-requested",
             "applied": False,
@@ -159,6 +161,7 @@ def resolve_vm_identity(
             }
         payload["opcode"] = False
         payload["vm_step"] = False
+        payload["vm_window"] = False
         return payload, {
             "status": "pending-first-pass",
             "applied": False,
@@ -188,6 +191,7 @@ def resolve_vm_identity(
     if not str(payload.get("script_contains") or "").strip():
         payload["opcode"] = False
         payload["vm_step"] = False
+        payload["vm_window"] = False
         return payload, {
             "status": "pending-script-identity",
             "applied": False,
@@ -228,11 +232,12 @@ def resolve_payload_vm(
     requested = payload.get("vm") if isinstance(payload.get("vm"), dict) else {}
     effective_vm, auto_vm = resolve_vm_identity(trace_dir, requested)
     effective["vm"] = effective_vm
-    requested_interpreter = boolish(requested.get("opcode")) or boolish(
-        requested.get("vm_step")
+    requested_interpreter = any(
+        boolish(requested.get(key)) for key in ("opcode", "vm_step", "vm_window")
     )
-    applied_interpreter = boolish(effective_vm.get("opcode")) or boolish(
-        effective_vm.get("vm_step")
+    applied_interpreter = any(
+        boolish(effective_vm.get(key))
+        for key in ("opcode", "vm_step", "vm_window")
     )
     if requested_interpreter and not applied_interpreter:
         options = dict(payload.get("options") or {})
@@ -267,7 +272,10 @@ def vm_env_from_payload(vm: object) -> dict[str, str]:
 
     opcode = boolish(vm.get("opcode"))
     vm_step = boolish(vm.get("vm_step"))
-    interpreter = opcode or vm_step
+    vm_window = boolish(vm.get("vm_window"))
+    if vm_window and (opcode or vm_step):
+        raise ValueError("VM window 与逐条 opcode/VM step 必须分阶段运行")
+    interpreter = opcode or vm_step or vm_window
     stack_requested = opcode and (
         boolish(vm.get("opcode_stack")) or boolish(vm.get("opcode_stack_primitives"))
     )
@@ -279,6 +287,15 @@ def vm_env_from_payload(vm: object) -> dict[str, str]:
         "TRACE_UNSAFE_ALLOW": "1" if vm_unlimited else "0",
         "TRACE_EXECUTION_MODE": "opcode" if interpreter else "jit",
         "TRACE_OPCODE": "1" if opcode else "0",
+        "TRACE_VM_WINDOW": "1" if vm_window else "0",
+        "TRACE_VM_WINDOW_RECORDS": str(
+            bounded_int(
+                vm.get("vm_window_records"),
+                VM_SAFE_DEFAULTS["vm_window_records"],
+                1024,
+                262144,
+            )
+        ),
         "TRACE_OPCODE_OPERANDS": "1"
         if opcode and boolish(vm.get("opcode_operands"))
         else "0",
@@ -421,6 +438,20 @@ def vm_env_from_payload(vm: object) -> dict[str, str]:
         if script_contains:
             env["TRACE_SCRIPT_CONTAINS"] = script_contains
 
+    if vm_window:
+        # Keep the low-frequency request/call skeleton while the selected
+        # script writes compact VM records. No per-op JSON is enabled here.
+        env.update(
+            {
+                "TRACE_JS_MODE": "boundary",
+                "TRACE_JS_CAPTURE_VALUES": "0",
+                "TRACE_JS_AUTO_CAPTURE_VALUES": "0",
+                "TRACE_JS_BOUNDARY_BUFFER": "1",
+                "TRACE_JS_FULL_SPOOL": "0",
+                "FIREFOX_TRACE_JS_LIMIT_EVENTS": "0",
+            }
+        )
+
     return env
 
 MODULES = [
@@ -455,6 +486,8 @@ RESTART_REQUIRED = [
     "TRACE_HEADLESS",
     "TRACE_EXECUTION_MODE",
     "TRACE_OPCODE",
+    "TRACE_VM_WINDOW",
+    "TRACE_VM_WINDOW_RECORDS",
     "TRACE_OPCODE_SCRIPT_CONTAINS",
     "TRACE_SCRIPT_SHA256",
     "TRACE_OPCODE_SCRIPT_LINE",
@@ -705,8 +738,9 @@ def startup_env_from_payload(payload: dict) -> dict[str, str]:
     # choice.  Re-apply its controlled keys after ordinary UI options so a
     # default `boundary` radio value cannot undo the automatic VM identity.
     vm_payload = payload.get("vm") if isinstance(payload.get("vm"), dict) else {}
-    vm_interpreter = boolish(vm_payload.get("opcode")) or boolish(
-        vm_payload.get("vm_step")
+    vm_interpreter = any(
+        boolish(vm_payload.get(key))
+        for key in ("opcode", "vm_step", "vm_window")
     )
     explicit_env = {
         str(key) for key in (payload.get("env") or {}) if str(key).strip()
@@ -806,7 +840,7 @@ def classify_event(path: pathlib.Path, event: dict) -> str:
         return "state"
     if typ.startswith("script.") or "script" in name:
         return "script"
-    if typ.startswith(("wasm.", "js.opcode", "js.vm_step")):
+    if typ.startswith(("wasm.", "js.opcode", "js.vm_step", "js.vm_window")):
         return "wasm-vm"
     if typ.startswith("js."):
         return "js"
@@ -1428,8 +1462,9 @@ class TraceConsole:
         # one-round target/value mode.  Shared regular filters remain governed
         # by the visible options above.
         if isinstance(payload.get("vm"), dict):
-            vm_interpreter = boolish(effective_vm.get("opcode")) or boolish(
-                effective_vm.get("vm_step")
+            vm_interpreter = any(
+                boolish(effective_vm.get(key))
+                for key in ("opcode", "vm_step", "vm_window")
             )
             options = effective_payload.get("options") or {}
             for source, aliases in VM_IDENTITY_ENV.items():

@@ -10,7 +10,7 @@ Usage:
   run-trace-firefox.sh [trace options] [Firefox options] URL
 
 Trace options:
-  --trace-preset full-chain|discover-light|target-return|target-values|deep-causal|opcode-window|manual
+  --trace-preset full-chain|discover-light|target-return|target-values|deep-causal|vm-window|opcode-window|manual
   --trace-plan full-chain
   --trace-start active|paused|prewarm
   --trace-run-label LABEL
@@ -425,6 +425,23 @@ apply_trace_preset() {
       set_default TRACE_DOM_PREVIEW none
       set_default TRACE_SCRIPT_RESOURCE 1
       ;;
+    "vm-window")
+      set_default TRACE_PROFILE vm
+      set_default FIREFOX_TRACE_JS 1
+      set_default TRACE_JS_MODE boundary
+      set_default TRACE_EXECUTION_MODE opcode
+      set_default TRACE_VM_WINDOW 1
+      set_default TRACE_VM_WINDOW_RECORDS 65536
+      set_default TRACE_OPCODE 0
+      set_default TRACE_VM_STEP 0
+      set_default TRACE_JS_CAPTURE_VALUES 0
+      set_default TRACE_JS_AUTO_CAPTURE_VALUES 0
+      set_default TRACE_JS_BOUNDARY_BUFFER 1
+      set_default TRACE_JS_FULL_SPOOL 0
+      set_default FIREFOX_TRACE_JS_LIMIT_EVENTS 0
+      set_default TRACE_IPC_MAX_EVENTS_PER_SECOND 6000
+      set_default TRACE_IPC_MAX_BYTES_PER_SECOND 4194304
+      ;;
     "opcode-window")
       set_default TRACE_PROFILE vm
       set_default FIREFOX_TRACE_JS 1
@@ -447,7 +464,7 @@ apply_trace_preset() {
       ;;
     *)
       echo "Unknown TRACE_PRESET: $TRACE_PRESET" >&2
-      echo "Known presets: full-chain, discover-light, target-return, target-values, deep-causal, opcode-window, manual" >&2
+      echo "Known presets: full-chain, discover-light, target-return, target-values, deep-causal, vm-window, opcode-window, manual" >&2
       exit 2
       ;;
   esac
@@ -468,10 +485,22 @@ if [[ "${TRACE_EXECUTION_MODE:-}" == "opcode" || "${TRACE_OPCODE:-0}" != "0" ]];
   fi
 fi
 
+if [[ "${TRACE_VM_WINDOW:-0}" != "0" ]]; then
+  if [[ "${TRACE_OPCODE:-0}" != "0" || "${TRACE_VM_STEP:-0}" != "0" ]]; then
+    echo "vm-window runs separately from TRACE_OPCODE/TRACE_VM_STEP" >&2
+    exit 2
+  fi
+  if [[ -z "${TRACE_QUERY_FIELDS:-}${TRACE_BODY_FIELDS:-}${TRACE_HEADER_FIELDS:-}${TRACE_COOKIE_FIELDS:-}" ]]; then
+    echo "vm-window requires a configured query/body/header/cookie target field" >&2
+    exit 2
+  fi
+fi
+
 # Keep manually composed opcode/VM traces bounded even without the preset.
 if [[ "${TRACE_EXECUTION_MODE:-}" == "opcode" ||
       "${TRACE_OPCODE:-0}" != "0" ||
-      "${TRACE_VM_STEP:-0}" != "0" ]]; then
+      "${TRACE_VM_STEP:-0}" != "0" ||
+      "${TRACE_VM_WINDOW:-0}" != "0" ]]; then
   set_default TRACE_OPCODE_LIMIT 4096
   set_default TRACE_OPCODE_EXECUTION_LIMIT 65536
   set_default TRACE_VM_STEP_LIMIT 2048
@@ -479,6 +508,7 @@ if [[ "${TRACE_EXECUTION_MODE:-}" == "opcode" ||
   set_default TRACE_OPCODE_MAX_BYTES_PER_SECOND 4194304
   set_default TRACE_IPC_MAX_EVENTS_PER_SECOND 6000
   set_default TRACE_IPC_MAX_BYTES_PER_SECOND 4194304
+  set_default TRACE_VM_WINDOW_RECORDS 65536
 fi
 
 export FIREFOX_TRACE_ENABLE="${FIREFOX_TRACE_ENABLE:-1}"
@@ -677,6 +707,7 @@ keys = [
     "TRACE_SCRIPT_RESOURCE_PREVIEW_LIMIT", "TRACE_SCRIPT_RESOURCE_HEADERS",
     "TRACE_SCRIPT_RESOURCE_FILTER", "TRACE_SCRIPT_RESOURCE_HEADER_NAMES",
     "TRACE_FETCH_EVENTS", "TRACE_EXECUTION_MODE", "TRACE_OPCODE",
+    "TRACE_VM_WINDOW", "TRACE_VM_WINDOW_RECORDS",
     "TRACE_WS", "TRACE_WS_PREVIEW_BYTES",
     "TRACE_HTTP_RAW", "TRACE_HTTP_RAW_EVENTS", "TRACE_HTTP_RAW_MAX_BYTES", "TRACE_HTTP_RAW_HEX_BYTES",
     "TRACE_WASM", "TRACE_WASM_DUMP", "TRACE_WASM_DUMP_MAX_BYTES", "TRACE_WASM_PREVIEW_BYTES",

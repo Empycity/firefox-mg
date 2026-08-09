@@ -233,6 +233,8 @@ AGENT_OPTION_KEYS = (
     "limit_events",
 )
 AGENT_VM_KEYS = (
+    "vm_window",
+    "vm_window_records",
     "opcode",
     "opcode_operands",
     "opcode_stack",
@@ -427,6 +429,7 @@ class ScrollFrame(ttk.Frame):
 
 VM_STAGE_CHOICES = [
     "一轮还原模式（推荐：请求触发回溯）",
+    "VM window：目标触发环形缓冲",
     "局部 opcode：自动候选脚本",
     "VM step：已确认 dispatcher",
     "默认关闭 VM（普通 full-chain）",
@@ -819,6 +822,7 @@ class TraceDesktopApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
         self._bind_click_only_combobox(vm_stage_box)
         vm_stage_box.bind("<<ComboboxSelected>>", lambda _event: self.apply_vm_stage_preset())
         self.vm_opcode_var = tk.BooleanVar(value=False)
+        self.vm_window_var = tk.BooleanVar(value=False)
         # VM is opt-in.  Raw operands must also start disabled before any
         # preset/config loader runs, so a partially initialized panel cannot
         # show or submit VM evidence accidentally.
@@ -830,6 +834,7 @@ class TraceDesktopApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
         self.vm_wasm_dump_var = tk.BooleanVar(value=False)
         self.vm_wasm_insn_var = tk.BooleanVar(value=False)
         checks = [
+            ("VM window", self.vm_window_var),
             ("JS opcode", self.vm_opcode_var),
             ("raw operands", self.vm_operands_var),
             ("栈 slot 类型", self.vm_stack_var),
@@ -853,6 +858,9 @@ class TraceDesktopApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
         self.vm_script_column_var = tk.StringVar(value="")
         self.vm_bytecode_length_var = tk.StringVar(value="")
         self.vm_dispatch_pc_var = tk.StringVar(value="")
+        self.vm_window_records_var = tk.StringVar(
+            value=str(VM_SAFE_DEFAULTS["vm_window_records"])
+        )
         self.vm_opcode_limit_var = tk.StringVar(value=str(VM_SAFE_DEFAULTS["opcode_limit"]))
         self.vm_opcode_execution_limit_var = tk.StringVar(value=str(VM_SAFE_DEFAULTS["opcode_execution_limit"]))
         self.vm_step_limit_var = tk.StringVar(value=str(VM_SAFE_DEFAULTS["vm_step_limit"]))
@@ -879,6 +887,7 @@ class TraceDesktopApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
         for c in range(4):
             grid2.columnconfigure(c, weight=1)
         vm_smalls = [
+            ("VM window records", self.vm_window_records_var),
             ("script line", self.vm_script_line_var),
             ("script column", self.vm_script_column_var),
             ("bytecode length", self.vm_bytecode_length_var),
@@ -1291,6 +1300,7 @@ class TraceDesktopApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
                 "target": "一轮还原模式（推荐：请求触发回溯）",
                 "one-pass": "一轮还原模式（推荐：请求触发回溯）",
                 "opcode": "局部 opcode：自动候选脚本",
+                "vm_window": "VM window：目标触发环形缓冲",
                 "vm_step": "VM step：已确认 dispatcher",
                 "dispatcher": "VM step：已确认 dispatcher",
                 "off": "默认关闭 VM（普通 full-chain）",
@@ -1301,20 +1311,26 @@ class TraceDesktopApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
                 self.apply_vm_stage_preset()
         elif vm:
             self.vm_stage_var.set(
-                "VM step：已确认 dispatcher"
-                if config_bool(vm.get("vm_step"))
+                "VM window：目标触发环形缓冲"
+                if config_bool(vm.get("vm_window"))
                 else (
-                    "局部 opcode：自动候选脚本"
-                    if config_bool(vm.get("opcode"))
+                    "VM step：已确认 dispatcher"
+                    if config_bool(vm.get("vm_step"))
                     else (
-                        "WASM：只看模块元数据"
-                        if config_bool(vm.get("wasm_module"))
-                        else "默认关闭 VM（普通 full-chain）"
+                        "局部 opcode：自动候选脚本"
+                        if config_bool(vm.get("opcode"))
+                        else (
+                            "WASM：只看模块元数据"
+                            if config_bool(vm.get("wasm_module"))
+                            else "默认关闭 VM（普通 full-chain）"
+                        )
                     )
                 )
             )
 
         vm_to_var = {
+            "vm_window": self.vm_window_var,
+            "vm_window_records": self.vm_window_records_var,
             "opcode": self.vm_opcode_var,
             "opcode_operands": self.vm_operands_var,
             "opcode_stack": self.vm_stack_var,
@@ -1618,7 +1634,18 @@ class TraceDesktopApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
     def apply_vm_stage_preset(self):
         stage = self.vm_stage_var.get()
         self.vm_unlimited_var.set(False)
+        self.vm_window_var.set(False)
         if "一轮还原" in stage:
+            self.vm_opcode_var.set(False)
+            self.vm_operands_var.set(False)
+            self.vm_stack_var.set(False)
+            self.vm_stack_primitive_var.set(False)
+            self.vm_step_var.set(False)
+            self.vm_wasm_module_var.set(False)
+            self.vm_wasm_dump_var.set(False)
+            self.vm_wasm_insn_var.set(False)
+        elif "VM window" in stage:
+            self.vm_window_var.set(True)
             self.vm_opcode_var.set(False)
             self.vm_operands_var.set(False)
             self.vm_stack_var.set(False)
@@ -1685,6 +1712,15 @@ class TraceDesktopApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
             self.vm_limits_grid.grid_remove()
 
     def sync_vm_dependencies(self):
+        if self.vm_window_var.get():
+            self.vm_opcode_var.set(False)
+            self.vm_operands_var.set(False)
+            self.vm_stack_var.set(False)
+            self.vm_stack_primitive_var.set(False)
+            self.vm_step_var.set(False)
+            self.vm_wasm_module_var.set(False)
+            self.vm_wasm_dump_var.set(False)
+            self.vm_wasm_insn_var.set(False)
         if self.vm_stack_primitive_var.get():
             self.vm_stack_var.set(True)
         stage = self.vm_stage_var.get()
@@ -1695,6 +1731,10 @@ class TraceDesktopApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
         elif self.vm_step_var.get() and not self.vm_dispatch_pc_var.get().strip():
             self.vm_hint_var.set(
                 "当前提醒：选择了 VM step，但 dispatcher PC 尚未写入。先不要手填 PC；由 Agent 根据上一轮 opcode/target-candidates 判断，必要时先跑“局部 opcode”。"
+            )
+        elif self.vm_window_var.get():
+            self.vm_hint_var.set(
+                "目标脚本只写固定大小二进制环形记录；query/body 目标字段命中后立即冻结并落盘。普通 Fetch/XHR、script 和 boundary 锚点继续保留。"
             )
         elif "一轮还原" in stage:
             self.vm_hint_var.set(
@@ -1726,6 +1766,8 @@ class TraceDesktopApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
 
     def vm_payload(self) -> dict[str, object]:
         return {
+            "vm_window": self.vm_window_var.get(),
+            "vm_window_records": self.vm_window_records_var.get().strip(),
             "opcode": self.vm_opcode_var.get(),
             "opcode_operands": self.vm_operands_var.get(),
             "opcode_stack": self.vm_stack_var.get(),
@@ -1761,7 +1803,15 @@ class TraceDesktopApp(TkinterDnD.Tk if TkinterDnD else tk.Tk):
         return var.get().strip() if enabled is None or enabled.get() else DISABLED_FIELDS
 
     def options_payload(self) -> dict[str, str]:
-        profile = "vm" if (self.vm_opcode_var.get() or self.vm_step_var.get()) else self.plan_key()
+        profile = (
+            "vm"
+            if (
+                self.vm_window_var.get()
+                or self.vm_opcode_var.get()
+                or self.vm_step_var.get()
+            )
+            else self.plan_key()
+        )
         if profile in {"full-chain", "discover-light"}:
             # SpiderMonkey 只认识 discover/field/target/deep/vm；full-chain 是 UI 采集计划。
             profile = "discover"

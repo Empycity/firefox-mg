@@ -21,11 +21,16 @@ import hashlib
 import json
 import pathlib
 import re
+import struct
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Iterable
+
+
+VM_WINDOW_HEADER = struct.Struct("<8sIIQQQQIIQ")
+VM_WINDOW_RECORD = struct.Struct("<QQQQQQIIIB16sBBB")
 
 
 BOM_INTERFACES = {
@@ -190,7 +195,7 @@ def classify_event(path: pathlib.Path, row: dict[str, Any]) -> str:
         return "state"
     if typ.startswith(("script.",)) or "script" in lower_path:
         return "script"
-    if typ.startswith(("wasm.", "js.opcode", "js.vm_step")):
+    if typ.startswith(("wasm.", "js.opcode", "js.vm_step", "js.vm_window")):
         return "wasm-vm"
     if typ.startswith(("js.",)):
         return "js"
@@ -199,6 +204,88 @@ def classify_event(path: pathlib.Path, row: dict[str, Any]) -> str:
     if typ.startswith(("dom.",)) or "dom" in lower_path:
         return classify_dom_interface(row)
     return "control-health" if not typ else "network" if "request" in typ else "js"
+
+
+def inspect_vm_window_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> dict[str, Any]:
+    relative = str(row.get("artifact_path") or "")
+    result: dict[str, Any] = {
+        "valid": False,
+        "artifact_path": relative,
+        "format": "ftvmw1-le",
+    }
+    if not relative:
+        result["error"] = "missing_artifact_path"
+        return result
+    root = trace_dir.resolve()
+    path = (trace_dir / relative).resolve()
+    if path != root and root not in path.parents:
+        result["error"] = "artifact_outside_trace_dir"
+        return result
+    try:
+        size = path.stat().st_size
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            raw_header = stream.read(VM_WINDOW_HEADER.size)
+            digest.update(raw_header)
+            if len(raw_header) != VM_WINDOW_HEADER.size:
+                result["error"] = "short_header"
+                return result
+            (
+                magic,
+                version,
+                record_size,
+                first_seq,
+                last_seq,
+                total_written,
+                overwritten,
+                capacity,
+                count,
+                trigger_ts_us,
+            ) = VM_WINDOW_HEADER.unpack(raw_header)
+            expected_size = VM_WINDOW_HEADER.size + count * record_size
+            if magic.rstrip(b"\0") != b"FTVMW1":
+                result["error"] = "bad_magic"
+                return result
+            if version != 1 or record_size != VM_WINDOW_RECORD.size:
+                result["error"] = "unsupported_record_format"
+                return result
+            if size != expected_size:
+                result["error"] = "artifact_size_mismatch"
+                result["expected_size"] = expected_size
+                result["actual_size"] = size
+                return result
+            expected_seq = first_seq
+            for _ in range(count):
+                raw_record = stream.read(record_size)
+                digest.update(raw_record)
+                seq = VM_WINDOW_RECORD.unpack(raw_record)[0]
+                if seq != expected_seq:
+                    result["error"] = "record_sequence_gap"
+                    result["expected_seq"] = expected_seq
+                    result["actual_seq"] = seq
+                    return result
+                expected_seq += 1
+    except OSError as error:
+        result["error"] = f"artifact_read_error:{error.strerror or error}"
+        return result
+    result.update(
+        {
+            "valid": True,
+            "sha256": digest.hexdigest(),
+            "size": size,
+            "version": version,
+            "record_size": record_size,
+            "first_seq": first_seq,
+            "last_seq": last_seq,
+            "total_written": total_written,
+            "pretrigger_overwritten": overwritten,
+            "capacity": capacity,
+            "record_count": count,
+            "trigger_ts_us": trigger_ts_us,
+            "sequence_complete": count == 0 or expected_seq - 1 == last_seq,
+        }
+    )
+    return result
 
 
 def compact_event(row: dict[str, Any], path: pathlib.Path, line: int, category: str) -> dict[str, Any]:
@@ -941,13 +1028,40 @@ def build_trace_health(
 
     def nested_truncations(value: Any, path: str = "") -> Iterable[str]:
         if isinstance(value, dict):
-            has_complete_value_artifact = (
-                value.get("value_stored") is True
-                and bool(str(value.get("value_store_path") or ""))
-            ) or (
-                value.get("bytes_stored") is True
-                and bool(str(value.get("bytes_store_path") or ""))
+            # A preview may be deliberately shorter than the request/module,
+            # while a sibling artifact contains the complete bytes. Treat the
+            # preview as complete evidence when that artifact is present and
+            # itself was not truncated. This covers JS values, Fetch/XHR body
+            # stores, field value stores and full WASM dumps.
+            artifact_specs = (
+                # These flags describe a complete sidecar even when the
+                # inline preview itself is marked truncated.
+                ("value_stored", "value_store_path", None),
+                ("bytes_stored", "bytes_store_path", None),
+                ("body_value_stored", "body_value_store_path", "body_value_truncated"),
+                ("request_body_stored", "request_body_store_path", "request_body_truncated"),
+                ("response_body_stored", "response_body_store_path", "response_body_truncated"),
+                ("stored", "value_store_path", None),
+                ("dump_stored", "artifact_path", "dump_truncated"),
             )
+            complete_artifacts = {
+                flag
+                for flag, path_key, truncated_key in artifact_specs
+                if value.get(flag) is True
+                and bool(str(value.get(path_key) or ""))
+                and (truncated_key is None or value.get(truncated_key) is not True)
+            }
+            has_complete_value_artifact = bool(complete_artifacts)
+            def artifact_covers_truncation(key: str) -> bool:
+                if "value_stored" in complete_artifacts or "bytes_stored" in complete_artifacts:
+                    return key in {"value_preview_truncated", "bytes_truncated"}
+                if "body_value_stored" in complete_artifacts or "request_body_stored" in complete_artifacts or "response_body_stored" in complete_artifacts:
+                    return key in {"body_preview_truncated", "truncated", "request_body_truncated", "response_body_truncated"}
+                if "stored" in complete_artifacts:
+                    return key == "truncated"
+                if "dump_stored" in complete_artifacts:
+                    return key == "bytecode_preview_truncated"
+                return False
             for key, child in value.items():
                 child_path = f"{path}.{key}" if path else str(key)
                 is_truncation = (
@@ -955,10 +1069,7 @@ def build_trace_health(
                     or key in {"truncated", "capture_truncated"}
                 )
                 if child is True and is_truncation:
-                    if not (
-                        key == "value_preview_truncated"
-                        and has_complete_value_artifact
-                    ):
+                    if not (has_complete_value_artifact and artifact_covers_truncation(str(key))):
                         yield child_path
                 yield from nested_truncations(child, child_path)
         elif isinstance(value, list):
@@ -978,6 +1089,14 @@ def build_trace_health(
             )
         elif typ == "js.boundary.flush_summary" and row.get("complete_window") is False:
             add_trigger("js:boundary_window_incomplete", row)
+        elif typ == "js.vm_window":
+            validation = row.get("artifact_validation") or {}
+            if not validation.get("valid"):
+                add_trigger(
+                    "vm_window:artifact_invalid",
+                    row,
+                    artifact_error=validation.get("error", "unknown"),
+                )
 
         # Preview truncation is harmless only if the same record carries a
         # complete value artifact. Nested JS arguments/returns are evidence
@@ -1029,6 +1148,45 @@ def build_trace_health(
     if target_without_store:
         add_trigger("request:target_value_without_complete_artifact", count=target_without_store)
 
+    target_env_names = (
+        "TRACE_QUERY_FIELDS",
+        "FIREFOX_TRACE_QUERY_FIELDS",
+        "TRACE_BODY_FIELDS",
+        "FIREFOX_TRACE_BODY_FIELDS",
+        "TRACE_HEADER_FIELDS",
+        "FIREFOX_TRACE_HEADER_FIELDS",
+        "TRACE_COOKIE_FIELDS",
+        "FIREFOX_TRACE_COOKIE_FIELDS",
+    )
+    disabled_targets = {"", "__disabled__", "__off__", "off", "none", "false", "0"}
+    configured_targets = {
+        item.strip().lower()
+        for name in target_env_names
+        for item in str(env.get(name) or "").replace(";", ",").split(",")
+        if item.strip().lower() not in disabled_targets
+    }
+    target_matches = sum(1 for field in all_fields if field.get("target"))
+    if configured_targets and not target_matches:
+        add_trigger(
+            "request:configured_target_not_observed",
+            configured_targets=sorted(configured_targets),
+        )
+
+    config_ack_count = sum(
+        1 for row in all_rows if row.get("type") == "trace.config.applied"
+    )
+    if configured_targets and not config_ack_count:
+        add_trigger("control:runtime_config_not_acknowledged")
+
+    vm_window_enabled = str(
+        env.get("TRACE_VM_WINDOW", env.get("FIREFOX_TRACE_VM_WINDOW", "0"))
+    ).lower() not in {"", "0", "false", "off", "none"}
+    vm_window_artifacts = sum(
+        1 for row in all_rows if row.get("type") == "js.vm_window"
+    )
+    if vm_window_enabled and not vm_window_artifacts:
+        add_trigger("vm_window:artifact_not_emitted")
+
     # Keep configured policy visible without treating an unset variable as a
     # hidden cap. Zero, false, none and empty are the documented unlimited/off
     # values for the relevant limits.
@@ -1058,6 +1216,9 @@ def build_trace_health(
             "trace_degraded": sum(1 for row in all_rows if row.get("type") == "trace.degraded"),
             "trace_suppressed": sum(1 for row in all_rows if row.get("type") == "trace.suppressed"),
             "target_fields_without_complete_artifact": target_without_store,
+            "target_field_matches": target_matches,
+            "runtime_config_acks": config_ack_count,
+            "vm_window_artifacts": vm_window_artifacts,
             "dom_bom_events": len(dom_rows),
         },
         "environment_coverage": coverage,
@@ -2249,6 +2410,9 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
     request_callers: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     for path, line, row in jsonl_rows(trace_dir):
+        if row.get("type") == "js.vm_window":
+            row = dict(row)
+            row["artifact_validation"] = inspect_vm_window_artifact(trace_dir, row)
         transport = "fetch" if "fetch" in path.name else "xhr" if "xhr" in path.name else ""
         request_id = str(row.get("request_id") or "")
         pid = str(row.get("pid") or "")

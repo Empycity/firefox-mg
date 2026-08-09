@@ -135,13 +135,14 @@ hits its stack guard page. Preserve value metadata/store and use
 The stage combobox is the primary control. Applying a stage resets the fine
 checkboxes first; explicit JSON `vm` values are applied afterwards.
 
-| Stage | JS opcode | Raw operands | Stack type | Stack primitive | VM step | WASM metadata | WASM artifact/raw |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| 默认关闭 VM | off | off | off | off | off | off | off |
-| 一轮还原模式 | off | off | off | off | off | off | off |
-| 局部 opcode | on | on | off | off | off | off | off |
-| VM step / dispatcher | off | off | off | off | on | off | off |
-| WASM 模块元数据 | off | off | off | off | off | on | off |
+| Stage | VM window | JS opcode | Raw operands | Stack primitive | VM step | WASM metadata |
+|---|---:|---:|---:|---:|---:|---:|
+| 默认关闭 VM | off | off | off | off | off | off |
+| 一轮还原模式 | off | off | off | off | off | off |
+| VM window | on | off | compact binary | top-2 exact primitives | off | off |
+| 局部 opcode | off | on | on | off | off | off |
+| VM step / dispatcher | off | off | off | off | on | off |
+| WASM 模块元数据 | off | off | off | off | off | on |
 
 Visible numeric fields include script line/column, bytecode length, stack
 slots, opcode limit, execution budget, VM-step limit, opcode/IPC events per
@@ -152,6 +153,7 @@ Agent-owned identities; the analyzer or a loaded JSON supplies them.
 Safe defaults:
 
 ```text
+vm_window_records=65536
 opcode_limit=4096
 opcode_execution_limit=65536
 vm_step_limit=2048

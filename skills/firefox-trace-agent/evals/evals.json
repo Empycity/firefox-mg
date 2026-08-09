@@ -30,6 +30,12 @@
       "prompt": "Agent 自己启动一次 full-chain trace，目标字段出现后就结束，避免目录继续增长。",
       "expected_output": "启动 Firefox 的同一轮同时启动 trace-stop-on-target watchdog；目标字段及引用制品落盘后立即下发 stop，等待 ACK 并 finalize，不等待页面 idle 或额外流量；full-chain 同样设置 120 秒和 2 GiB 兜底，保留 JSON receipt 并在便携 fixture 独立验收后清理 Agent 创建的大 trace。",
       "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "目标已经确认是 JSVMP，需要下一轮拿完整执行证据，同时避免 Firefox 卡死和逐条 JSON 爆量。",
+      "expected_output": "先生成带稳定脚本身份和真实目标字段的 VM window 配置；保留 Fetch/XHR/Cookie/script/boundary 锚点，关闭逐条 opcode/VM step；使用默认 65536 条固定 80-byte ring，目标字段命中后冻结 binary artifact、watchdog stop/finalize，再运行 trace_vm_window.py；只把摘要仍缺失的 PC 交给后续 verbose opcode。",
+      "files": []
     }
   ]
 }
