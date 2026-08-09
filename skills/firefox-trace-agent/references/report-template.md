@@ -19,6 +19,12 @@ ACK status:
 
 ## 3. Producer candidates
 
+```text
+producer_match: deepest exact return in same process/segment before request
+producer_chain: producer call -> parent calls
+chain_source: origin_call_id | value_sha256
+```
+
 | Evidence | Function | Script | Call ID | Parent | Origin | Value role/path | Match |
 |---|---|---|---|---|---|---|---|
 

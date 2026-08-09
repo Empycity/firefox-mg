@@ -197,6 +197,12 @@ Document.elementFromPoint/elementsFromPoint/querySelector/activeElement
   scripts/
   ```
 
+- `index/causal-index.json` 直接输出通用 `producer_match` 与
+  `producer_chain`：按请求字段 SHA-256 选择同进程、同 segment、请求前父链最深的
+  exact JS return；完整匹配集合继续保留在 `producer_candidates`。
+- JSONL finalizer 按物理 LF 读取，保留 captured string 内的
+  U+0085/U+2028/U+2029，不再因 Unicode 行分隔字符静默丢调用事件。
+
 - VM 方向已从“用户填过滤条件多轮 trace”重构为“一轮请求触发回溯优先，opcode/VM step 仅自动候选后局部辅助”。
 - target candidates 会输出候选脚本、函数上下文、source hash、line/column、function_contains；opcode 热窗口和目标函数上下文不匹配时会标记忽略。
 

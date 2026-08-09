@@ -21,3 +21,9 @@ python3 tools/trace_analyzer.py TRACE_DIR --preset generic --json
 python3 tools/trace_check.py --help
 python3 tools/trace_store.py --help
 ```
+
+`trace_finalize.py` writes compact `producer_match` and `producer_chain`
+records into `index/causal-index.json`. `trace_analyzer.py` also resolves a
+request field SHA-256 to the deepest preceding exact JS return when the request
+origin identifies only a transport wrapper. JSONL readers iterate physical LF
+records so captured Unicode line-separator characters remain inside the event.

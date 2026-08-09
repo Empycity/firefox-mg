@@ -9,7 +9,7 @@
 | 目标请求或脚本未知，加载期可能生成字段 | `active` | `full-chain` + `boundary` | 字段所在 Query/Body/Header/Cookie | VM、WASM、Raw HTTP |
 | 先登录、验证码、跳页，目标动作可重复 | `paused` | `full-chain` + `boundary` | 同上 | VM、WASM、Raw HTTP |
 | 页面很重，只需先找请求、脚本和字段位置 | `active` 或 `paused` | `discover-light` + `boundary` | 同上 | 深对象、VM、WASM、Raw HTTP |
-| 请求已存在，JS 参数/返回值在 producer 附近缺失 | 沿用原启动时机 | `full-chain` + `boundary`，定向 scalar/value overlay | 已证实脚本/函数/SHA 与字段 | JS 对象属性展开、VM、全站深对象 |
+| 请求已存在，JS 参数/返回/对象在 producer 附近缺失 | 沿用原启动时机 | `full-chain` + `boundary`，定向 object overlay | 已证实脚本/函数/SHA 与字段 | VM、全站深对象 |
 | 本地 host 缺一个明确 DOM/BOM API 或返回值 | 沿用原启动时机 | `full-chain` + `boundary`，定向 DOM overlay | 目标字段和 `Interface.member` | 全站 DOM、VM |
 | 逻辑请求已对齐，仍需检查 multipart/压缩/编码/原始 chunk | 短动作 | `full-chain` + `boundary` + Raw HTTP | 同一目标字段 | VM、对象扩展 |
 | 已证实 JSVMP，需保留目标请求前完整执行窗口 | 短动作 | `vm-window` + 普通请求/boundary 锚点 | 脚本身份、目标字段；PC range 可选 | 逐条 opcode JSON、VM step、WASM |
@@ -18,22 +18,6 @@
 | 已证实目标进入 WASM | 短动作 | WASM module metadata | 脚本/模块身份 | WASM artifact/raw bytes，直到需要 |
 
 首轮和“想一轮拿全链路”的情况始终选 `boundary`。`target`、`deep` 只有 `script_contains`、`function_contains` 或 `script_sha256` 至少一个已经由日志确认时才可用；身份为空时必须回退 `boundary`，不能把 JS=0 解读为未执行。
-
-### 当前 runtime 的对象展开限制
-
-当前 Gecko Trace 的 JS 对象预览会在 `writeObjectProps()` 中调用
-`JS_GetPropertyById()`。属性是 scripted getter 时，该调用会再次进入
-`AutoFirefoxTraceJSCall`；若脚本/函数/SHA 身份同时使
-`object_target_match=true`，递归对象预览可造成 content process 栈溢出。
-
-- `agent-next.json` 一旦填写 `script_contains`、`function_contains` 或
-  `script_sha256`，必须设置 `object_depth=0`、`TRACE_JS_OBJECT_DEPTH=0`。
-- 需要的标量、字符串、TypedArray metadata/value store 继续保留；明确的浏览器对象值
-  使用 `TRACE_DOM_MEMBERS` + `TRACE_DOM_OBJECT_VALUES=1` 定向采集。
-- 只有 Gecko 已加入 thread-local preview 重入保护，并通过 getter-bearing object
-  回归用例后，才恢复 `object_depth=1`。
-- 崩溃 dump 若循环出现 `writeObjectProps -> JS_GetPropertyById -> js::CallGetter ->
-  AutoFirefoxTraceJSCall`，按源码重入缺陷处理，不按日志量或目标字段数量推断。
 
 ## 2. UI 参数清单
 
@@ -65,9 +49,9 @@
 | JS mode | `boundary` | `boundary` | 保留完整请求关联上下文。 |
 | script/function/SHA | 留空 | 只填日志证实身份 | 空身份不使用 target/deep。 |
 | Target match | `all` | `all` | 目标字段多位置时仍保留全部命中。 |
-| object depth | `0` | `0` | 当前 runtime 禁止与脚本/函数/SHA 身份组合使用正深度；避免 getter 重入 JS Trace。 |
-| object keys | `0` | `0` | depth=0 时不读取对象属性；明确 DOM/BOM 值走定向 DOM overlay。 |
-| array items | `0` | `0` | depth=0 时不递归展开数组；TypedArray metadata/value store 仍可独立保留。 |
+| object depth | `1` | `1` | UI full-chain 的默认值为 `1`，并受 `TRACE_JS_OBJECT_TARGET_ONLY=1` 约束；CLI/无身份时可显式设 `0`。 |
+| object keys | `0` 或 `32` | `32` | `0` 为该层不按 key 数裁切；定向扩展常用 32。 |
+| array items | `0` 或 `16` | `16` | 数组只在命中对象中展开。 |
 | TypedArray bytes | `0` | `0` | full-chain 不按字节数裁切 TypedArray/ArrayBuffer/DataView；轻量或定向模式才填写正数预览上限。 |
 | value / primitive metadata | `1` | `1` | 保留 SHA、路径、类型和调用关联。 |
 | value store min bytes | `1` | `1` | 短字符串、时间和标志值也保留制品，便于逐字节对齐。 |
@@ -83,18 +67,19 @@
 |---|---:|---:|---:|---:|---:|---:|
 | 默认关闭 VM | 关 | 关 | 关 | 关 | 关 | 全关 |
 | 一轮还原 | 关 | 关 | 关 | 关 | 关 | 全关 |
-| VM window | 开，默认 65536 条 | 关 | 二进制 operand | top-2 primitive | 关 | 全关 |
+| VM window | 开，默认 65536 条 | 关 | 记录二进制 operand | 自动记录 top-2 primitive | 关 | 全关 |
 | 局部 opcode | 关 | 开 | 开 | 按缺口开启 | 关 | 全关 |
 | VM step dispatcher | 关 | 关 | 关 | 按缺口开启 | 开 | 全关 |
 | WASM 元数据 | 关 | 关 | 关 | 关 | 关 | 仅 module 开 |
 
 安全参数默认：opcode limit `4096`、opcode execution `65536`、VM step `2048`、opcode `2000 events/s`、opcode `4194304 bytes/s`。这些只属于 VM/opcode 细粒度模式。普通 full-chain 的 IPC 为 `0`（不按每秒事件/字节数丢弃），DOM/BOM、JS value、Fetch/XHR body/header、script raw 也不设 trace-side 截断；`0` 表示不截断。`VM/opcode 也不截断` 只用于已锁定脚本的一次短操作。
 
-VM window 每条固定 `80` bytes，默认 `65536` 条约 `5 MiB/目标线程`。热路径
-不生成 JSON、不逐条 IPC；配置的 query/body/header/cookie 字段命中后冻结为
-`firefox-vm-window-*.bin`。binary 由 sandboxed content 一次发送给 parent
-落盘；每个 segment 只接受首次成功目标触发。普通请求、Cookie、script 和
-boundary 锚点保留。
+VM window 热路径不生成 JSON、不逐条 IPC。每条固定 `80` bytes，默认
+`65536` 条约占 `5 MiB/目标线程`；query/body/header/cookie 任一配置字段命中后
+通过 parent IPC 每个 segment 首次命中冻结为一个
+`firefox-vm-window-*.bin`，并写一条 `js.vm_window` 元数据事件。普通
+Fetch/XHR/Cookie、script artifact 和 boundary 锚点继续保留。使用
+`python3 tools/trace_vm_window.py TRACE_DIR` 检查 PC、转移边和 primitive 覆盖率。
 
 Agent 配置已经写入脚本 token、line/column、bytecode length 或 PC range 时，这些显式身份在新输出目录中仍然生效；`target-candidates.json` 只用于补全空白字段，不会覆盖一份完整的 Agent handoff。局部 opcode 需要中间数值时，再在同一脚本/PC 窗口打开 stack slots/primitive；不要把栈采集扩展到全站。
 
@@ -155,4 +140,6 @@ Chrome/CDP 的断点或方法包装可用于确认“哪个 API、哪次调用�
 
 ## 6. 验收与下一步
 
-先验证 `firefox-control-acks.jsonl` 有匹配 `config_hash` 的 `trace.config.applied`，再检查 `trace.degraded`、boundary `complete_window` 和目标字段 value artifact。固定输入齐全时用 `trace-align` 做 URL、headers、Cookie、body、raw/decoded field 的字节 diff。动态字段或 host 合同尚未齐全时，先在同一 Firefox profile/page 验证生成值确实进入发出的请求，再验证 response 的 JSON/业务语义。HTTP 200 本身不是完成条件。
+先验证 `firefox-control-acks.jsonl` 有匹配 `config_hash` 的 `trace.config.applied`，再检查 `trace.degraded`、boundary `complete_window` 和目标字段 value artifact。`origin_call_id` 只到 transport wrapper 时，必须用字段 SHA-256 对齐同进程、同 segment、请求前的 exact JS return；`producer_match` 和 `producer_chain` 应给出最深 producer 及父链。固定输入齐全时用 `trace-align` 做 URL、headers、Cookie、body、raw/decoded field 的字节 diff。动态字段或 host 合同尚未齐全时，先在同一 Firefox profile/page 验证生成值确实进入发出的请求，再验证 response 的 JSON/业务语义。HTTP 200 本身不是完成条件。
+
+目标模式只锁脚本 SHA 时仍要观察事件增长。高频脚本在目标请求前耗尽预算，说明过滤粒度仍过宽；该轮只用于发现函数，下一轮使用脚本 SHA 加 exact function identity。JSONL 消费端按物理 LF 逐条读取，禁止用 Unicode `splitlines()`，避免字段值中的 U+0085/U+2028/U+2029 把单条事件切断。

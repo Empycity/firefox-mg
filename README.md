@@ -176,6 +176,12 @@ args/return 采集；事件带 `capture_tier=boundary_auto`。UI full-chain 对�
 5. 三轮 `target-values`：只对确认目标打开 args/object/value_store，看 Cookie、Storage、时间、随机数、环境 API 等输入依赖。
 6. 仍有缺口时再用 MCP/断点做单变量验证，不把 Agent 猜测直接写成结论。
 
+finalize 后的 `index/causal-index.json` 会用请求字段 SHA-256 自动选择同进程、同
+segment、请求前父链最深的 exact JS return，并输出紧凑
+`producer_match/producer_chain`。`tools/trace_analyzer.py` 在请求
+`origin_call_id` 只到 transport wrapper 时使用同一回退链路。脚本 SHA 仍产生过多
+事件时，下一轮继续收窄 exact function identity，而不是把脚本命中当作 producer 结论。
+
 ### 日志文件速查
 
 | 文件 | 主要用途 |

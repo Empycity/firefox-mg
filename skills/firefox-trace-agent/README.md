@@ -18,6 +18,10 @@
 
 `tools/` 是随 skill 携带的通用工具副本；浏览器二进制仍通过 `FIREFOX_BIN` 或 `FIREFOX_TRACE_RUNTIME_ROOT` 指定。
 
+当前 finalize 会在 `index/causal-index.json` 中输出通用
+`producer_match/producer_chain`：请求字段 SHA-256 可反向定位同进程、同 segment、
+请求前最深的 exact JS return 及父链。该逻辑不包含站点、字段或 SDK 专名。
+
 ## 使用变量
 
 ```bash

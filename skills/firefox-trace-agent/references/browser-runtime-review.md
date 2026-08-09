@@ -84,6 +84,9 @@ TRACE_HEADLESS=0 tools/run-trace-firefox.sh \
   --trace-plan full-chain --trace-start paused "TARGET_URL"
 ```
 
+Agent 启动时显式保留 `TRACE_HEADLESS=0` 并确认有头窗口/进程。watchdog 完成
+stop/finalize 后必须关闭该 Firefox 进程组；只停止采集不算运行收尾。
+
 `active` 用于捕获页面加载期脚本和首屏请求，`paused` 用于先登录/准备页面再开始，
 `prewarm` 只用于预热运行时。启动失败先读该轮 `TRACE_DIR/ui-launcher.log`、
 `manifest.json`、`trace-control.json`：

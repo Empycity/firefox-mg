@@ -22,6 +22,10 @@ test -x tools/run-trace-firefox.sh
 
 Use a headed browser (`TRACE_HEADLESS=0`) for field analysis. The same Firefox session can receive new segments through `tools/trace-control.sh`; this avoids changing profile state between discovery, producer confirmation, and dependency collection.
 
+For an Agent-started run, verify the headed window/process after launch. After
+the watchdog receipt reports stop/finalize, close the Firefox launcher process
+group before cleanup; stopping collection alone leaves the browser running.
+
 The packaged runtime directory contains the browser app bundle. The skill package carries the launcher, profile `trace-user.js`, UI, finalizer, analyzer, and validation tools; it does not duplicate the large browser binary.
 
 ## Current runtime review

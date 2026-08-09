@@ -1,10 +1,25 @@
 # Firefox Trace 魔改进展记录
 
-更新时间：2026-08-02
+更新时间：2026-08-10
 
 > 本文件是历史验证归档，不是通用产品手册、Agent 指南或 skill。这里保留旧运行的
 > 原始证据，便于追溯实现变更；新站点的脚本、字段、hash、长度和 trace 路径必须写入
 > `examples/<case>/`，不得从本归档复制到通用文档或默认配置。
+
+## 2026-08-10：请求字段到 JS producer 的通用闭环
+
+- `trace_finalize.py` 在 `index/causal-index.json` 输出紧凑
+  `producer_match/producer_chain`，按请求字段 SHA-256 选择同进程、同 segment、
+  请求前父链最深的 exact JS return；完整审计集合继续保留在
+  `producer_candidates`。
+- `trace_analyzer.py` 在 `origin_call_id` 只到 transport wrapper 时使用同一
+  value-SHA 回退，文本和 JSON 报告都标记 `chain_source=value_sha256`。
+- JSONL finalizer 改为按物理 LF 迭代，避免 captured string 内的
+  U+0085/U+2028/U+2029 被 Unicode `splitlines()` 误判为记录边界并静默丢事件。
+- Agent trace 显式使用 `TRACE_HEADLESS=0`；watchdog stop/finalize 后关闭 Firefox
+  进程组。脚本 SHA 仍过宽时，下一轮继续锁 exact function identity。
+- 回归覆盖 producer 深度选择、跨进程/未来事件排除、Unicode JSONL 读取和
+  endpoint 子串过滤；通用测试不包含站点、字段或 SDK 专名。
 
 ## 2026-08-02：full-chain 与中文中控台
 

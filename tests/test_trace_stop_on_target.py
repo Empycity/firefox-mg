@@ -106,19 +106,19 @@ class TraceStopOnTargetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_dir:
             trace_dir = pathlib.Path(raw_dir)
             targets = {
-                "query_fields": {"x-dynosaur"},
+                "query_fields": {"target_field"},
                 "body_fields": set(),
                 "header_fields": set(),
                 "cookie_fields": set(),
             }
             other = {
-                "url": "https://fixture.test/api/post/item_list/?X-Dynosaur=a",
-                "query_fields": {"X-Dynosaur": "a"},
+                "url": "https://fixture.test/api/other/?TARGET_FIELD=a",
+                "query_fields": {"TARGET_FIELD": "a"},
             }
-            playlist = {
-                "url": "https://fixture.test/api/user/playlist/?X-Dynosaur=b",
-                "request_id": "playlist-1",
-                "query_fields": {"X-Dynosaur": "b"},
+            target = {
+                "url": "https://fixture.test/api/target/?TARGET_FIELD=b",
+                "request_id": "target-1",
+                "query_fields": {"TARGET_FIELD": "b"},
             }
             self.assertIsNone(
                 MODULE.find_target(
@@ -126,17 +126,17 @@ class TraceStopOnTargetTests(unittest.TestCase):
                     other,
                     targets,
                     "fetch.jsonl",
-                    "/api/user/playlist/",
+                    "/api/target/",
                 )
             )
             match = MODULE.find_target(
                 trace_dir,
-                playlist,
+                target,
                 targets,
                 "fetch.jsonl",
-                "/api/user/playlist/",
+                "/api/target/",
             )
-            self.assertEqual(match["request_id"], "playlist-1")
+            self.assertEqual(match["request_id"], "target-1")
 
     def test_unconfigured_event_is_retained_until_manifest_fields_arrive(self):
         event = {"body_fields": {"p": "value"}}

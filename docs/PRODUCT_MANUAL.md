@@ -528,7 +528,7 @@ index/
 | `web-assets/` | finalize 后按页面/日志 URL 最佳努力下载的 HTML/JS。 |
 | `categorized/` | 停止后按用途归类的 JSONL，Agent 首选入口。 |
 | `index/summary.json` | 本轮总览、分类计数、目标字段命中、degraded 数、生成文件。 |
-| `index/causal-index.json` | 请求字段、JS value SHA-256、origin 上下文、候选 producer 的关联索引。 |
+| `index/causal-index.json` | 请求字段、JS value SHA-256、origin 上下文和 producer 关联索引；`producer_match` 给出最深 exact return，`producer_chain` 给出紧凑父链，`producer_candidates` 保留完整候选。 |
 | `index/target-candidates.json` | 工具自动排名的请求关联脚本、脚本匹配片段、精确脚本身份、opcode PC 范围和 dispatcher 候选；下一轮由中控台读取。 |
 
 ---
@@ -589,13 +589,13 @@ Agent 拿到一个 `TRACE_DIR` 后按这个顺序：
    - `value_store_path`
    - `origin_call_id`
 4. 读 `categorized/network.jsonl`：还原完整请求 URL、query/body、headers、response artifact。
-5. 读 `index/causal-index.json`：查看 `producer_candidates` 和 `same_origin_context`。
+5. 读 `index/causal-index.json`：先看 `producer_match` 和 `producer_chain`；需要审计完整匹配集合时再看 `producer_candidates`，`same_origin_context` 只作上下文。
 6. 读 `index/target-candidates.json`：确认工具推荐的脚本、置信度、PC range 和下一轮阶段。
-6. 读 `categorized/js.jsonl`：用 `call_id / parent_call_id / origin_call_id` 回溯生成/传递链。
-7. 读 `categorized/script.jsonl` 和 `scripts/`：定位算法文件、hash、source map。
-8. 读 `categorized/state.jsonl`、`dom.jsonl`、`bom.jsonl`：列环境/state 依赖账本。
-9. 如果完整值只在 artifact 中，去 `values/` 读取并用 SHA-256 对齐。
-10. 判断：纯算、补环境、混合、需要下一轮深采。
+7. 读 `categorized/js.jsonl`：用 `call_id / parent_call_id / origin_call_id` 回溯生成/传递链。
+8. 读 `categorized/script.jsonl` 和 `scripts/`：定位算法文件、hash、source map。
+9. 读 `categorized/state.jsonl`、`dom.jsonl`、`bom.jsonl`：列环境/state 依赖账本。
+10. 如果完整值只在 artifact 中，去 `values/` 读取并用 SHA-256 对齐。
+11. 判断：纯算、补环境、混合、需要下一轮深采。
 
 ---
 
@@ -743,7 +743,7 @@ JS return/arg/object value metadata 与请求字段 SHA-256 对齐
 | `tools/run-trace-firefox.sh` | 底层启动 Firefox。 |
 | `tools/trace-control.sh` | 对现有 `TRACE_DIR` start/stop/prewarm/config/new-segment/status。 |
 | `tools/trace_finalize.py` | 生成 `categorized/`、`index/summary.json`、`index/causal-index.json`、`index/target-candidates.json`。 |
-| `tools/trace_analyzer.py` | 离线找字段、脚本、函数和下一轮 env 建议。 |
+| `tools/trace_analyzer.py` | 离线找字段、脚本、函数和下一轮 env；当 request origin 只到 transport wrapper 时，用字段 SHA-256 解析最深 JS return producer 及父链。 |
 | `tools/trace_store.py` | 多轮导入 SQLite，按 field/value/call chain 查询。 |
 | `tools/trace_opcode_analyzer.py` | 分析 opcode 窗口，找热点 PC/dispatcher 线索。 |
 | `tools/fetch_source_maps.py` | 根据 script 日志下载 source map。 |

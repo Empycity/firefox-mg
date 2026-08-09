@@ -31,9 +31,13 @@ value role/path
 value SHA-256
 value_store_path
 match kind: exact-value | sha256 | decoded_sha256 | segment_sha256
+producer_match selection: same pid/segment, before request, exact return, deepest parent chain
+producer_chain: ordered producer call -> parent calls
 ```
 
 Producer evidence needs value identity plus execution/request context.
+An `origin_call_id` that identifies only a transport wrapper is not a producer
+gap when an exact request-value SHA resolves to a retained JS return chain.
 
 ## Environment/state dependency record
 

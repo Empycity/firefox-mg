@@ -71,6 +71,9 @@ Use `--trace-start active` when page-load code creates the target value. Use
 launcher always passes `--new-instance --profile PROFILE_DIR`; this prevents a
 different running Firefox profile from receiving the URL or trace settings.
 
+For Agent-started runs, confirm the headed window/process, then close the
+launcher process group after watchdog stop/finalize.
+
 ## Startup preflight
 
 Before waiting on a slow launch, check the deterministic failure points:

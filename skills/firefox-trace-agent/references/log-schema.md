@@ -26,7 +26,7 @@ TRACE_DIR/
 | `scripts/` | Browser-captured script artifacts. |
 | `web-assets/` | Finalizer best-effort page and JS downloads. |
 | `index/summary.json` | Counts, target fields, degraded count, generated files, match count. |
-| `index/causal-index.json` | Target field forms, producer candidates, same-origin context. |
+| `index/causal-index.json` | Target field forms, compact `producer_match`/`producer_chain`, complete producer candidates, same-origin context. |
 | `index/target-candidates.json` | Automatically ranked request-associated scripts, script match token, exact script identity, opcode PC range and dispatcher candidate for the next segment. |
 | `index/trace-health.json` | Loss markers plus runtime ACK and configured-target observation gates. |
 
@@ -45,8 +45,11 @@ TRACE_DIR/
 
 ## JSONL consumer contract
 
-Read JSONL incrementally. Do not use whole-file `readFileSync(...).split()` for
-large streams. An empty stream has zero records, not one empty JSON value.
+Read JSONL incrementally by physical LF records. Do not use whole-file
+`readFileSync(...).split()` for large streams or Python `str.splitlines()`:
+captured strings may contain U+0085/U+2028/U+2029, which generic Unicode line
+splitting treats as separators even though they occur inside one JSON record.
+An empty stream has zero records, not one empty JSON value.
 Portable exporters must preserve record discriminator fields such as `type`,
 plus IDs needed by downstream joins; field minimization is valid only after the
 fixture is replayed independently.
@@ -84,6 +87,11 @@ script_hash_source
 ```
 
 A producer claim is strong when the request field SHA-256 equals a JS value SHA-256 and the request context matches by `origin_call_id` or explicit call/request linkage.
+
+`causal-index.json` selects `producer_match` from exact JS returns in the same
+process and segment before the request, preferring the candidate with the
+deepest retained parent chain. `producer_chain` is the compact lineage;
+`producer_candidates` remains the full audit set.
 
 `target-candidates.json` is the UI handoff file. The user does not provide
 `TRACE_OPCODE_SCRIPT_CONTAINS`, `TRACE_OPCODE_PC_RANGE`, or

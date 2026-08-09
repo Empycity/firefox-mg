@@ -4,6 +4,7 @@
 
 ```bash
 TRACE_DIR="$HOME/Desktop/firefox-trace-outputs/firefox-trace-$(date +%Y%m%d-%H%M%S)" \
+TRACE_HEADLESS=0 \
 TRACE_QUERY_FIELDS='FIELD_A,FIELD_B' \
 TRACE_BODY_FIELDS='FIELD_A,FIELD_B' \
 TRACE_HEADER_FIELDS='HEADER_A,HEADER_B' \
@@ -34,6 +35,7 @@ python3 tools/trace-stop-on-target.py "$TRACE_DIR" \
 
 ```bash
 TRACE_DIR="$HOME/Desktop/firefox-trace-outputs/firefox-trace-$(date +%Y%m%d-%H%M%S)" \
+TRACE_HEADLESS=0 \
 TRACE_QUERY_FIELDS='FIELD_A,FIELD_B' \
 TRACE_BODY_FIELDS='FIELD_A,FIELD_B' \
 TRACE_HEADER_FIELDS='HEADER_A,HEADER_B' \
@@ -52,6 +54,10 @@ TRACE_WATCHDOG_PID=$!
 # repeat target action once
 # watchdog stops and finalizes immediately when the target is durable
 ```
+
+For every Agent-started template, confirm the headed Firefox window/process.
+After the watchdog receipt reports finalized, close the Firefox launcher
+process group before analyzing or deleting the trace/profile.
 
 ## Narrow target-values segment
 

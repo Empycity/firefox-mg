@@ -73,6 +73,11 @@ the acceptance claim until a new trace captures its complete vector.
 
 Read `index/causal-index.json` first. Then verify in `categorized/js.jsonl`.
 
+Read `producer_match` and `producer_chain` before the full candidate list. If
+the request origin points only to a transport wrapper, run
+`tools/trace_analyzer.py`; it resolves the request field SHA to the deepest
+preceding exact JS return in the same process/segment.
+
 For each candidate, keep:
 
 ```text
@@ -90,6 +95,10 @@ match_type
 ```
 
 `same_origin_context` is context, not proof by itself.
+
+If a target-values run matches the script but consumes its JS event budget
+before the request, treat it as function discovery. Rerun with script SHA plus
+exact function identity; script identity alone is not producer proof.
 
 ## Phase 4: Script source
 

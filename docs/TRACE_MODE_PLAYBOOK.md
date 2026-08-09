@@ -140,4 +140,6 @@ Chrome/CDP 的断点或方法包装可用于确认“哪个 API、哪次调用�
 
 ## 6. 验收与下一步
 
-先验证 `firefox-control-acks.jsonl` 有匹配 `config_hash` 的 `trace.config.applied`，再检查 `trace.degraded`、boundary `complete_window` 和目标字段 value artifact。固定输入齐全时用 `trace-align` 做 URL、headers、Cookie、body、raw/decoded field 的字节 diff。动态字段或 host 合同尚未齐全时，先在同一 Firefox profile/page 验证生成值确实进入发出的请求，再验证 response 的 JSON/业务语义。HTTP 200 本身不是完成条件。
+先验证 `firefox-control-acks.jsonl` 有匹配 `config_hash` 的 `trace.config.applied`，再检查 `trace.degraded`、boundary `complete_window` 和目标字段 value artifact。`origin_call_id` 只到 transport wrapper 时，必须用字段 SHA-256 对齐同进程、同 segment、请求前的 exact JS return；`producer_match` 和 `producer_chain` 应给出最深 producer 及父链。固定输入齐全时用 `trace-align` 做 URL、headers、Cookie、body、raw/decoded field 的字节 diff。动态字段或 host 合同尚未齐全时，先在同一 Firefox profile/page 验证生成值确实进入发出的请求，再验证 response 的 JSON/业务语义。HTTP 200 本身不是完成条件。
+
+目标模式只锁脚本 SHA 时仍要观察事件增长。高频脚本在目标请求前耗尽预算，说明过滤粒度仍过宽；该轮只用于发现函数，下一轮使用脚本 SHA 加 exact function identity。JSONL 消费端按物理 LF 逐条读取，禁止用 Unicode `splitlines()`，避免字段值中的 U+0085/U+2028/U+2029 把单条事件切断。
