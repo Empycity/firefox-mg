@@ -12,12 +12,6 @@ or double-click:
 Firefox Trace Console.app
 ```
 
-## Web UI / HTTP API
-
-```bash
-tools/trace-console.sh --host 127.0.0.1 --port 8788
-```
-
 ## Runtime paths
 
 Recommended environment:
@@ -55,6 +49,24 @@ tools/trace-control.sh "$TRACE_DIR" start target-action
 tools/trace-control.sh "$TRACE_DIR" stop after-target
 tools/trace-control.sh "$TRACE_DIR" new-segment target-values
 ```
+
+## Mandatory Agent watchdog
+
+Whenever the Agent launches or resumes collection, start this in the same turn:
+
+```bash
+python3 tools/trace-stop-on-target.py "$TRACE_DIR" \
+  --max-seconds 120 --max-bytes 2147483648 \
+  >"$TRACE_DIR/stop-on-target-receipt.json" 2>&1 &
+TRACE_WATCHDOG_PID=$!
+```
+
+The watchdog incrementally reads Fetch/XHR/Cookie JSONL files. As soon as a
+configured query/body/header/cookie field and any referenced artifact are on
+disk, it runs `trace-control.sh stop target-found`, waits briefly for an ACK,
+and runs `trace_finalize.py`. It performs the same stop/finalize sequence at
+120 seconds or 2 GiB. Keep its PID, inspect the receipt, and stop collection
+immediately if the process exits without one.
 
 ## Analyze/finalize
 

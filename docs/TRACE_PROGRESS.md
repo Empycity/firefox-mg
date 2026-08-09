@@ -2,6 +2,10 @@
 
 更新时间：2026-08-02
 
+> 本文件是历史验证归档，不是通用产品手册、Agent 指南或 skill。这里保留旧运行的
+> 原始证据，便于追溯实现变更；新站点的脚本、字段、hash、长度和 trace 路径必须写入
+> `examples/<case>/`，不得从本归档复制到通用文档或默认配置。
+
 ## 2026-08-02：full-chain 与中文中控台
 
 本轮把“同一次用户操作的多模式日志”收口为一个采集计划：
@@ -14,8 +18,6 @@
 - `tools/trace_finalize.py` 输出 `categorized/`、`index/summary.json`、
   `index/causal-index.json`；
 - `tools/trace_check.py full-chain TRACE_DIR` 验证整理结果；
-- `tools/trace-console.sh` 提供中文中控台：URL、输出目录、Query/Body 字段、暂停打开、
-  开始/暂停/停止并整理/关闭 Firefox、实时事件速率和分类健康度。
 
 构建与 smoke：
 
@@ -300,16 +302,7 @@ runtime segment/config 热切 smoke：
 新增：
 
 - `tools/trace-console-server.py`
-  - 本地 Web UI：`http://127.0.0.1:8788/`
-  - Agent HTTP API：
-    - `GET /api/latest`
-    - `GET /api/status?trace_dir=...`
-    - `GET /api/summary?trace_dir=...`
-    - `POST /api/config`
-    - `POST /api/new-segment`
-    - `POST /api/start`
-    - `POST /api/stop`
-    - `POST /api/prewarm`
+  - 桌面 App 的会话编排后端：启动、配置、分段、暂停、停止和整理。
 - UI 可配置：
   - `TRACE_DIR` / `TRACE_CONTROL_FILE`
   - segment label / preset

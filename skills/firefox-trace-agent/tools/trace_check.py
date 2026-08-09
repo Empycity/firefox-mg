@@ -226,6 +226,34 @@ def check_xhr_response_body(trace_dir):
     print(f"xhr-response-body: validated {len(responses)} complete response artifacts")
 
 
+def check_interaction(trace_dir):
+    events = [
+        event
+        for _, _, event in json_lines(trace_dir, "firefox-dom-*.jsonl")
+        if event.get("type") in {"dom.call", "dom.get"}
+    ]
+    observed = {
+        (event.get("interface"), event.get("member")) for event in events
+    }
+    required = {
+        ("EventTarget", "addEventListener"),
+        ("EventTarget", "dispatchEvent"),
+        ("Element", "getBoundingClientRect"),
+        ("Document", "elementFromPoint"),
+        ("MouseEvent", "clientX"),
+        ("MouseEvent", "clientY"),
+        ("PointerEvent", "pointerId"),
+        ("PointerEvent", "pressure"),
+    }
+    missing = sorted(required - observed)
+    if missing:
+        fail(
+            "interaction signals missing: "
+            + ", ".join(f"{interface}.{member}" for interface, member in missing)
+        )
+    print(f"interaction: validated {len(required)} DOM/event signals")
+
+
 def check_http_raw(trace_dir):
     events = json_lines(trace_dir, "firefox-http-raw-*.jsonl")
     chunks = [event for _, _, event in events if event.get("type") == "http.raw_chunk"]
@@ -269,6 +297,7 @@ def check_full_chain(trace_dir):
     summary_path = trace_dir / "index" / "summary.json"
     causal_path = trace_dir / "index" / "causal-index.json"
     candidates_path = trace_dir / "index" / "target-candidates.json"
+    health_path = trace_dir / "index" / "trace-health.json"
     request_path = trace_dir / "categorized" / "request-fields.jsonl"
     if not summary_path.is_file():
         fail(f"missing finalized summary: {summary_path}")
@@ -276,6 +305,8 @@ def check_full_chain(trace_dir):
         fail(f"missing causal index: {causal_path}")
     if not request_path.is_file():
         fail(f"missing request field index: {request_path}")
+    if not health_path.is_file():
+        fail(f"missing trace health index: {health_path}")
     if candidates_path.is_file():
         candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
         if candidates.get("schema") != "firefox_trace.target_candidates.v1":
@@ -284,6 +315,16 @@ def check_full_chain(trace_dir):
             fail("target candidate index is missing candidates[]")
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    health = json.loads(health_path.read_text(encoding="utf-8"))
+    if health.get("schema") != "firefox_trace.health.v1":
+        fail("trace health index has an unexpected schema")
+    for field in (
+        "evidence_complete",
+        "runtime_behavior_unchanged",
+        "incomplete_reasons",
+        "limit_triggers",
+    ):
+        require_field(health, field, "trace health")
     for field in (
         "schema",
         "event_count",
@@ -336,11 +377,14 @@ def check_full_chain(trace_dir):
     require_field(causal, "targets", "full-chain causal index")
     if summary["request_field_count"] != len(request_rows):
         fail("summary request_field_count does not match categorized/request-fields.jsonl")
+    if summary.get("trace_health", {}).get("schema") != "firefox_trace.health.v1":
+        fail("summary trace_health is missing or inconsistent")
     print(
         "full-chain: validated "
         f"{summary['event_count']} raw events, {len(request_rows)} request fields, "
         f"{summary['target_match_count']} matched targets, "
-        f"{summary['degraded_count']} degraded notices"
+        f"{summary['degraded_count']} degraded notices, "
+        f"evidence_complete={health['evidence_complete']}"
     )
 
 
@@ -357,6 +401,7 @@ def main():
             "websocket",
             "fetch-body",
             "xhr-response-body",
+            "interaction",
             "http-raw",
             "wasm",
             "full-chain",
@@ -380,6 +425,8 @@ def main():
         check_fetch_body(args.trace_dir)
     elif args.check == "xhr-response-body":
         check_xhr_response_body(args.trace_dir)
+    elif args.check == "interaction":
+        check_interaction(args.trace_dir)
     elif args.check == "http-raw":
         check_http_raw(args.trace_dir)
     elif args.check == "wasm":

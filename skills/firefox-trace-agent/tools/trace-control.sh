@@ -29,6 +29,9 @@ Config options:
   --primitive-metadata 0|1
   --value-store-min-bytes N
   --value-store-max-bytes N   JS value artifact 最大字节；0 表示不按大小丢弃
+  --deferred-value-capture 0|1  命中请求后再写 JS 值制品
+  --deferred-value-pool-bytes N  内存去重值池上限
+  --boundary-buffer-events N  请求回溯调用窗口大小
   --limit-events N
   --module js|xhr|fetch|ws|http_raw|wasm|dom|cookie|storage|script=0|1
   --set TRACE_NAME=VALUE
@@ -103,6 +106,15 @@ MODULE_ENV = {
     "script": "FIREFOX_TRACE_SCRIPT_RESOURCE",
 }
 
+# A few legacy/runtime paths still read the unprefixed module variables.  A
+# hot config must update both spellings; otherwise a previous segment can leave
+# TRACE_WASM/TRACE_JS enabled even after the UI turns the module off.
+MODULE_ENV_ALIASES = {
+    "js": "TRACE_JS",
+    "wasm": "TRACE_WASM",
+    "script": "TRACE_SCRIPT_RESOURCE",
+}
+
 PRESETS = {
     "manual": {},
     "full-chain": {
@@ -112,19 +124,25 @@ PRESETS = {
         "TRACE_JS_MODE": "boundary",
         "TRACE_JS_AUTO_CAPTURE_VALUES": "1",
         "TRACE_JS_CAPTURE_VALUES": "1",
-        "TRACE_JS_THIS": "none",
+        "TRACE_JS_DEFERRED_VALUE_CAPTURE": "1",
+        "TRACE_JS_DEFERRED_VALUE_POOL_BYTES": "67108864",
+        "TRACE_JS_FULL_SPOOL": "1",
+        "TRACE_JS_SCRIPT_EVENTS": "1",
+        "TRACE_JS_THIS": "preview",
         "TRACE_JS_ARGS": "preview",
         "TRACE_JS_RET": "preview",
         "TRACE_JS_OBJECT_DEPTH": "0",
+        "TRACE_JS_OBJECT_TARGET_ONLY": "1",
         "TRACE_JS_OBJECT_KEYS": "0",
         "TRACE_JS_ARRAY_ITEMS": "0",
+        "TRACE_JS_TYPED_ARRAY_BYTES": "0",
         "TRACE_JS_VALUE_STORE": "1",
         "TRACE_JS_VALUE_METADATA": "1",
-        "TRACE_JS_VALUE_METADATA_MIN_BYTES": "24",
+        "TRACE_JS_VALUE_METADATA_MIN_BYTES": "1",
         "TRACE_JS_PRIMITIVE_METADATA": "1",
         "TRACE_JS_VALUE_STORE_MIN_BYTES": "1",
         "TRACE_JS_VALUE_STORE_MAX_BYTES": "0",
-        "TRACE_JS_MAX_VALUE_BYTES": "512",
+        "TRACE_JS_MAX_VALUE_BYTES": "0",
         "TRACE_JS_MAX_ARGS": "0",
         "TRACE_JS_BOUNDARY_BUFFER": "1",
         "TRACE_JS_BOUNDARY_BUFFER_EVENTS": "8192",
@@ -150,42 +168,58 @@ PRESETS = {
         "TRACE_QUERY_FIELD_VALUE_STORE_MAX_BYTES": "0",
         "TRACE_XHR_EVENTS": "open,header,send,body,response",
         "TRACE_FETCH_REQUEST_HEADERS": "preview",
-        "TRACE_XHR_REQUEST_BODY": "preview",
+        "TRACE_XHR_REQUEST_BODY": "full",
+        "TRACE_XHR_REQUEST_BODY_MAX_BYTES": "0",
+        "TRACE_XHR_REQUEST_BODY_HEX_BYTES": "0",
         "TRACE_XHR_REQUEST_BODY_STORE": "1",
         "TRACE_XHR_RESPONSE_BODY": "full",
         "TRACE_XHR_RESPONSE_BODY_STORE": "1",
         "TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES": "0",
         "TRACE_FETCH_EVENTS": "all",
-        "TRACE_FETCH_REQUEST_BODY": "preview",
+        "TRACE_FETCH_REQUEST_BODY": "full",
+        "TRACE_FETCH_REQUEST_BODY_MAX_BYTES": "0",
+        "TRACE_FETCH_REQUEST_BODY_HEX_BYTES": "0",
         "TRACE_FETCH_REQUEST_BODY_STORE": "1",
-        "TRACE_FETCH_RESPONSE_HEADERS": "preview",
-        "TRACE_FETCH_RESPONSE_BODY": "preview",
+        "TRACE_FETCH_RESPONSE_HEADERS": "full",
+        "TRACE_FETCH_RESPONSE_HEADERS_MAX_COUNT": "0",
+        "TRACE_FETCH_RESPONSE_HEADER_VALUE_MAX_BYTES": "0",
+        "TRACE_FETCH_RESPONSE_BODY": "full",
+        "TRACE_FETCH_RESPONSE_BODY_MAX_BYTES": "0",
+        "TRACE_FETCH_RESPONSE_BODY_HEX_BYTES": "0",
         "TRACE_FETCH_RESPONSE_BODY_STORE": "1",
-        "TRACE_FETCH_RESPONSE_BODY_MAX_BYTES": "4096",
         "TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES": "0",
-        "TRACE_FETCH_RESPONSE_BODY_CHUNK_EVENTS": "32",
+        "TRACE_FETCH_RESPONSE_BODY_CHUNK_EVENTS": "0",
         "FIREFOX_TRACE_DOM": "1",
-        "TRACE_DOM_MODE": "signal",
-        "TRACE_DOM_EVENTS": "get,call",
-        "TRACE_DOM_PREVIEW": "none",
+        "TRACE_DOM_MODE": "all",
+        "TRACE_DOM_EVENTS": "all",
+        "TRACE_DOM_PREVIEW": "all",
+        "TRACE_DOM_CONTRACT": "1",
+        "TRACE_DOM_CONTRACT_PROTOTYPE_DEPTH": "0",
+        "TRACE_DOM_VALUE_STORE": "1",
+        "TRACE_DOM_VALUE_STORE_MIN_BYTES": "1",
+        "TRACE_DOM_VALUE_STORE_MAX_BYTES": "0",
+        "TRACE_DOM_OBJECT_VALUES": "1",
         "FIREFOX_TRACE_XHR": "1",
         "FIREFOX_TRACE_FETCH": "1",
         "FIREFOX_TRACE_WS": "1",
+        "TRACE_WS_PREVIEW_BYTES": "0",
         "FIREFOX_TRACE_STORAGE": "1",
         "FIREFOX_TRACE_COOKIE": "1",
         "TRACE_SCRIPT_RESOURCE": "1",
         "TRACE_SCRIPT_RESOURCE_CAPTURE": "1",
         "TRACE_SCRIPT_RESOURCE_STORE": "1",
-        "TRACE_SCRIPT_RESOURCE_MAX_BYTES": "4194304",
-        "FIREFOX_TRACE_WASM": "1",
-        "TRACE_WASM": "1",
-        "TRACE_WASM_DUMP": "1",
+        "TRACE_SCRIPT_RESOURCE_MAX_BYTES": "0",
+        "TRACE_SCRIPT_RESOURCE_PREVIEW_LIMIT": "0",
+        "TRACE_PREVIEW_LIMIT": "0",
+        "FIREFOX_TRACE_WASM": "0",
+        "TRACE_WASM": "0",
+        "TRACE_WASM_DUMP": "0",
         "TRACE_WASM_DUMP_MAX_BYTES": "1048576",
         "TRACE_WASM_PREVIEW_BYTES": "256",
         "TRACE_WASM_MODULE_LIMIT": "64",
         "TRACE_WASM_INSN": "0",
-        "TRACE_IPC_MAX_EVENTS_PER_SECOND": "12000",
-        "TRACE_IPC_MAX_BYTES_PER_SECOND": "8388608",
+        "TRACE_IPC_MAX_EVENTS_PER_SECOND": "0",
+        "TRACE_IPC_MAX_BYTES_PER_SECOND": "0",
         "FIREFOX_TRACE_JS_LIMIT_EVENTS": "0",
     },
     "opcode-window": {
@@ -374,8 +408,38 @@ ALIASES = {
     "TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES": "FIREFOX_TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES",
     "TRACE_FETCH_REQUEST_HEADERS": "FIREFOX_TRACE_FETCH_REQUEST_HEADERS",
     "TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES": "FIREFOX_TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES",
+    "TRACE_DOM_HOT_MEMBER_LIMIT": "FIREFOX_TRACE_DOM_HOT_MEMBER_LIMIT",
+    "TRACE_DOM_HOT_MEMBER_SAMPLE": "FIREFOX_TRACE_DOM_HOT_MEMBER_SAMPLE",
+    "TRACE_DOM_VALUE_STORE": "FIREFOX_TRACE_DOM_VALUE_STORE",
+    "TRACE_DOM_VALUE_STORE_MIN_BYTES": "FIREFOX_TRACE_DOM_VALUE_STORE_MIN_BYTES",
+    "TRACE_DOM_VALUE_STORE_MAX_BYTES": "FIREFOX_TRACE_DOM_VALUE_STORE_MAX_BYTES",
+    "TRACE_DOM_CONTRACT": "FIREFOX_TRACE_DOM_CONTRACT",
+    "TRACE_DOM_CONTRACT_PROTOTYPE_DEPTH": "FIREFOX_TRACE_DOM_CONTRACT_PROTOTYPE_DEPTH",
 }
 
+# JS filter names have existed under three spellings across the launcher,
+# control file and SpiderMonkey hook. Treat them as one family so a hot
+# config can both set and clear a filter without leaving a stale alias behind.
+ENV_ALIAS_GROUPS = {
+    "TRACE_SCRIPT_CONTAINS": (
+        "TRACE_SCRIPT_CONTAINS",
+        "FIREFOX_TRACE_SCRIPT_CONTAINS",
+        "TRACE_JS_SCRIPT_CONTAINS",
+        "FIREFOX_TRACE_JS_SCRIPT_CONTAINS",
+    ),
+    "TRACE_FUNCTION_CONTAINS": (
+        "TRACE_FUNCTION_CONTAINS",
+        "FIREFOX_TRACE_FUNCTION_CONTAINS",
+        "TRACE_JS_FUNCTION_CONTAINS",
+        "FIREFOX_TRACE_JS_FUNCTION_CONTAINS",
+    ),
+    "TRACE_SCRIPT_SHA256": (
+        "TRACE_SCRIPT_SHA256",
+        "FIREFOX_TRACE_SCRIPT_SHA256",
+        "TRACE_JS_SCRIPT_SHA256",
+        "FIREFOX_TRACE_JS_SCRIPT_SHA256",
+    ),
+}
 OPTION_ENV = {
     "--profile": "TRACE_PROFILE",
     "--js-mode": "TRACE_JS_MODE",
@@ -395,6 +459,9 @@ OPTION_ENV = {
     "--primitive-metadata": "TRACE_JS_PRIMITIVE_METADATA",
     "--value-store-min-bytes": "TRACE_JS_VALUE_STORE_MIN_BYTES",
     "--value-store-max-bytes": "TRACE_JS_VALUE_STORE_MAX_BYTES",
+    "--deferred-value-capture": "TRACE_JS_DEFERRED_VALUE_CAPTURE",
+    "--deferred-value-pool-bytes": "TRACE_JS_DEFERRED_VALUE_POOL_BYTES",
+    "--boundary-buffer-events": "TRACE_JS_BOUNDARY_BUFFER_EVENTS",
     "--limit-events": "FIREFOX_TRACE_JS_LIMIT_EVENTS",
 }
 
@@ -461,10 +528,20 @@ def with_aliases(env):
     for src, dst in ALIASES.items():
         if src in out:
             out[dst] = out[src]
+    for canonical, keys in ENV_ALIAS_GROUPS.items():
+        value = next((out[key] for key in keys if key in out and out[key] != ""), None)
+        if value is not None:
+            for key in keys:
+                out[key] = value
     return out
 
 
 def unset_env_key(env, key):
+    for canonical, keys in ENV_ALIAS_GROUPS.items():
+        if key == canonical or key in keys:
+            for alias in keys:
+                env.pop(alias, None)
+            return
     env.pop(key, None)
     if key in ALIASES:
         env.pop(ALIASES[key], None)
@@ -646,6 +723,32 @@ def base_record(current, act, enabled, mode, label):
     return record
 
 
+def record_cleared_env(record, previous):
+    """Record runtime variables removed by a hot config.
+
+    Content processes inherit the launch environment.  Omitting a key from the
+    next control document is therefore not enough to clear it in an already
+    running process; the Gecko side consumes this explicit list and calls
+    unsetenv().
+    """
+    previous_env = {
+        str(key)
+        for key in (previous.get("env") or {})
+        if str(key).startswith(("TRACE_", "FIREFOX_TRACE_"))
+    }
+    current_env = {
+        str(key)
+        for key in (record.get("env") or {})
+        if str(key).startswith(("TRACE_", "FIREFOX_TRACE_"))
+    }
+    cleared = set(record.get("unset") or [])
+    cleared.update(previous_env - current_env)
+    if cleared:
+        record["unset"] = sorted(cleared)
+    else:
+        record.pop("unset", None)
+
+
 def parse_config_args(args, current):
     env = dict(current.get("env") or {})
     explicit_env = {}
@@ -685,10 +788,16 @@ def parse_config_args(args, current):
         elif arg == "--set":
             i += 1
             key, value = args[i].split("=", 1)
-            explicit_env[key] = value
+            if value == "":
+                explicit_unset.append(key)
+            else:
+                explicit_env[key] = value
         elif arg.startswith("--set="):
             key, value = arg.split("=", 1)[1].split("=", 1)
-            explicit_env[key] = value
+            if value == "":
+                explicit_unset.append(key)
+            else:
+                explicit_env[key] = value
         elif arg == "--unset":
             i += 1
             explicit_unset.append(args[i])
@@ -696,10 +805,19 @@ def parse_config_args(args, current):
             explicit_unset.append(arg.split("=", 1)[1])
         elif arg in OPTION_ENV:
             i += 1
-            explicit_env[OPTION_ENV[arg]] = args[i]
+            value = args[i]
+            env_key = OPTION_ENV[arg]
+            if value == "":
+                explicit_unset.append(env_key)
+            else:
+                explicit_env[env_key] = value
         elif any(arg.startswith(k + "=") for k in OPTION_ENV):
             key, value = arg.split("=", 1)
-            explicit_env[OPTION_ENV[key]] = value
+            env_key = OPTION_ENV[key]
+            if value == "":
+                explicit_unset.append(env_key)
+            else:
+                explicit_env[env_key] = value
         else:
             raise SystemExit(f"unknown config option: {arg}")
         i += 1
@@ -720,6 +838,9 @@ def parse_config_args(args, current):
 
     for name, enabled in module_env_overrides.items():
         env[MODULE_ENV[name]] = "1" if enabled else "0"
+        alias = MODULE_ENV_ALIASES.get(name)
+        if alias:
+            env[alias] = "1" if enabled else "0"
 
     # Keep the human-readable module map aligned with preset/env composition.
     # The env values remain the runtime source of truth.
@@ -768,6 +889,7 @@ else:
     raise SystemExit(f"unsupported action: {action}")
 
 record["env"] = apply_vm_safety_defaults(record.get("env") or {})
+record_cleared_env(record, current)
 record["config_hash"] = config_hash(record)
 record["previous_state"] = prev
 enforce_safety(record)

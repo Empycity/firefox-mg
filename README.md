@@ -1,3 +1,39 @@
+
+## 2026-08-06 默认策略：恢复原始全量首轮
+
+桌面 UI 的默认 full-chain 恢复为原始全量首轮策略。DOM/BOM、普通 JS、IPC、XHR
+和 boundary 不会由工具偷偷注入新的总量上限；只有 Agent 配置显式写入对应环境变量时才限流。
+新增的异步 value spool 只改变落盘路径，不改变观测覆盖面。
+
+```text
+TRACE_JS_CAPTURE_VALUES=1
+TRACE_JS_AUTO_CAPTURE_VALUES=1
+TRACE_JS_VALUE_STORE=1
+TRACE_JS_DEFERRED_VALUE_CAPTURE=1
+TRACE_JS_DEFERRED_VALUE_POOL_BYTES=67108864  # 新增落盘池；触发会写 trace_health
+TRACE_JS_BOUNDARY_BUFFER=1
+TRACE_JS_BOUNDARY_BUFFER_EVENTS=8192
+TRACE_JS_BOUNDARY_FLUSH_ON=原始 sink 列表
+TRACE_XHR_RESPONSE_BODY=full
+TRACE_FETCH_REQUEST_BODY=full
+TRACE_FETCH_REQUEST_BODY_MAX_BYTES=0
+TRACE_FETCH_RESPONSE_BODY=full
+TRACE_FETCH_RESPONSE_BODY_MAX_BYTES=0
+TRACE_SCRIPT_RESOURCE_MAX_BYTES=0
+TRACE_JS_MAX_VALUE_BYTES=0
+TRACE_DOM_EVENTS=all
+TRACE_DOM_PREVIEW=all
+TRACE_DOM_CONTRACT=1
+TRACE_WASM_DUMP=0
+FIREFOX_TRACE_JS_LIMIT_EVENTS=0
+```
+
+含义：打开即记录仍然捕获加载期脚本、Cookie/Storage、请求、目标字段及网页 JS 的 args/return。JS 值可经异步 spool 落盘；该优化不改变默认事件覆盖。`target-candidates.json` 优先使用请求字段与 JS 值的运行时匹配，静态源码特征只保留为回退候选。每轮整理都会写 `index/trace-health.json`，明确任何显式上限造成的证据缺口。
+
+首轮或一轮回溯固定选择 `TRACE_JS_MODE=boundary`。`target`/`deep` 仅用于已经加载脚本、函数或 SHA-256 候选的精确采集；空候选会被桌面中控台明确切换为 `boundary`，避免得到 `JS=0` 的无效产物。
+
+验证码/风控中的鼠标、触摸、坐标和轨迹相关读取仍属于 DOM/BOM signal；源码已补充 `MouseEvent/PointerEvent/TouchEvent/WheelEvent/KeyboardEvent/InputEvent`、`addEventListener/dispatchEvent`、`getBoundingClientRect`、`elementFromPoint` 等交互面。
+
 # Firefox 字段级 Trace 与 Agent 辅助逆向项目文档
 
 ## 1. 项目目标
@@ -10,7 +46,7 @@ Agent 和 MCP 是辅助层：Agent 先消费 Trace 已经收窄的结果，只�
 
 - 最终交付物是魔改 Firefox 浏览器、日志 schema、启动参数和详细使用说明。
 - 不要求用户依赖 Python 分析脚本；仓库内脚本只作为开发期 smoke / 辅助检查工具。
-- JD/h5st 只作为测试样本，不能进入浏览器核心、日志 schema、默认配置或默认分析流程。
+- 站点专用脚本、字段和样本只放在 `examples/<case>/`，不能进入浏览器核心、日志 schema、默认配置或默认分析流程。
 - 目标字段由用户需求、运行配置或 AI 按使用说明从日志里选择；默认能力必须面向通用网站参数逆向。
 - 每个新增内核能力必须编译并 smoke 验证后再继续推进。
 
@@ -20,23 +56,28 @@ Agent 和 MCP 是辅助层：Agent 先消费 Trace 已经收窄的结果，只�
 2. 关键字段是谁算的？
 3. 算法依赖了哪些浏览器环境、服务端下发值、Cookie、Storage、随机数和时间？
 
+### Agent 阅读入口
+
+后续 Agent 收到一个 `TRACE_DIR` 时，先读 [docs/AGENT_TRACE_GUIDE.md](docs/AGENT_TRACE_GUIDE.md)：它定义日志阅读顺序、证据等级、固定 vector 的 diff、动态字段验收和下一轮 Trace 的模式选择。项目的操作界面与默认值见 [docs/PRODUCT_MANUAL.md](docs/PRODUCT_MANUAL.md)。原则是：一轮 `full-chain` 先作为完整候选产物检查；证据足够就直接验收，只有明确缺口才生成可一键加载的 `agent-next.json` 重跑。
+
+生成下一轮配置前还必须读 [docs/TRACE_MODE_PLAYBOOK.md](docs/TRACE_MODE_PLAYBOOK.md)：其中列出 active/paused/full-chain/light/object-overlay/Raw HTTP/opcode/VM step/WASM 的使用条件、全部可填参数、指纹环境专项采集和补环境证据优先级。
+
 核心场景：
 
 - 补环境：明确页面实际读取了哪些浏览器环境 API，并知道这些值进入了哪个字段。
-- 纯算：定位 sign、token、riskData、fp 等字段的生成函数和输入依赖。
+- 纯算：定位 signature、token、risk_field、fingerprint 等字段的生成函数和输入依赖。
 - 风控字段分析：从目标请求字段出发，由 Agent 结合 Trace、断点上下文和对照实验定位计算链。
 - 浏览器修改：把已验证的环境读取、原生 API 或运行时行为整理成明确的修改位置和回归用例。
 
 ## 快速使用入口
 
 交付给实际使用者的产品手册见 [docs/PRODUCT_MANUAL.md](docs/PRODUCT_MANUAL.md)。
-当前待做清单见 [docs/TODO.md](docs/TODO.md)，后续不要把新 TODO 混进本文的大段规划里。
+已验证的站点案例统一放在 [examples/](examples/README.md)，不参与通用 Trace 默认流程。
 当前推荐桌面软件式中控台 `Firefox Trace Console.app`：双击打开窗口，在窗口里填写 URL、
 输出目录、Firefox 路径、Query/Body 字段和采集勾选项，然后“打开 Firefox -> 手动操作 ->
 开始记录 -> 停止并整理”。默认 `full-chain` 计划会把 DOM/BOM、JS、Network、Cookie/Storage、
-Script、Worker/WASM 线索写入同一个 `TRACE_DIR`。桌面 UI 默认不限制普通 JS trace 总事件数；
-采集强度只控制值预览大小、IPC/opcode 突刺保护和 artifact 大小；
-旧的 Web 中控台、runtime control、segment、preset/filter API 仍保留；
+Script、Worker/WASM 线索写入同一个 `TRACE_DIR`。桌面 UI 的 full-chain 默认关闭普通 JS 总事件保险丝；
+采集强度控制值预览大小、IPC/opcode 突刺保护和 artifact 大小；
 另有静态 [Trace Explorer](viewer/index.html)，可直接打开、选择 `TRACE_DIR`，离线查看
 时间线、request/call 关联事件、制品和导出报告。实际证据仍以 `TRACE_DIR` 下的 JSONL
 与制品为准。启动入口见 `Firefox Trace Console.app`、`tools/trace-desktop.py` 和产品手册。
@@ -50,7 +91,7 @@ RemoteAgent 监听信息，但 Marionette / RemoteAgent 控制通道保持可用
 ```bash
 TRACE_DIR=/private/tmp/firefox-trace-case-$(date +%s) \
 TRACE_CAMPAIGN_ID=case-001 \
-TRACE_QUERY_FIELDS=sign,token,riskData,fp,anti_content,h5st \
+TRACE_QUERY_FIELDS=signature,token,risk_field,fingerprint,target_field,secondary_field \
 tools/run-trace-firefox.sh --trace-preset discover-light 'https://example.com/'
 ```
 
@@ -66,7 +107,7 @@ tools/run-trace-firefox.sh --trace-automation-surface stock tests/automation-sur
 真实站点如果需要先登录、过验证码、滑块或人工跳转，推荐 paused 启动，目标触发前再开启：
 
 ```bash
-TRACE_QUERY_FIELDS=sign,token,anti_content,h5st \
+TRACE_QUERY_FIELDS=signature,token,target_field,secondary_field \
 tools/run-trace-firefox.sh --trace-preset discover-light --trace-start paused 'https://example.com/'
 
 tools/trace-control.sh "$TRACE_DIR" start target-action
@@ -98,18 +139,12 @@ tools/trace-desktop.sh
    `index/summary.json`、`index/causal-index.json`、`index/target-candidates.json`；
 5. 需要结束浏览器时点击“关闭 Firefox”，中控台会先 stop、整理，再结束本轮进程组。
 
-Web 版备用入口：
-
-```bash
-tools/trace-console.sh --host 127.0.0.1 --port 8788
-```
-
 命令行等价入口：
 
 ```bash
 TRACE_DIR=/private/tmp/firefox-trace-full-chain-$(date +%s) \
-TRACE_QUERY_FIELDS=sign,token,anti_content,h5st \
-TRACE_BODY_FIELDS=sign,token,anti_content,h5st \
+TRACE_QUERY_FIELDS=signature,token,target_field,secondary_field \
+TRACE_BODY_FIELDS=signature,token,target_field,secondary_field \
 tools/run-trace-firefox.sh \
   --trace-plan full-chain \
   --trace-start paused \
@@ -117,7 +152,7 @@ tools/run-trace-firefox.sh \
 ```
 
 `full-chain` 保持 JS 为 boundary 主模式，但对网页脚本调用增加受限的自动浅层
-args/return 采集；事件带 `capture_tier=boundary_auto`。对象深度默认是 0，长值按阈值
+args/return 采集；事件带 `capture_tier=boundary_auto`。UI full-chain 对象深度默认是 1（只对命中身份对象展开），CLI 未显式配置时为 0，长值按阈值
 落盘，命中 XHR/Fetch/DOM/Cookie/Storage sink 时再 flush 最近的调用窗口。
 
 ### Preset 选择
@@ -183,8 +218,8 @@ target/deep 场景需要看短字段时，打开 `TRACE_JS_VALUE_METADATA=1`。�
 `TRACE_JS_BOUNDARY_BUFFER_EVENTS` 控制；也可以给关键 sink 单独加大窗口，例如
 `TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY=16384`、`TRACE_JS_BOUNDARY_BUFFER_EVENTS_FETCH_CALL=12288`。
 当 XHR/Fetch 的 URL query 或 XHR body 命中 `TRACE_QUERY_FIELDS` 时，flush reason 会继续带上
-字段名，例如 `xhr.body.anti_content`、`fetch.call.token`，可配置
-`TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY_ANTI_CONTENT=20000` 这类字段级窗口。
+字段名，例如 `xhr.body.<target_field>`、`fetch.call.token`，可配置
+`TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY_TARGET_FIELD=20000` 这类字段级窗口。
 `complete_window=false` 表示窗口发生过覆盖或被本次 sink 配置裁剪，必须按候选日志处理。
 
 任何日志里出现 `{"type":"trace.degraded" ...}`，这轮只能用于候选定位，不能用来证明
@@ -356,7 +391,7 @@ fact_confirm / report_generate
   "filters": {
     "scriptUrlContains": ["risk", "captcha", "fp"],
     "requestUrlContains": ["/risk", "/login", "/verify"],
-    "fieldNames": ["sign", "token", "riskData", "fp"]
+    "fieldNames": ["signature", "token", "risk_field", "fingerprint"]
   }
 }
 ```
@@ -471,7 +506,7 @@ traceOut/
   },
   "filters": {
     "url_contains": ["risk", "login", "verify"],
-    "field_names": ["sign", "token", "riskData", "fp"]
+    "field_names": ["signature", "token", "risk_field", "fingerprint"]
   }
 }
 ```
@@ -539,7 +574,7 @@ flowchart LR
 
   FP --> Builder
   Builder --> Encrypt[encrypt / hash / encode]
-  Encrypt --> Field[body.riskData / body.sign]
+  Encrypt --> Field[body.risk_field / body.signature]
   Field --> Req[POST /risk/verify]
 ```
 
@@ -605,9 +640,9 @@ POST /risk/verify body.sign
 字段标签：
 
 ```text
-sign       纯算 hash/encrypt
-riskData   指纹聚合 + 加密
-fp         浏览器指纹
+signature  纯算 hash/encrypt
+risk_field 指纹聚合 + 加密
+fingerprint 浏览器指纹
 nonce      服务端下发
 ts         时间
 rid        随机数
@@ -625,7 +660,7 @@ navigator.webdriver         risk.js:144  captured
 screen.width                fp.js:88     captured
 canvas.toDataURL            fp.js:210    captured
 
-已确认影响 body.riskData：
+已确认影响 body.risk_field：
 navigator.userAgent         run_011 单变量覆盖  confirmed
 screen.width                run_012 断点+覆盖    confirmed
 
@@ -669,7 +704,7 @@ flowchart TB
   B --> C[读取环境指纹]
   C --> D[请求 /risk/init]
   D --> E[获得 nonce / challenge]
-  E --> F[生成 fp / riskData]
+  E --> F[生成 fingerprint / risk_field]
   F --> G[上报 /fp/collect]
   G --> H[用户点击登录]
   H --> I[生成 sign / token]
@@ -696,7 +731,7 @@ Diff 是 Agent 的验证工具，不是固定要求每个目标都执行完整�
 |---|---|---|---|---|---|
 | 基线重放 | 相同 | 每次重新获取 | 自然变化 | 相同 | 识别稳定值和自然波动 |
 | 新 Profile | 全新 | 重新获取 | 自然变化 | 相同 | 识别 Cookie/Storage 身份状态 |
-| 固定时间随机 | 相同 | 尽量复用 | 固定 | 相同 | 判断时间和随机依赖 |
+| 固定时间随机（仅诊断） | 相同 | 尽量复用 | 固定 | 相同 | 判断时间和随机依赖；最终请求不得复用历史动态值 |
 | 单环境变量 | 相同 | 条件一致 | 固定 | 每次只改一项 | 判断 UA、时区、屏幕等因果影响 |
 
 Agent 应优先设计最小实验，例如只覆盖一个 getter、只替换一个函数返回值或只固定时间。实验记录保存修改项、操作脚本、目标请求和前后字段值。
@@ -956,7 +991,7 @@ POST /login.body.sign
 ### 9.3 补环境建议
 
 ```text
-riskData 已确认依赖：
+风险字段已确认依赖：
 - navigator.userAgent：confirmed, exp_11
 - screen.width / height：reproduced, exp_12
 
@@ -1011,7 +1046,8 @@ riskData 已确认依赖：
 
 ## 10. 状态与路线
 
-当前可用能力、验证结果和唯一待办入口均在 [docs/TODO.md](docs/TODO.md)。README 只保留
+当前可用能力、验证结果和路线入口见 [docs/BROWSER_RUNTIME_REVIEW.md](docs/BROWSER_RUNTIME_REVIEW.md)
+和 [docs/TRACE_MODE_PLAYBOOK.md](docs/TRACE_MODE_PLAYBOOK.md)。README 只保留
 项目定位、使用入口、架构、日志 schema 和配置参考；接手信息见
 [docs/AGENT_HANDOFF.md](docs/AGENT_HANDOFF.md)，使用说明见
 [docs/PRODUCT_MANUAL.md](docs/PRODUCT_MANUAL.md)。
@@ -1110,7 +1146,7 @@ flowchart LR
 | `TRACE_URL_CONTAINS` | CSV | 空 | 只重点分析 URL 命中的请求/脚本 |
 | `TRACE_SCRIPT_CONTAINS` | CSV | 空 | 只深抓命中脚本 |
 | `TRACE_SCRIPT_SHA256` | CSV | 空 | 按脚本 hash 深抓 |
-| `TRACE_FIELD_NAMES` | CSV | `sign,token,riskData,fp` | 目标字段名 |
+| `TRACE_FIELD_NAMES` | CSV | `signature,token,risk_field,fingerprint` | 目标字段名 |
 | `TRACE_REQUEST_CONTAINS` | CSV | 空 | 目标请求路径 |
 
 `TRACE_PROFILE` 是一组默认配置；显式设置的 `TRACE_JS_MODE`、body、WASM 或 opcode 开关优先于 profile 默认值。
@@ -1129,15 +1165,15 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_JS_DEEP_NATIVE` | `1` / `0` | `1`，`deep-causal` preset 为 `0` | deep 目标后代是否记录 native/builtin 调用。关闭后仍保留自定义 JS 子调用和目标返回，避免 `call/push/pop/charCodeAt` 等爆量；需要低层字符/数组过程时显式开回 `1` |
 | `TRACE_JS_DEEP_SELFHOSTED` | `1` / `0` | `1`，`deep-causal` preset 为 `0` | deep 目标后代是否记录 self-hosted 调用；关闭用于真实站首轮深抓降噪 |
 | `TRACE_JS_DEEP_SUPPRESS_FUNCTIONS` | CSV | 空 | deep 目标后代中按函数名额外抑制记录，支持 `=name` 精确匹配；命中时会写一次 `trace.suppressed` 通知 |
-| `TRACE_JS_THIS` | `none` / `preview` | `none` | `target/deep` 模式是否采集 `this`；默认关闭，减少对象展开副作用 |
+| `TRACE_JS_THIS` | `none` / `preview` | `none`（full-chain=`preview`） | 是否采集 `this`；full-chain 记录其浅值，深对象仍须定向展开。 |
 | `TRACE_JS_ARGS` | `none` / `preview` / `full` | `preview` | `target/deep` 模式的参数采集级别 |
 | `TRACE_JS_RET` | `none` / `preview` / `full` | `preview` | `target/deep` 模式的返回值采集级别 |
 | `TRACE_JS_MAX_ARGS` | 整数，`0` 表示不限 | `64` | 单次函数调用最多 preview 的参数个数 |
 | `TRACE_JS_CAPTURE_VALUES` | `1` / `0` | `0` | 是否采集 target/deep 命中函数的 this/args/return |
 | `TRACE_JS_BOUNDARY_BUFFER` | `1` / `0` | discover/field 默认 `1` | boundary 调用边界先进入 ring buffer，由 XHR/fetch/storage/cookie/DOM sink 触发 flush |
 | `TRACE_JS_TARGET_BOUNDARY_BUFFER` | `1` / `0` | `0` | target/deep 下显式启用同一 ring buffer；适合等待较久的真实页，只把目标 sink 前的调用/return/value_store 窗口写盘 |
-| `TRACE_JS_BOUNDARY_BUFFER_EVENTS` | 整数 | `4096` | boundary ring buffer 容量，当前实现最大 `32768`；命中覆盖写 `trace.degraded` |
-| `TRACE_JS_BOUNDARY_BUFFER_EVENTS_<REASON>` | 整数 | 空 | 按 sink/字段 reason 覆盖 flush 窗口，reason 转大写并把 `.` 等分隔符变 `_`，例如 `xhr.body` 对应 `TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY`，`xhr.body.anti_content` 对应 `TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY_ANTI_CONTENT` |
+| `TRACE_JS_BOUNDARY_BUFFER_EVENTS` | 整数 | `8192` | boundary ring buffer 容量；命中覆盖写 `trace.degraded` |
+| `TRACE_JS_BOUNDARY_BUFFER_EVENTS_<REASON>` | 整数 | 空 | 按 sink/字段 reason 覆盖 flush 窗口，reason 转大写并把 `.` 等分隔符变 `_`，例如 `xhr.body` 对应 `TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY`，`xhr.body.<target_field>` 对应 `TRACE_JS_BOUNDARY_BUFFER_EVENTS_XHR_BODY_TARGET_FIELD` |
 | `TRACE_JS_BOUNDARY_FLUSH_ON` | CSV / `all` | `all` | 限制哪些 sink 触发 boundary buffer flush，例如 `xhr.send,fetch.call,dom.get` |
 | `TRACE_JS_STACK` | `1` / `0` | `1` | 记录调用栈 |
 | `TRACE_JS_NATIVE` | `1` / `0` | `0` | 是否记录原生 builtin |
@@ -1148,7 +1184,7 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_JS_OBJECT_KEYS` | 整数 | `32` | 单个对象最多展开属性数 |
 | `TRACE_JS_OBJECT_VALUE_KEYS` | CSV / `all` / `none` | `all` | 对象展开时只读取匹配 key 的属性值；不匹配属性只写 key 和 `value_skipped=key_filter`，避免触发 getter/Proxy/惰性计算 |
 | `TRACE_JS_ARRAY_ITEMS` | 整数 | `16` | 数组最多 preview 元素数 |
-| `TRACE_JS_TYPED_ARRAY_BYTES` | 整数 | `64` | TypedArray、ArrayBuffer、DataView 最多 preview 字节数 |
+| `TRACE_JS_TYPED_ARRAY_BYTES` | 整数 | `64`（full-chain=`0`） | TypedArray、ArrayBuffer、DataView 最多输出字节数；`0` 表示不按字节数截断。 |
 | `TRACE_JS_VALUE_STORE` | `1` / `0` | `0` | 将完整长值保存到 `values/` |
 | `TRACE_JS_VALUE_METADATA` | `1` / `0` | `0` | 为字符串值写 metadata；target/deep preset 默认开启 |
 | `TRACE_JS_VALUE_METADATA_MIN_BYTES` | 整数 | `1` | 字符串 metadata 最小长度 |
@@ -1157,7 +1193,7 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_JS_VALUE_STORE_MIN_BYTES` | 整数 | 同 `TRACE_JS_DEEP_LONG_STR` | 完整落盘最小长度 |
 | `TRACE_JS_DEEP_LONG_STR` | 整数 | `1024` | 长字符串超过该阈值时优先落盘 |
 | `TRACE_JS_VALUE_STORE_MAX_BYTES` | 整数，`0` 表示不限 | `0` | 单个 JS value_store 制品大小保险丝；默认不因参数长而丢弃，主 JSONL 仍只放 preview/hash/path |
-| `TRACE_JS_LIMIT_EVENTS` | 整数 | `50000` | JS 调用事件上限，命中后写 limit 哨兵 |
+| `TRACE_JS_LIMIT_EVENTS` | 整数 | `0` | 普通 JS 总事件上限；默认 `0` 不限，显式命中后写 limit 哨兵 |
 | `TRACE_JS_SHALLOW` | `1` / `0` | `1` | 浅序列化，降低时序干扰 |
 | `TRACE_JS_SHALLOW_DEPTH` | 整数 | `2` | 浅序列化对象深度 |
 | `TRACE_ASYNC_CAUSE` | `1` / `0` | `0` | 目标案例需要时记录 Promise、timer、event、message 关联 |
@@ -1184,14 +1220,20 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 |---|---|---|---|
 | `TRACE_DOM_MODE` | `signal` / `all` / `off` | `signal` | `signal` 只记录风控常读 DOM 面；`all` 才全量记录 DOM binding |
 | `TRACE_DOM_EVENTS` | CSV / `all` / `none` | `all` | 控制 DOM binding 事件类型：`get,set,call,construct`，也可写完整类型 `dom.get` |
-| `TRACE_DOM_PREVIEW` | CSV / `all` / `none` | `all` | 控制 DOM 值预览：`args,value,page,caller`；设 `none` 时仍保留 interface/member/argc/origin_call_id 等轻量结构 |
+| `TRACE_DOM_PREVIEW` | CSV / `all` / `none` | `none`（原策略） | 控制 DOM 值预览；需要值时由 Agent 显式设 `args,value,page,caller` |
+| `TRACE_DOM_VALUE_STORE` | `1` / `0` | 未设置 | 将 DOM 字符串返回值完整写入 `values/`；只在 Agent 配置启用时写制品 |
+| `TRACE_DOM_VALUE_STORE_MIN_BYTES` | 整数 | 未设置（0） | 显式启用时的最小 UTF-8 字节数；未设置不裁剪 |
+| `TRACE_DOM_VALUE_STORE_MAX_BYTES` | 整数，`0` 表示不限 | `0` | 单个 DOM 字符串制品大小保险丝；`0` 不按长度丢弃 |
 | `TRACE_DOM_MEMBERS` | CSV | 空 | 额外记录指定 DOM interface/member，例如 `Navigator.userAgent,Document.createElement` |
 | `TRACE_DOM_INTERFACES` | CSV | 空 | 额外记录整个 DOM interface，例如 `Navigator,Screen,HTMLCanvasElement` |
 | `TRACE_DOM_HOT_MEMBER_LIMIT` | 整数，`0` 表示关闭 | `0` | 单个 `operation/interface/member` 超过阈值后写 `trace.degraded reason=hot_member_limit` |
 | `TRACE_DOM_HOT_MEMBER_SAMPLE` | 整数，`0` 表示超限后丢弃 | `0` | 配合热点阈值使用，超限后每 N 次保留 1 条；只作保险丝，不作首轮主策略 |
-| `TRACE_DOM_LIMIT_EVENTS` | 整数，`0` 表示不限 | `50000` | DOM 事件上限，命中后写 `trace.degraded module=dom` |
+| `TRACE_DOM_PROMISES` | `1` / `0` | 未设置 | Agent 显式开启后写入 `dom.promise.observe` 与 `dom.promise.settle`，用 `promise_id` 配对履约状态 |
+| `TRACE_DOM_PROMISE_LIMIT` | 整数，`0` 表示不限 | 未设置（0） | 显式配置的单进程 Promise 观察预算；只限制 trace handler/事件数量，不改变页面 Promise 行为 |
+| `FIREFOX_TRACE_PROMISE_DRAIN_MS` | `0..2000` | `250` | UI 停止后等待已观察 Promise settlement 的有界窗口；API 可用 `promise_drain_ms` 覆盖 |
+| `TRACE_DOM_LIMIT_EVENTS` | 整数，`0` 表示不限 | 未设置（0） | Agent 显式配置的 DOM 事件上限，命中后写 `trace.degraded module=dom` |
 
-`signal` 默认覆盖 Navigator、Screen、Window 尺寸、Document 状态、Canvas/WebGL、Crypto/SubtleCrypto、Performance、History、Location、Permissions、RTCPeerConnection 等常见风控读取面。覆盖不到的属性不要改浏览器源码硬加死：优先用 `TRACE_DOM_MEMBERS=Interface.member` 或 `TRACE_DOM_INTERFACES=Interface` 临时扩展；需要完整 DOM 噪声时显式开 `TRACE_DOM_MODE=all`。
+`signal` 默认覆盖 Navigator、Screen、Window 尺寸、Document 状态、Canvas/WebGL、Crypto/SubtleCrypto、Performance、History、Location、Permissions、RTCPeerConnection，以及验证码/风控常见的交互轨迹面：`addEventListener/dispatchEvent`、`MouseEvent/PointerEvent/TouchEvent/WheelEvent/KeyboardEvent/InputEvent` 的坐标、按键、触摸、pressure、delta、button、modifier 字段，和 `getBoundingClientRect/clientWidth/offsetWidth/scroll*` 等坐标换算读取。覆盖不到的属性优先用 `TRACE_DOM_MEMBERS=Interface.member` 或 `TRACE_DOM_INTERFACES=Interface` 临时扩展；需要完整 DOM 噪声时显式开 `TRACE_DOM_MODE=all`。
 
 真实站出现卡顿时，DOM 侧优先按成本降级：先用 `TRACE_DOM_EVENTS=get,call`
 保留读取/调用边界；再用 `TRACE_DOM_PREVIEW=none` 关闭 args/value/page/caller
@@ -1235,10 +1277,10 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_FETCH_REQUEST_BODY_MAX_BYTES` | 整数 | `65536` | Fetch request body 最多读取字节数，上限 2 MiB |
 | `TRACE_FETCH_REQUEST_BODY_HEX_BYTES` | 整数 | `64` | Fetch request `body_bytes_hex` 最多输出字节数 |
 | `TRACE_FETCH_REQUEST_BODY_STORE` | `1` / `0` | `0` | 将 Fetch request body 预览片段写入 `values/fetch_req_body_<pid>_<seq>.txt` |
-| `TRACE_FETCH_RESPONSE_HEADERS` | `none` / `preview` / `full` | `preview` | 在 `fetch.response` 输出响应头元数据；不读取 body |
+| `TRACE_FETCH_RESPONSE_HEADERS` | `none` / `preview` / `full` | `preview`（full-chain=`full`） | 在 `fetch.response` 输出响应头元数据；不读取 body |
 | `TRACE_FETCH_RESPONSE_HEADER_NAMES` | CSV | 空 | 只输出命中的 response header 名；空表示输出可见 entries |
-| `TRACE_FETCH_RESPONSE_HEADERS_MAX_COUNT` | 整数 | `64` | 单个 `fetch.response` 最多输出 header 条数 |
-| `TRACE_FETCH_RESPONSE_HEADER_VALUE_MAX_BYTES` | 整数 | `4096` | 单个 response header value 最大输出字节数 |
+| `TRACE_FETCH_RESPONSE_HEADERS_MAX_COUNT` | 整数 | `64`（full-chain=`0`） | 单个 `fetch.response` 最多输出 header 条数；`0` 不按条数截断。 |
+| `TRACE_FETCH_RESPONSE_HEADER_VALUE_MAX_BYTES` | 整数 | `4096`（full-chain=`0`） | 单个 response header value 最大输出字节数；`0` 不按字节数截断。 |
 | `TRACE_XHR_EVENTS` | CSV / `all` / `none` | `all` | 控制 XHR 生命周期事件：`open,header,send,body,start,done,response` |
 | `TRACE_XHR_PREVIEW` | CSV / `all` / `none` | `all` | 控制 XHR 值预览：`header,body,response,detail`；关闭 response 时不复制 `responseText` |
 | `TRACE_XHR_REQUEST_BODY` | `none` / `preview` / `full` | `none` | XHR request body bounded preview；支持 string / URLSearchParams 这类可直接观察的 send body，不消费真实请求体 |
@@ -1259,15 +1301,15 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_COOKIE` | `1` / `0` | `1` | Cookie 读写、Set-Cookie 来源和 CookieStorage 底层生命周期 |
 | `TRACE_STORAGE` | `1` / `0` | `1` | localStorage/sessionStorage/IndexedDB |
 | `TRACE_WS` | `1` / `0` | `0` | 开启 WebSocket 逻辑帧追踪；也可运行时使用 `trace-control.sh ... config --module ws=1` |
-| `TRACE_WS_PREVIEW_BYTES` | 整数 | `512` | 文本帧 preview 最大字节数、二进制帧 hex prefix 最大原始字节数；上限 `4096` |
+| `TRACE_WS_PREVIEW_BYTES` | 整数 | `512`（full-chain=`0`） | 文本帧 preview 最大字节数、二进制帧 hex prefix 最大原始字节数；`0` 保留调用点可提供的完整帧。 |
 | `TRACE_HTTP_RAW` | `1` / `0` | `0` | parent HTTP response payload raw chunk trace；写 `firefox-http-raw-*.jsonl` |
 | `TRACE_HTTP_RAW_EVENTS` | 整数 | `8` | 每个 HTTP channel 最大 raw chunk 事件数，`0` 表示不以事件数限制 |
-| `TRACE_HTTP_RAW_MAX_BYTES` | 整数 | `65536` | 每个 HTTP channel 最大累计采集字节数，上限 `4194304` |
+| `TRACE_HTTP_RAW_MAX_BYTES` | 整数 / `0` | `65536` | 每个 HTTP channel 最大累计采集字节数，上限 `4194304`；patched Gecko 中 `0` 表示不设字节上限 |
 | `TRACE_HTTP_RAW_HEX_BYTES` | 整数 | `256` | 每个 chunk 的 `payload_hex` 最大原始字节数，上限 `4096` |
 | `TRACE_WASM` | `1` / `0` | `0` | 成功 WASM compile 的模块元数据与 bounded preview，写入 `firefox-wasm-*.jsonl`；也可运行时使用 `trace-control.sh ... config --module wasm=1` |
 | `TRACE_WASM_DUMP` | `1` / `0` | `0` | 请求在 `TRACE_WASM_DUMP_MAX_BYTES` 内将完整模块写入 `wasm/<sha1>.wasm` |
-| `TRACE_WASM_DUMP_MAX_BYTES` | 整数 | `1048576` | 单模块 dump 最大字节数，上限 `16777216` |
-| `TRACE_WASM_PREVIEW_BYTES` | 整数 | `64` | `wasm.module.bytecode_preview_hex` 最大原始字节数，上限 `4096` |
+| `TRACE_WASM_DUMP_MAX_BYTES` | 整数 / `0` | `1048576` | 单模块 dump 最大字节数，上限 `16777216`；patched Gecko 中 `0` 表示不设模块大小上限 |
+| `TRACE_WASM_PREVIEW_BYTES` | 整数 / `0` | `64` | `wasm.module.bytecode_preview_hex` 最大原始字节数，上限 `4096`；patched Gecko 中 `0` 使用完整 preview 容量 |
 | `TRACE_WASM_MODULE_LIMIT` | 整数 | `32` | 单进程 WASM module 事件最大数，上限 `1024` |
 | `TRACE_WASM_INSN` | `1` / `0` | `0` | 输出 bounded `wasm.insn` raw code-section byte 事件 |
 | `TRACE_WASM_INSN_LIMIT` | 整数 | `256` | 单模块 code-section byte 事件最大数，上限 `65536` |
@@ -1311,8 +1353,8 @@ dump 受单模块字节上限控制；`wasm.insn` 的 `semantic=raw_code_section
 | `TRACE_VM_STEP_LIMIT` | 整数 / `0` | `2048` | 每 segment 的 step 上限；`0` 不限，运行中可更新；超限写 `trace.degraded module=vm_step reason=vm_step_limit` |
 | `TRACE_OPCODE_MAX_EVENTS_PER_SECOND` | 整数 | `2000` | opcode 本地 rate guard；超限写 `trace.degraded reason=opcode_rate_limit` |
 | `TRACE_OPCODE_MAX_BYTES_PER_SECOND` | 整数 | `4194304` | opcode 本地 JSON 估算字节 rate guard |
-| `TRACE_IPC_MAX_EVENTS_PER_SECOND` | 整数 | `6000` | opcode/VM 场景 Parent IPC 事件预算 |
-| `TRACE_IPC_MAX_BYTES_PER_SECOND` | 整数 | `4194304` | opcode/VM 场景 Parent IPC 字节预算 |
+| `TRACE_IPC_MAX_EVENTS_PER_SECOND` | 整数 | `0`（full-chain） | Parent IPC 事件预算；`0` 不按每秒事件数丢弃。VM/opcode 预设另有独立限额。 |
+| `TRACE_IPC_MAX_BYTES_PER_SECOND` | 整数 | `0`（full-chain） | Parent IPC 字节预算；`0` 不按每秒字节数丢弃。VM/opcode 预设另有独立限额。 |
 
 `js.vm_step` 是收窄后的 native dispatcher-loop iteration marker，记录 `step_index`、
 JSScript identity、`vm_dispatch_pc` 和栈深度。它不自动从 JS 局部变量或数组中解码 VMP 的
@@ -1503,7 +1545,7 @@ tools/fetch_source_maps.py "$TRACE_DIR"
       "raw_path": null,
       "fields": [
         { "field_path": "body.sign", "value_id": "val_sign" },
-        { "field_path": "body.riskData", "value_id": "val_risk_data" },
+        { "field_path": "body.risk_field", "value_id": "val_risk_data" },
         { "field_path": "body.ts", "value_id": "val_ts" }
       ]
     }
@@ -1680,7 +1722,7 @@ Agent 使用 Trace Query 和原生调试逐步调查目标字段。
 
 ```json
 {
-  "target_field": "body.riskData",
+  "target_field": "body.risk_field",
   "required_env": [
     { "api": "navigator.userAgent", "status": "confirmed", "experiment_id": "exp_11" },
     { "api": "screen.width", "status": "reproduced", "experiment_id": "exp_12" }
@@ -1717,7 +1759,7 @@ run-005 opcode-window    仅 jsvmp/控制流平坦化时，锁单脚本和 PC �
 ```bash
 TRACE_DIR=/private/tmp/firefox-trace-example-$(date +%s) \
 TRACE_CAMPAIGN_ID=my-case-001 \
-TRACE_QUERY_FIELDS=sign,token,h5st,fp \
+TRACE_QUERY_FIELDS=signature,token,target_field,fingerprint \
 tools/run-trace-firefox.sh --trace-preset discover-light https://example.com/
 ```
 
@@ -1760,7 +1802,7 @@ TRACE_NETWORK_INITIATOR=1
 TRACE_COOKIE=1
 TRACE_STORAGE=1
 TRACE_DYNAMIC_SCRIPT=1
-TRACE_FIELD_NAMES=sign,token,riskData,fp,captchaId,nonce
+TRACE_FIELD_NAMES=signature,token,risk_field,fingerprint,challenge_id,nonce
 ```
 
 说明：常规模式只记录受限的轻量函数边界，用于回查 `origin_call_id`，不抓参数和返回值。先拿清请求、环境、Cookie/Storage、动态脚本和 initiator；Agent 找到目标后再用 `target/deep` 模式抓值。
@@ -1810,7 +1852,7 @@ TRACE_DOM=1
 TRACE_DOM_MODE=signal
 TRACE_EVENT=1
 TRACE_ORIGIN_CALL_ID=1
-TRACE_FIELD_NAMES=fp,riskData
+TRACE_FIELD_NAMES=fingerprint,risk_field
 ```
 
 ### 16.4 VM / 混淆重型分析

@@ -1,0 +1,10 @@
+{
+  "name": "jd-h5st-vm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "sign": "node index.js",
+    "search": "node search.js"
+  }
+}

@@ -1,11 +1,32 @@
 # Firefox Trace 产品功能介绍与交付手册
 
+> 当前默认策略校正：`full-chain` 保留原始 DOM/BOM、普通 JS、IPC、XHR full 和
+> boundary 覆盖，不自动注入新的总量上限。DOM/BOM 值、对象合同、Promise 观察及其
+> 限制均由 Agent 配置显式开启；默认不限的模块不会因 UI 预设被偷偷截断。整理后先读
+> `index/trace-health.json`，它区分证据缺口与页面运行结果。
+
 版本：当前 UI / tools 交付版
 面向：实际使用者 + 后续分析 Agent
 
 Firefox Trace 是一套“可见 Firefox + 软件中控台 + 分类日志 + Agent 分析工作流”。用户在 UI 里输入 URL 和输出目录，打开 Firefox 后自己操作网页；工具在同一个 `TRACE_DIR` 中同时采集 Network、JS Call、DOM/BOM、Cookie/Storage、Script、WebSocket、WASM/VM 等证据，并在停止后整理成 Agent 易读的分类日志和索引。
 
 本工具是通用采集框架，不绑定具体站点或字段名。默认字段只是常见安全参数候选；遇到任意目标字段，都在 UI 的“URL Query 字段 / POST Body 字段 / Request Header 字段 / Cookie 字段”里填写。
+
+模式选择、所有可填参数、补环境证据优先级和 Agent 配置文件写法以
+[TRACE_MODE_PLAYBOOK.md](TRACE_MODE_PLAYBOOK.md) 为准。它是本手册与 Agent
+skill 共用的决策表；遇到 canvas/WebGL/TypedArray 等指纹对象时直接按其中的
+“指纹对象专项处理”生成定向配置，不提高全局对象深度。
+
+完整的面板控件、JSON/env 字段和“缺什么证据写什么参数”映射见
+`skills/firefox-trace-agent/references/ui-parameter-catalog.md`。完整 trace
+缺少浏览器内置对象时，先按
+`skills/firefox-trace-agent/references/environment-repair-playbook.md`
+在当前 Firefox 页面控制台取值；Firefox 启动、Profile 隔离和崩溃排错见
+`skills/firefox-trace-agent/references/firefox-startup.md`。
+
+浏览器能力审计和案例复盘见 [BROWSER_RUNTIME_REVIEW.md](BROWSER_RUNTIME_REVIEW.md)。
+请求回放必须使用同一脚本对应的完整原始 request vector，只替换目标字段；缺少
+原始下游请求时保持未验证状态。
 
 ---
 
@@ -27,19 +48,13 @@ tools/trace-desktop.sh
 
 这是推荐入口：界面里填写路径和选项，不需要记命令参数。
 
-### 1.2 Web 中控台备用入口
+`Firefox Trace Console.app` 现在可以移动到其他目录；如果仓库也移动了，从终端用
+`FIREFOX_TRACE_ROOT=/path/to/firefoxTrace open "/path/to/Firefox Trace Console.app"`。
+Nightly runtime 是独立的完整 `Nightly.app`，默认路径为
+`/Users/empycity/Desktop/Ai_MCP/firefox-trace-runtime`；移动后在 UI 重新选择
+`Contents/MacOS/firefox`，或设置 `FIREFOX_TRACE_RUNTIME_ROOT`。
 
-```bash
-tools/trace-console.sh --host 127.0.0.1 --port 8788
-```
-
-浏览器打开：
-
-```text
-http://127.0.0.1:8788/
-```
-
-### 1.3 命令行底层入口
+### 1.2 命令行底层入口
 
 ```bash
 TRACE_DIR="$HOME/Desktop/firefox-trace-outputs/firefox-trace-$(date +%Y%m%d-%H%M%S)" \
@@ -49,6 +64,18 @@ tools/run-trace-firefox.sh \
   --trace-start active \
   'https://example.com/'
 ```
+
+### 1.3 更新内核运行时
+
+每次编译后替换 `Nightly.app/Contents/MacOS/XUL` 必须重签整个 macOS app；直接复制
+XUL 会被系统以 `CODESIGNING / Invalid Page` 在 Firefox 初始化前终止。使用：
+
+```bash
+tools/install-trace-runtime.sh
+```
+
+该脚本复制默认 build 输出、执行 ad-hoc `codesign --deep`，并用 `firefox --version`
+验证启动加载。需要使用另一份 build 输出时将 XUL 路径作为第一个参数传入。
 
 ---
 
@@ -90,8 +117,10 @@ web-assets/
 
 ### 3.0 面板使用总原则
 
-- 首轮查链路：保持默认勾选，使用 `full-chain` + `打开即记录`。
+- 首轮查链路：保持默认勾选，使用 `full-chain` + `打开即记录`；当前默认是“通用完整值落盘”，异步 spool 只优化写盘路径，不偷偷减少普通 JS/DOM/BOM/网络覆盖。
 - 目标字段出现在哪就填哪：query 填 Query，body 填 Body，header 填 Request Header，cookie 填 Cookie。
+- 一轮同时拿请求字节、环境和 JS 调用窗口：采集计划选 `full-chain`，JS Call 选 `boundary`，填写实际目标字段，VM/Opcode/WASM 指令保持关闭。字段命中请求后只写出相关 JS 窗口。
+- `target` 与 `deep` 是已知脚本身份后的精确模式，必须已有脚本名、函数名或 SHA-256 候选。候选为空时，桌面端会明确切到 `boundary` 并写入日志，避免空 JS Call 产物。
 - JSVMP/WASM 是附加面板，不是替代前面模块；先让 Network/JS/Script/State 证据齐，再追加 VM/WASM。
 - 脚本身份、PC range、dispatcher PC 都由工具从请求 caller、origin_call_id、JS 调用链和 opcode analyzer 自动推导；用户只需要重复同一个目标动作。
 
@@ -116,18 +145,17 @@ web-assets/
 | `paused` | 先打开但暂停，等我点“开始记录”再 trace | 需要先登录、过验证码、准备页面状态时使用，避免前置动作污染日志。 |
 | `prewarm` | 预热记录 | 适合需要浏览器预热、但正式动作稍后开始的场景。 |
 
-### 3.2 ② 采集计划 / 目标字段
+### 3.2 ② 首轮采集 / 目标字段
 
 | UI 项 | 默认值 | 作用 |
 |---|---:|---|
-| 采集计划 | `full-chain` | 一次操作尽量收齐还原链路需要的多类日志。 |
-| URL Query 字段 | `sign,signature,token,riskData,fp,nonce,timestamp,captchaId,securityToken,antiToken,authToken,checksum,digest` | 从 URL query 中抽取这些字段，保存 preview、size、SHA-256、value artifact。 |
+| 采集计划 | 全量 trace | 只有“全量 trace”和“轻量 trace”两项；内部 key 分别为 `full-chain` 和 `discover-light`。 |
+| URL Query 字段 | `signature,token,risk_field,fingerprint,nonce,timestamp,challenge_id,security_token,anti_token,auth_token,checksum,digest` | 从 URL query 中抽取这些字段，保存 preview、size、SHA-256、value artifact。 |
 | POST Body 字段 | 同上 | 从 XHR/Fetch body 中抽取这些字段。 |
 | Request Header 字段 | 同上 | 从 XHR `setRequestHeader`、Fetch request headers，以及 finalize 可识别的 request headers 中抽取字段，输出 `location=headers`。 |
 | Cookie 字段 | 同上 | 从 Cookie header、document.cookie、CookieStore、HTTP Set-Cookie、Cookie storage lifecycle 中抽取命名 cookie，输出 `location=cookies`。 |
-| 采集强度 | `通用完整值落盘（默认）` | 控制对象预览、TypedArray、VM/WASM 预算等。 |
-| 不限普通 JS trace 总事件数 | 默认开启 | 对普通 JS trace 写 `FIREFOX_TRACE_JS_LIMIT_EVENTS=0`。完整值落盘到 `values/`。 |
-| 显示高级参数 | 默认关闭 | 展开 JS 对象深度、事件保险丝、VM/WASM 限额等高级项。 |
+| 采集强度 / 总数保险丝 | 高级项 | 全量 trace 默认没有 JS 总数截断；轻量 trace 保留有界保险丝。 |
+| 显示高级 / Agent 配置 | 默认关闭 | 展开模块、JS 对象深度、性能保险丝、VM/WASM 和 env。 |
 
 #### 为什么不是“所有东西直接塞进 JSONL”
 
@@ -139,14 +167,23 @@ preview / size / sha256 / value_store_path / stored / truncated
 
 这样既保真，又避免单行 JSONL 过大导致 UI 和 Agent 读取困难。`*_MAX_BYTES=0` 在本工具里表示 trace 层不按大小丢弃该 artifact。
 
+对象环境不使用递归 JSON 展开。Agent 显式启用 DOM contract overlay 后，`full-chain` 会为实际触达对象记录稳定 `object_id`、realm、原型 class 链、成员 descriptor、构造/调用与返回对象引用，汇总在 `index/environment-contract.json` 的 `objects` 和 `members`。默认 DOM/BOM signal 不自动开启该对象合同。iframe 的原生 `load` 派发顺序会进入 `lifecycle_events`，并通过同一 `object_id` 与监听注册、节点插入关联。该过程只读取引擎元数据，不执行 getter；完整性由 `object_contract_complete` 明确标示。
+
+当对象类型已记录、但 `ImageData.data`、WebGL vector、extension array 或
+`TextMetrics` 的内部值仍缺失时，Agent 在下一轮完整配置中加入
+`TRACE_DOM_OBJECT_VALUES=1`，并只列目标接口/成员。该能力只采集已命中返回值的
+有限白名单字段和数组元素，避免递归遍历页面对象造成 UI 卡顿。
+
 #### `full-chain` 与 `discover-light`
 
 | 计划 | 默认用途 | 默认采集 |
 |---|---|---|
-| `full-chain` | 用户手动操作时的一轮完整证据采集，当前 UI 默认推荐。 | JS boundary + 自动浅层 args/return、DOM/BOM signal、XHR/Fetch request/response、request headers、Cookie/Storage、Script artifact、WebSocket、WASM module 线索、长值落盘、请求触发时 boundary ring buffer flush。 |
-| `discover-light` | 低开销首轮定位。页面很重或 full-chain 出现 degraded 时用。 | 请求、脚本、DOM/BOM signal、Cookie/Storage、JS boundary。默认减少值采集和深层对象展开。 |
+| `full-chain` / 全量 trace | 默认的一轮完整证据采集。 | 连续 JS enter/return、script-run 帧、value metadata/artifact、`Math.random` 与 `Date.now`/无参 `new Date()` 的实际返回值、完整 DOM/BOM WebIDL 事件、XHR/Fetch request/response/header、Cookie/Storage、Script artifact、WebSocket。对象值仍不做通用递归展开；JS/value 通过异步 batch spool 送到父进程落盘。VM/WASM 默认关闭。 |
+| `discover-light` / 轻量 trace | 重页面的快速发现。 | 请求、脚本、DOM/BOM、Cookie/Storage 与有界 JS boundary；不启用全量 value spool、VM 或 WASM。 |
 
-### 3.3 ③ 模块开关
+标准工作流不是固定两轮。首轮 `full-chain` 是完整候选产物：它已经具备目标请求、调用链、环境合同、字段/value artifact 和响应证据时，可以直接用于复现与验收。只有出现明确缺口时，Agent 才写出下一轮完整 `agent-next.json`；用户加载后只重复一次同样的目标动作。多个目录不合并凑证据，后续目录作为最终交付物时必须自身保留从环境/init 到请求字段写入的完整链路、配置和制品。
+
+### 3.3 ③ 模块开关（高级）
 
 默认勾选：
 
@@ -207,34 +244,79 @@ channel_id / offset / captured_size / payload_hex / url / browsing_context_id
 | 脚本身份 | 自动 | 首轮整理后写入 `index/target-candidates.json`，下一轮由中控台自动套用脚本匹配片段、hash 和精确脚本信息。 |
 | 函数线索 | 自动 | 由请求 caller、`origin_call_id`、调用链和值匹配产生，用户无需猜函数名。 |
 | target_match | `auto` | 目标匹配策略。底层 target preset 常用 `all`。 |
-| 对象深度 | 默认强度写入 `1`；full-chain preset 内核默认浅层为 `0` | 对象递归展开深度。越大越重。 |
+| 对象深度 | UI full-chain=`1`；CLI 未显式配置时=`0` | `TRACE_JS_OBJECT_TARGET_ONLY=1` 使正深度只作用于命中身份对象；非命中帧保持类型摘要，避免全站枚举对象属性。最终定向配置通常使用深度 `1`、keys `32`、数组 `16`。 |
 | 对象 keys | `0` | `0=不按 key 数截断`。 |
 | 数组 items | `0` | `0=不按 items 数截断`。 |
-| TypedArray bytes | `256` | TypedArray 预览字节数。 |
-| 事件保险丝 | UI 默认强度 `0`，且“不限普通 JS trace”开启时强制 `0` | 普通 JS 总事件数保险丝。`0=不限`。 |
+| TypedArray bytes | `0` | `0=不按字节数截断`；定向轻量模式才填写正数预览上限。 |
+| 事件保险丝 | UI full-chain=`0`；discover-light=`50000` | 普通 JS 总事件数保护。`0=不按总数截断`；非零预算命中后写入 `trace-health.json`，不静默丢证据。 |
 | 值 metadata | `1` | 记录短值/长值的 SHA-256、路径、角色、call_id。 |
 | primitive metadata | `1` | number/boolean/null/undefined 也生成 metadata，方便找时间戳、flag、计数器。 |
-| 值落盘最小字节 | `1` | 大于等于该大小的值可写入 `values/`。 |
+| 值落盘最小字节 | `1` | 短字符串、时间、随机值和标志也写入 `values/`，便于请求字段逐字节对齐。 |
 | 值落盘最大字节 | 固定传 `0` | `0=不按大小丢弃 JS value artifact`。 |
+| 命中后延迟落盘 | `1` | JS 调用热路径仅保存值引用；命中请求后再批量写入去重制品。 |
+| 延迟值池 bytes | `67108864` | 一轮内存值池上限；满时写 `trace.degraded`，不会同步写盘拖住页面。 |
+| 请求回溯窗口 events | `8192` | 每个目标请求保留的最近 JS 调用窗口；独立于“普通 JS 总数保险丝”。 |
+
+#### JS mode 选择规则
+
+| 模式 | 何时选择 | 空候选时的结果 |
+|---|---|---|
+| `boundary` | 首轮、一轮回溯、补环境、按请求字段回刷 JS 调用窗口。 | 正常记录。 |
+| `target` | 已加载 Agent 生成的脚本/函数/SHA-256 候选，只看目标函数。 | 自动使用 `boundary` 并提示。 |
+| `deep` | 已确认目标函数且需要局部子调用树。 | 自动使用 `boundary` 并提示。 |
+| `off` | 只采 Network/DOM/State。 | 不记录 JS Call。 |
+
+首轮不会因空 target 集合得到 `JS=0`；精确 `target/deep` 也不会在没有候选时伪装成已生效。
+
+
+### 3.7 验证码 / 鼠标轨迹 / 交互参数
+
+默认降载不会关闭交互轨迹相关 DOM/BOM signal。它只关闭全站 JS 深值、全量 response、WASM dump 和全站 opcode 这类高成本项。验证码或风控参数依赖鼠标/触摸/坐标时，Agent 重点看：
+
+```text
+categorized/dom.jsonl
+categorized/bom.jsonl
+categorized/js.jsonl
+categorized/network.jsonl
+```
+
+DOM signal 覆盖：
+
+```text
+addEventListener / removeEventListener / dispatchEvent
+MouseEvent / PointerEvent / TouchEvent / WheelEvent / KeyboardEvent / InputEvent
+clientX/clientY/pageX/pageY/screenX/screenY/offsetX/offsetY/movementX/movementY
+button/buttons/modifier/pointerId/pressure/tilt/twist/pointerType/isPrimary
+wheel delta、touch radius/force/changedTouches/touches、keyboard key/code/inputType
+getBoundingClientRect/getClientRects/clientWidth/clientHeight/offset*/scroll*/value/dataset
+elementFromPoint/elementsFromPoint/querySelector/activeElement
+```
+
+如果目标站把轨迹数组只存在 JS 内存里，首轮稳态日志会先给出事件监听、坐标读取、目标请求和候选脚本。Agent 再用自动候选开短窗口深值，而不是让用户手填脚本关键词或 PC。
+
+### 3.8 卡顿处理
+
+出现浏览器明显卡顿时按这个顺序处理：
+
+1. 保持 `full-chain`，确认“普通 JS trace 不设总数保险丝”是打开状态；
+2. 保持 Raw HTTP 关闭；
+3. 保持 VM opcode / VM step / WASM dump 关闭，只留“一轮还原模式”；
+4. 目标字段能确定位置时，只勾对应 query/body/header/cookie；
+5. 如仍卡顿，改用 `discover-light` 触发一次目标请求，再让 Agent 根据 `target-candidates.json` 给短窗口补采建议。
 
 ### 3.5 ④ VM / WASM 细粒度
 
 VM/WASM 细粒度默认不是全站深抓。它用于脚本已经锁定后分析 JSVM、opcode、WASM。
 
-默认勾选：
-
-```text
-raw operands
-WASM module 元数据
-```
-
-默认关闭：
+应用首轮采集计划或“默认关闭 VM”后，VM/WASM 细粒度全部关闭：
 
 ```text
 JS opcode
+raw operands
 栈 slot 类型
 栈 primitive 值
 VM step
+WASM module 元数据
 WASM 模块 artifact
 WASM raw bytes
 VM/opcode 也不截断
@@ -263,7 +345,7 @@ VM/opcode 也不截断
 - `opcode PC 范围` 是 SpiderMonkey bytecode PC 的数字范围，格式 `START:END`。
 - `dispatcher PC` 是 JSVM/解释器分发循环所在的单个 bytecode PC。
 - “分析后自动套用”的意思是：先 trace 一轮，工具把请求 caller、`origin_call_id`、JS 调用链、值匹配和脚本 artifact 汇总为候选；Agent 只审核候选，下一轮由中控台自动带入脚本身份和已确认的 PC 结果。
-- JSVMP 常见顺序：第一轮选择“自动定位（先全链路）”，不填写脚本关键词；第二轮选择“自动套用 PC 窄采”，工具自动带入脚本和 `START:END`；第三轮只有高置信度 dispatcher 结果才自动开启 VM step。
+- JSVMP 常见顺序：先选“一轮还原模式”拿请求/脚本/value 证据；需要下一轮时 Agent 写 `$TRACE_DIR/agent-next.json`（仅 env 变化时写 `.env`），用户在 UI 一键加载；确认 opcode 热点后选“局部 opcode”；确认 dispatcher PC 后才选“VM step”。用户不填写脚本关键词、PC range 或 dispatcher PC。
 - 做 JSVMP 时，前面的默认模块通常保留：JS、XHR、Fetch、DOM/BOM、Cookie、Storage、Script artifact 都继续开；VM 选项是附加细粒度证据。只有页面特别重或出现 degraded，再收窄脚本/函数或关闭无关模块。
 - “VM/opcode 也不截断”会写 `TRACE_UNSAFE_ALLOW=1`，只适合锁定脚本后的一次短目标动作。
 - 这些保护值是 VM/opcode/WASM 的保险丝，不是普通 full-chain 日志总上限。
@@ -274,17 +356,27 @@ UI 现在提供阶段预设，普通使用不需要手动研究每个 checkbox�
 
 | 预设 | 自动设置 | 你需要填写 |
 |---|---|---|
-| `默认关闭 VM（普通 full-chain）` | VM 关闭，保留轻量 WASM module 元数据 | 无 |
-| `JSVMP 第1轮：自动定位（先全链路）` | 若没有候选，自动回退为普通 full-chain；有候选时自动锁定脚本 | 只执行一次目标动作 |
-| `JSVMP 第2轮：自动套用 PC 窄采` | 自动带入脚本身份、line/column/bytecode length 和 `START:END` | 只执行同一个目标动作 |
-| `JSVMP 第3轮：自动套用 dispatcher` | 仅在 analyzer 高置信度时自动开启 VM step；否则保持 opcode | 只执行同一个目标动作 |
+| `一轮还原模式（推荐：请求触发回溯）` | 不开全站 opcode/VM step/raw operands；用请求命中回溯 JS/value/source ring buffer | 执行一次目标动作 |
+| `局部 opcode：自动候选脚本` | 只在已有候选脚本/范围时开 JS opcode + raw operands；用于补 VM 证据 | 执行同一个目标动作 |
+| `VM step：已确认 dispatcher` | 仅在 dispatcher PC 已确认后启用 VM step；否则保持局部 opcode/回溯策略 | 执行同一个目标动作 |
+| `默认关闭 VM（普通 full-chain）` | VM/WASM 细粒度全部关闭 | 无 |
 | `WASM：只看模块元数据` | 只看 WASM module 元数据 | 无；需要完整模块时再单独勾 artifact |
 
-最常用的 JSVMP 操作就是：选择“第 1 轮”→ 执行目标动作 → 停止整理；Agent 审核 `target-candidates.json` 后选择“第 2 轮”或“第 3 轮”→ 再执行同一个动作。整个过程不需要猜脚本关键词、PC range 或 dispatcher PC。
+最常用的 JSVMP 操作就是：先选择“一轮还原模式”→ 执行目标动作 → 停止整理；Agent 审核 `target-candidates.json` 后再决定是否选择“局部 opcode”或“VM step”。整个过程不需要用户猜脚本关键词、PC range 或 dispatcher PC。
+
+Agent 每到一个 VM 阶段都应该给用户明确提醒：
+
+| 阶段 | Agent 需要告诉用户 |
+|---|---|
+| 请求/字段还没稳定 | 选“一轮还原模式”；JS opcode/VM step/WASM dump/raw 都不勾；只执行一次目标动作；请求出现后停止整理。 |
+| target/value 第二轮 | Agent 先写 `$TRACE_DIR/agent-next.json`；用户点“② 首轮采集 / 目标字段 -> 加载当前目录 agent-next.json”。只有 env 文件时才展开“显示高级 / Agent 配置 -> ⑥ 额外环境变量”。 |
+| opcode 热点轮 | 选“局部 opcode：自动候选脚本”；JS opcode 和 raw operands 勾；VM step、栈 primitive、WASM dump/raw 先不勾；执行同一个短动作一次。 |
+| dispatcher 轮 | 只有 Agent 明确给出 dispatcher PC 后选“VM step：已确认 dispatcher”；不要手填 PC；执行同一个短动作一次。 |
+| VM 状态补证 | 只有 Agent 指出缺 VM state 时，才短窗口勾“栈 slot 类型”或“栈 primitive 值”。 |
 
 前面的 JS、XHR、Fetch、DOM/BOM、Cookie、Storage、Script 默认模块继续保留，它们负责把 VM 结果和请求、环境、脚本来源连起来。
 
-### 3.7 ⑤ 额外环境变量（高级）
+### 3.7 ⑥ 额外环境变量（高级）
 
 每行一个：
 
@@ -303,9 +395,51 @@ TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES=0
 
 UI 会把这些值合并进启动环境或运行时 config。显式填写的环境变量优先级最高。
 
+环境变量文件只用于首轮 trace 之后的下一轮。首轮输出目录尚未产生时，⑤ 面板可以留空，不需要 env 文件；首轮停止并整理后，Agent 才根据该轮日志在 `TRACE_DIR` 下生成 `agent-next.env`。如果下一轮同时需要改动页面上的多个可见控件，Agent 应在同一目录生成完整的 `agent-next.json`。
+
+当前 UI 还支持从文件一次加载完整配置或只加载环境变量：
+
+| 按钮 | 作用 |
+|---|---|
+| `加载 Agent 完整配置…` | 在②采集计划面板直接可见；读取完整 `agent-next.json`，一次回填会话、字段、启用范围、采集强度、模块、JS/value、高级 VM/WASM 参数和 env。 |
+| `加载当前目录 agent-next.json` | 在②采集计划面板直接可见；从当前输出目录 `TRACE_DIR/agent-next.json` 加载完整 Agent 配置。 |
+| `加载 env 文件…` | 从任意 `.env` / 文本文件读取 `NAME=VALUE` 内容并填入文本框。 |
+| `加载当前目录 agent-next.env` | 从当前输出目录 `TRACE_DIR/agent-next.env` 读取 Agent 写好的下一轮建议变量。 |
+| `清空` | 清空额外环境变量文本框。 |
+
+完整配置文件 schema 为 `firefox_trace.agent_config.v1`，顶层包含：
+
+```text
+ui       会话、目标字段、四个字段启用复选框、采集强度、启动模式、VM 阶段
+modules  JS/XHR/Fetch/DOM/Cookie/Storage/Script/WebSocket/Raw HTTP
+options  JS mode、脚本/函数过滤、对象/数组深度、值 metadata、事件保险丝
+vm       opcode/operands/stack/VM step/WASM 复选框、身份、PC 和所有 limits
+env      额外环境变量；可选 env_text 保留原始 NAME=VALUE 文本
+```
+
+完整样例见 `skills/firefox-trace-agent/references/agent-next.json.example`。
+
+推荐 Agent 给下一轮配置时直接在当前 trace 输出目录写：
+
+```text
+$TRACE_DIR/agent-next.json
+$TRACE_DIR/agent-next.env
+```
+
+然后告诉用户在 UI 里点击：
+
+```text
+② 首轮采集 / 目标字段 -> 加载当前目录 agent-next.json -> 应用配置/打开 Firefox
+```
+
+JSON 加载会先应用采集强度/VM 阶段默认，再应用文件中的显式 `options`/`vm` 值，因此 Agent 的窄过滤不会被预设覆盖；`.env` 按钮继续兼容只修改环境变量的旧流程。这样可以避免用户逐项输入、漏勾复选框或把脚本名截断。
+
 ---
 
 ## 4. 右侧按钮与状态
+
+左右两侧都是可滚动区域。窗口高度不够时，把鼠标放到对应区域内滚动即可查看被遮住的信息；右侧状态、自动推导和日志区域也支持鼠标滚动。
+
 
 | 按钮 | 作用 |
 |---|---|
@@ -402,27 +536,34 @@ index/
 | `script` | 脚本 URL、hash、artifact_path、source map | 算法脚本在哪里，纯算移植读哪个 JS。 |
 | `state` | Cookie、localStorage、sessionStorage、IndexedDB 线索 | 哪些状态参与计算，补环境时需要保留哪些缓存/令牌。 |
 | `dom` | document、element、canvas、事件、节点调用 | DOM 依赖、canvas 指纹、节点结构依赖。 |
-| `bom` | navigator、screen、location、history、performance、crypto、permissions | 浏览器环境面、UA/screen/timezone/performance/crypto 等输入。 |
+| `bom` | navigator、screen、location、history、performance、crypto、permissions | 浏览器环境面、UA/screen/timezone/performance/crypto 等输入；全量 trace 的标量 getter 值汇总到 `index/environment-contract.json`。 |
 | `websocket` | 归在 network 中；原始文件为 `firefox-websocket-*.jsonl` | WebSocket 动态 token、握手、frame payload。 |
 | `wasm-vm` | wasm.module、wasm dump、js.opcode、js.vm_step | WASM/JSVM/解释器混淆的定位线索。 |
 | `control-health` | config applied、trace.degraded、boundary flush summary | 本轮能否用于结论，哪里丢了证据。 |
 
 
-### 6.3 还原顺序：先字节级 diff，再动态
+### 6.3 还原顺序：先补环境验证，再字节级 diff
 
 Agent 做复现时按这个顺序：
 
 ```text
 请求/响应完整记录
  -> 字段位置与请求结构定位（query/body/headers/cookies）
- -> 固定输入下做 URL、headers、body 的 diff 级字节还原
- -> 本地固定向量与浏览器 trace 逐字节一致
- -> 再处理时间、随机数、nonce、服务端 token、Cookie/Storage 等动态输入
- -> 使用用户给的实际 URL 发起动态请求
+ -> 用 trace 或当前 Firefox 页面补齐真实环境对象和值
+ -> 在同一 Firefox page/profile 生成候选并验证实际请求和业务响应
+ -> 请求失败时冻结完整 request vector，做 URL、headers、body 的 diff 级字节还原
+ -> diff 暴露确定性算法缺口时进入纯算拆解
+ -> 动态输入实时生成：时间、随机数、nonce、服务端 token、Cookie/Storage
  -> 以响应状态、响应内容和业务成功字段作为最终成功标准
 ```
 
 动态阶段不要手工拼最终签名字段；固定部分和动态输入来源确认后，让原 SDK 或纯函数按合同生成。
+
+完整 trace 缺少 `navigator`、`screen`、Canvas/WebGL、Storage、Promise
+履约对象等浏览器内置值时，保持当前 Firefox 页面打开，使用 DevTools 控制台或
+Firefox BiDi/RDP `script.evaluate` 读取目标对象的真实值、descriptor、原型链和
+brand。这个动作优先于再次 trace；只有缺少调用因果、Worker/iframe/closure 状态、
+请求顺序或原始传输字节时才生成下一轮配置。
 
 ---
 
@@ -431,7 +572,7 @@ Agent 做复现时按这个顺序：
 Agent 拿到一个 `TRACE_DIR` 后按这个顺序：
 
 1. 读 `manifest.json`：确认 URL、plan、启动模式、目标字段、模块开关、普通 JS 是否 `FIREFOX_TRACE_JS_LIMIT_EVENTS=0`。
-2. 读 `index/summary.json`：看 `degraded_count`、`request_field_count`、`target_match_count`、分类计数。
+2. 读 `index/summary.json`：看 `degraded_count`、`request_field_count`、`target_field_match_count`（字段是否命中配置）、`target_match_count`（是否已和 JS value artifact 因果匹配）以及分类计数。
 3. 读 `categorized/request-fields.jsonl`：确定目标字段的：
    - `request_id`
    - `location`
@@ -557,13 +698,18 @@ origin_call_id
 环境/state 线索
 ```
 
-### 10.3 二轮 target-values
+### 10.3 缺口后的最终复现
 
-如果首轮只有候选，没有完整生成侧：
+首轮只有候选、缺少 init 参数、对象字段或生产函数入参/返回值时，Agent 在首轮目录生成完整 `agent-next.json`。用户加载后新建一个目录再执行同一次动作：
 
 ```text
-新分段 -> 选择下一阶段 -> target-values/deep-causal 风格配置自动套用候选 -> 再操作一次
+full-chain + boundary + 全量 async spool
+  + TRACE_JS_OBJECT_TARGET_ONLY=1
+  + 自动候选脚本/函数 identity
+  + object_depth=1 / keys=32 / array=16
 ```
+
+这一轮不切到 `target`，因此仍保留全站 JS 边界和环境调用链；只有命中的对象会展开。只有首轮存在该明确缺口时才运行本节；后续最终报告、字节 diff 和离线复现只使用这个新目录，不把首轮日志拼接为证据。
 
 目标：
 
@@ -587,7 +733,6 @@ JS return/arg/object value metadata 与请求字段 SHA-256 对齐
 | 工具 | 作用 |
 |---|---|
 | `tools/trace-desktop.sh` | 启动桌面 UI。 |
-| `tools/trace-console.sh` | 启动 Web UI / HTTP API。 |
 | `tools/run-trace-firefox.sh` | 底层启动 Firefox。 |
 | `tools/trace-control.sh` | 对现有 `TRACE_DIR` start/stop/prewarm/config/new-segment/status。 |
 | `tools/trace_finalize.py` | 生成 `categorized/`、`index/summary.json`、`index/causal-index.json`、`index/target-candidates.json`。 |
@@ -599,22 +744,9 @@ JS return/arg/object value metadata 与请求字段 SHA-256 对齐
 
 ---
 
-## 12. HTTP API 速查
+## 12. 命令行配置
 
-Web 中控台启动后可用：
-
-```bash
-curl -sS "http://127.0.0.1:8788/api/session/status?trace_dir=$TRACE_DIR"
-curl -sS "http://127.0.0.1:8788/api/summary?trace_dir=$TRACE_DIR"
-curl -sS http://127.0.0.1:8788/api/start \
-  -H 'content-type: application/json' \
-  -d '{"trace_dir":"'"$TRACE_DIR"'","label":"target"}'
-curl -sS http://127.0.0.1:8788/api/stop \
-  -H 'content-type: application/json' \
-  -d '{"trace_dir":"'"$TRACE_DIR"'","label":"after-target","finalize":true}'
-```
-
-运行时修改配置：
+桌面 UI 会生成和应用这些配置；命令行排查时可直接调用：
 
 ```bash
 tools/trace-control.sh "$TRACE_DIR" config \

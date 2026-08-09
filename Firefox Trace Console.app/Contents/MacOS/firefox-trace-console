@@ -1,13 +1,51 @@
 #!/bin/zsh
 APP_MACOS_DIR="${0:A:h}"
-ROOT="${APP_MACOS_DIR}/../../.."
 LOG="/private/tmp/firefox-trace-desktop.log"
-if [[ -n "$FIREFOX_TRACE_PYTHON" && -x "$FIREFOX_TRACE_PYTHON" ]]; then
-  PY="$FIREFOX_TRACE_PYTHON"
-elif [[ -x "/opt/miniconda3/envs/firefox-trace/bin/python" ]]; then
-  PY="/opt/miniconda3/envs/firefox-trace/bin/python"
-else
-  PY="$(command -v python3)"
+
+# The app bundle may live in /Applications, Downloads, or another folder.
+# Prefer an explicit repository root, then the bundle's old colocated layout,
+# then the default checkout used by this workstation.
+ROOT="${FIREFOX_TRACE_ROOT:-}"
+if [[ -n "$ROOT" ]]; then
+  ROOT="${ROOT:A}"
+fi
+if [[ -z "$ROOT" || ! -f "$ROOT/tools/trace-desktop.py" ]]; then
+  ROOT=""
+  for candidate in \
+    "${APP_MACOS_DIR}/../../.." \
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace" \
+    "$HOME/Desktop/JS-tools/firefoxTrace"; do
+    candidate="${candidate:A}"
+    if [[ -f "$candidate/tools/trace-desktop.py" ]]; then
+      ROOT="$candidate"
+      break
+    fi
+  done
+fi
+if [[ -z "$ROOT" ]]; then
+  print -r -- "Firefox Trace repository not found. Set FIREFOX_TRACE_ROOT to the checkout path." >> "$LOG"
+  exit 2
+fi
+
+python_has_tk() {
+  [[ -n "$1" && -x "$1" ]] && "$1" -c 'import tkinter' >/dev/null 2>&1
+}
+
+PY=""
+for candidate in \
+  "$FIREFOX_TRACE_PYTHON" \
+  "/opt/miniconda3/envs/firefox-trace/bin/python" \
+  "$(command -v python3)" \
+  "/usr/bin/python3"; do
+  if python_has_tk "$candidate"; then
+    PY="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$PY" ]]; then
+  print -r -- "No Python interpreter with tkinter support was found." >> "$LOG"
+  exit 2
 fi
 export FIREFOX_TRACE_ROOT="$ROOT"
 cd "$ROOT" || exit 1

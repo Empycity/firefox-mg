@@ -15,11 +15,11 @@
 /scripts/
 *.jsonl
 
-# Generated local sample state and IDE metadata.
-/jd_h5st_dynamic/state*.json
-/jd_h5st_dynamic/.idea/
-/analysis/
-/jd_h5st_full_test/
+# Generated example state and IDE metadata.
+/examples/**/state*.json
+/examples/**/.idea/
+/examples/**/.run-stats.json
+/examples/douyin/runtime-contract.json
 
 # Local agent/editor/cache state.
 /.codex/

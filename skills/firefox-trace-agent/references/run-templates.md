@@ -13,6 +13,12 @@ tools/run-trace-firefox.sh \
   --trace-plan full-chain \
   --trace-start active \
   'TARGET_URL'
+
+# Required in the same Agent turn as launch:
+python3 tools/trace-stop-on-target.py "$TRACE_DIR" \
+  --max-seconds 120 --max-bytes 2147483648 \
+  >"$TRACE_DIR/stop-on-target-receipt.json" 2>&1 &
+TRACE_WATCHDOG_PID=$!
 ```
 
 ## Paused target action
@@ -30,9 +36,12 @@ tools/run-trace-firefox.sh \
   'TARGET_URL'
 
 tools/trace-control.sh "$TRACE_DIR" start target-action
+python3 tools/trace-stop-on-target.py "$TRACE_DIR" \
+  --max-seconds 120 --max-bytes 2147483648 \
+  >"$TRACE_DIR/stop-on-target-receipt.json" 2>&1 &
+TRACE_WATCHDOG_PID=$!
 # repeat target action once
-tools/trace-control.sh "$TRACE_DIR" stop after-target
-python3 tools/trace_finalize.py "$TRACE_DIR" --json
+# watchdog stops and finalizes immediately when the target is durable
 ```
 
 ## Narrow target-values segment
@@ -48,9 +57,12 @@ tools/trace-control.sh "$TRACE_DIR" config \
   --header-fields 'HEADER_A' \
   --cookie-fields 'COOKIE_A'
 tools/trace-control.sh "$TRACE_DIR" start target-values
+python3 tools/trace-stop-on-target.py "$TRACE_DIR" \
+  --max-seconds 120 --max-bytes 2147483648 \
+  >"$TRACE_DIR/stop-on-target-receipt.json" 2>&1 &
+TRACE_WATCHDOG_PID=$!
 # repeat target action once
-tools/trace-control.sh "$TRACE_DIR" stop after-target-values
-python3 tools/trace_finalize.py "$TRACE_DIR" --json
+# watchdog stops and finalizes immediately when the target is durable
 ```
 
 ## Bounded opcode window

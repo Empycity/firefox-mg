@@ -85,6 +85,9 @@ CATEGORY_NAMES = (
 )
 
 WEB_ASSET_KEYWORDS = (
+    "envcode",
+    "ubcode",
+    "_$webrt",
     "signature",
     "securityToken",
     "antiToken",
@@ -98,6 +101,12 @@ WEB_ASSET_KEYWORDS = (
     "webgl",
     "encrypt",
     "sign",
+)
+
+FUNCTION_DECL_RE = re.compile(
+    r"\bfunction\s+([A-Za-z_$][\w$]*)\s*\("
+    r"|(?:^|[^\w$])([A-Za-z_$][\w$]*)\s*[:=]\s*function\s*\(",
+    re.S,
 )
 
 
@@ -128,14 +137,18 @@ def target_fields(manifest: dict[str, Any]) -> set[str]:
         env.get("TRACE_COOKIE_FIELDS"),
         env.get("FIREFOX_TRACE_COOKIE_FIELDS"),
     ]
+    disabled_tokens = {"__disabled__", "__off__", "off", "none", "false", "0"}
+    explicitly_configured = any(raw is not None for raw in raw_values)
     values = {
         item.strip().lower()
         for raw in raw_values
         if raw
         for item in str(raw).replace(";", ",").split(",")
-        if item.strip()
+        if item.strip() and item.strip().lower() not in disabled_tokens
     }
-    return values or set(GENERIC_TARGET_FIELDS)
+    if values:
+        return values
+    return set() if explicitly_configured else set(GENERIC_TARGET_FIELDS)
 
 
 def jsonl_rows(trace_dir: pathlib.Path) -> Iterable[tuple[pathlib.Path, int, dict[str, Any]]]:
@@ -194,6 +207,63 @@ def compact_event(row: dict[str, Any], path: pathlib.Path, line: int, category: 
     result["_source_file"] = path.name
     result["_source_line"] = line
     return result
+
+
+def enrich_script_resource_identity(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Join downloaded script resources to runtime JS events by URL.
+
+    Script loading and SpiderMonkey call logging are separate streams.  A JS
+    call can therefore carry a URL while the corresponding ``script.resource``
+    row carries the only complete artifact hash.  Keep an existing engine hash
+    authoritative; use the raw artifact hash only when the call stream omitted
+    one, and label that provenance so agents do not confuse the two sources.
+    """
+    identities: dict[str, set[tuple[str, str]]] = collections.defaultdict(set)
+    resource_count = 0
+    for row in rows:
+        if row.get("type") != "script.resource":
+            continue
+        raw_sha = str(row.get("raw_sha256") or "").strip()
+        if not raw_sha:
+            continue
+        resource_count += 1
+        artifact_path = str(row.get("artifact_path") or "")
+        for key in ("url", "final_url", "original_url"):
+            url = str(row.get(key) or "").strip()
+            if url:
+                identities[url].add((raw_sha, artifact_path))
+        # Make the resource itself consumable by the same downstream indexes.
+        row.setdefault("script_sha256", raw_sha)
+        row["script_raw_sha256"] = raw_sha
+        if artifact_path:
+            row["script_artifact_path"] = artifact_path
+
+    joined = 0
+    ambiguous = 0
+    for row in rows:
+        if not str(row.get("script_url") or "").strip():
+            continue
+        matches = identities.get(str(row.get("script_url")).strip(), set())
+        if not matches:
+            continue
+        if len(matches) != 1:
+            ambiguous += 1
+            continue
+        raw_sha, artifact_path = next(iter(matches))
+        row["script_raw_sha256"] = raw_sha
+        if not str(row.get("script_sha256") or "").strip():
+            row["script_sha256"] = raw_sha
+            row["script_hash_source"] = "script.resource.raw_sha256"
+            joined += 1
+        if artifact_path:
+            row["script_artifact_path"] = artifact_path
+
+    return {
+        "resource_hash_count": resource_count,
+        "joined_event_count": joined,
+        "ambiguous_event_count": ambiguous,
+        "url_key_count": len(identities),
+    }
 
 
 def url_query_fields(url: str, wanted: set[str]) -> dict[str, str]:
@@ -497,6 +567,508 @@ def value_text_from_field(field: dict[str, Any], trace_dir: pathlib.Path) -> str
     return str(field.get("value_raw_preview") or field.get("value_preview") or "")
 
 
+def build_environment_contract(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Produce a bounded replay ledger from DOM/BOM observations.
+
+    The binding logger deliberately represents object values by class name.
+    This index keeps that distinction explicit: scalar returns are restorable,
+    while object observations are dependency evidence that needs a browser
+    implementation rather than a JSON serialization.
+    """
+    observations: dict[str, dict[str, Any]] = {}
+    objects: dict[str, dict[str, Any]] = {}
+    member_contracts: dict[str, dict[str, Any]] = {}
+    lifecycle_events: list[dict[str, Any]] = []
+    missing_value_count = 0
+    object_value_count = 0
+    contract_event_count = 0
+    contract_incomplete_count = 0
+    async_result_calls = 0
+    async_result_members: dict[str, int] = {}
+    async_result_settlements = 0
+    async_results: dict[str, list[dict[str, Any]]] = {}
+    async_result_observations = 0
+    async_result_observed_pending = 0
+    async_result_fulfilled = 0
+    async_result_rejected = 0
+    promise_call_counts: dict[str, int] = collections.defaultdict(int)
+    promise_settlement_counts: dict[str, int] = collections.defaultdict(int)
+    promise_ledger: dict[str, dict[str, Any]] = {}
+    dom_degraded = False
+    contract_deduplicated_stream = False
+
+    def add_object(contract: Any, row: dict[str, Any], role: str) -> str:
+        nonlocal contract_incomplete_count
+        if not isinstance(contract, dict):
+            return ""
+        object_id = str(contract.get("object_id") or "")
+        if not object_id:
+            return ""
+        item = objects.setdefault(
+            object_id,
+            {
+                "object_id": object_id,
+                "class": contract.get("class") or "",
+                "realm_id": contract.get("realm_id") or "",
+                "prototype_chain": contract.get("prototype_chain") or [],
+                "prototype_complete": contract.get("prototype_complete") is True,
+                "observed_as": [],
+                "access_count": 0,
+                "first_ts_us": int(row.get("ts_us") or 0),
+                "last_ts_us": int(row.get("ts_us") or 0),
+            },
+        )
+        item["access_count"] += 1
+        item["last_ts_us"] = max(int(item["last_ts_us"]), int(row.get("ts_us") or 0))
+        if role not in item["observed_as"]:
+            item["observed_as"].append(role)
+        if contract.get("prototype_complete") is False:
+            item["prototype_complete"] = False
+            contract_incomplete_count += 1
+        return object_id
+
+    for row in rows:
+        if row.get("contract_capture") in {"full", "reference"}:
+            contract_deduplicated_stream = True
+        if row.get("type") == "trace.degraded" and row.get("module") == "dom":
+            dom_degraded = True
+        if row.get("_category") not in {"bom", "dom"}:
+            continue
+        if row.get("type") == "dom.promise.observe":
+            async_result_observations += 1
+            promise_id = str(row.get("promise_id") or "")
+            state = str(row.get("state") or "unknown")
+            ledger = promise_ledger.setdefault(
+                promise_id or f"observe_{async_result_observations}",
+                {
+                    "promise_id": promise_id,
+                    "interface": row.get("interface") or "",
+                    "member": row.get("member") or "",
+                    "origin_call_id": row.get("origin_call_id") or "",
+                    "observed_states": [],
+                    "settlement_states": [],
+                    "settlement_count": 0,
+                    "call_count": 0,
+                },
+            )
+            if state not in ledger["observed_states"]:
+                ledger["observed_states"].append(state)
+            if state == "pending":
+                async_result_observed_pending += 1
+            continue
+        if row.get("type") == "dom.promise.settle":
+            async_key = f"{row.get('interface')}.{row.get('member')}"
+            async_result_settlements += 1
+            state = str(row.get("state") or "unknown")
+            promise_id = str(row.get("promise_id") or "")
+            if promise_id:
+                promise_settlement_counts[promise_id] += 1
+                ledger = promise_ledger.setdefault(
+                    promise_id,
+                    {
+                        "promise_id": promise_id,
+                        "interface": row.get("interface") or "",
+                        "member": row.get("member") or "",
+                        "origin_call_id": row.get("origin_call_id") or "",
+                        "observed_states": [],
+                        "settlement_states": [],
+                        "settlement_count": 0,
+                        "call_count": 0,
+                    },
+                )
+                ledger["settlement_count"] += 1
+                if state not in ledger["settlement_states"]:
+                    ledger["settlement_states"].append(state)
+            if state == "fulfilled":
+                async_result_fulfilled += 1
+            elif state == "rejected":
+                async_result_rejected += 1
+            async_results.setdefault(async_key, []).append(
+                {
+                    "state": state,
+                    "value": row.get("value"),
+                    "promise_id": promise_id,
+                    "origin_call_id": row.get("origin_call_id") or "",
+                    "ts_us": int(row.get("ts_us") or 0),
+                }
+            )
+            continue
+        if row.get("type") == "dom.event.dispatch":
+            lifecycle_events.append(
+                {
+                    "ts_us": int(row.get("ts_us") or 0),
+                    "interface": row.get("interface") or "",
+                    "event_type": row.get("event_type") or "",
+                    "dispatch_phase": row.get("dispatch_phase") or "",
+                    "target_object_id": row.get("target_object_id") or "",
+                    "native_target_id": row.get("native_target_id") or "",
+                }
+            )
+            continue
+        receiver_id = add_object(row.get("receiver_contract"), row, "receiver")
+        value_id = add_object(row.get("value_object_contract"), row, "value")
+        if (row.get("type") in {"dom.call", "dom.construct"}
+                and row.get("value_kind") == "object"
+                and row.get("value_preview") == "Promise"):
+            async_result_calls += 1
+            async_key = f"{row.get('interface')}.{row.get('member')}"
+            async_result_members[async_key] = async_result_members.get(async_key, 0) + 1
+            promise_id = str(row.get("promise_id") or "")
+            if promise_id:
+                promise_call_counts[promise_id] += 1
+                ledger = promise_ledger.setdefault(
+                    promise_id,
+                    {
+                        "promise_id": promise_id,
+                        "interface": row.get("interface") or "",
+                        "member": row.get("member") or "",
+                        "origin_call_id": row.get("origin_call_id") or "",
+                        "observed_states": [],
+                        "settlement_states": [],
+                        "settlement_count": 0,
+                        "call_count": 0,
+                    },
+                )
+                ledger["call_count"] += 1
+        argument_ids = [
+            object_id
+            for arg in row.get("args") or []
+            if isinstance(arg, dict)
+            if (object_id := add_object(arg.get("object_contract"), row, "argument"))
+        ]
+        if receiver_id:
+            contract_event_count += 1
+            interface = str(row.get("interface") or "")
+            member = str(row.get("member") or "")
+            operation = str(row.get("type") or "")
+            member_key = f"{interface}.{member}" if interface and member else ""
+            if member_key:
+                descriptor = row.get("member_descriptor")
+                member_item = member_contracts.setdefault(
+                    member_key,
+                    {
+                        "interface": interface,
+                        "member": member,
+                        "operations": [],
+                        "descriptor": descriptor if isinstance(descriptor, dict) else None,
+                        "receiver_object_ids": [],
+                        "value_object_ids": [],
+                        "argument_object_ids": [],
+                        "origin_call_ids": [],
+                        "access_count": 0,
+                    },
+                )
+                member_item["access_count"] += 1
+                if operation and operation not in member_item["operations"]:
+                    member_item["operations"].append(operation)
+                if receiver_id not in member_item["receiver_object_ids"]:
+                    member_item["receiver_object_ids"].append(receiver_id)
+                if value_id and value_id not in member_item["value_object_ids"]:
+                    member_item["value_object_ids"].append(value_id)
+                for argument_id in argument_ids:
+                    if argument_id not in member_item["argument_object_ids"]:
+                        member_item["argument_object_ids"].append(argument_id)
+                origin_call_id = row.get("origin_call_id")
+                if origin_call_id and origin_call_id not in member_item["origin_call_ids"]:
+                    member_item["origin_call_ids"].append(origin_call_id)
+        if row.get("type") != "dom.get":
+            continue
+        interface = str(row.get("interface") or "")
+        member = str(row.get("member") or "")
+        if not interface or not member:
+            continue
+        key = f"{interface}.{member}"
+        item = observations.setdefault(
+            key,
+            {
+                "interface": interface,
+                "member": member,
+                "category": row.get("_category"),
+                "access_count": 0,
+                "value_kind": "unknown",
+                "value": None,
+                "restorable": False,
+                "last_ts_us": 0,
+            },
+        )
+        item["access_count"] += 1
+        item["last_ts_us"] = max(int(item["last_ts_us"]), int(row.get("ts_us") or 0))
+        if row.get("value_preview_enabled") is False:
+            missing_value_count += 1
+            continue
+        kind = str(row.get("value_kind") or "unknown")
+        value = row.get("value_preview")
+        value_store_path = str(row.get("value_store_path") or "")
+        value_stored = row.get("value_stored") is True and bool(value_store_path)
+        value_truncated = row.get("value_preview_truncated") is True
+        item["value_kind"] = kind
+        item["value"] = value
+        if value_store_path:
+            item["value_store_path"] = value_store_path
+            item["value_stored"] = value_stored
+        if row.get("value_size") is not None:
+            item["value_size"] = row.get("value_size")
+        item["restorable"] = kind in {"undefined", "null", "boolean", "number", "string"} and (
+            not value_truncated or value_stored
+        )
+        if value_truncated and not value_stored:
+            missing_value_count += 1
+        if kind == "object":
+            object_value_count += 1
+
+    for promise_id, count in promise_call_counts.items():
+        if promise_id in promise_ledger:
+            promise_ledger[promise_id]["call_count"] = count
+    for promise_id, count in promise_settlement_counts.items():
+        if promise_id in promise_ledger:
+            promise_ledger[promise_id]["settlement_count"] = count
+    tracked_promises = [
+        promise_id
+        for promise_id, count in promise_call_counts.items()
+        if count > 0
+    ]
+    async_result_values_captured = all(
+        promise_settlement_counts.get(promise_id, 0)
+        >= promise_call_counts.get(promise_id, 0)
+        for promise_id in tracked_promises
+    )
+    if async_result_calls and not tracked_promises:
+        # Older traces have no promise_id. Preserve their previous aggregate
+        # semantics while clearly exposing that exact pairing is unavailable.
+        async_result_values_captured = async_result_settlements >= async_result_calls
+    async_result_pending = sum(
+        max(0, promise_call_counts.get(promise_id, 0)
+            - promise_settlement_counts.get(promise_id, 0))
+        for promise_id in tracked_promises
+    )
+
+    values = dict(sorted(observations.items()))
+    return {
+        "schema": "firefox_trace.environment_contract.v2",
+        "source": "categorized DOM/BOM binding observations",
+        "values": values,
+        "objects": dict(sorted(objects.items())),
+        "members": dict(sorted(member_contracts.items())),
+        "async_results": dict(sorted(async_results.items())),
+        "promise_ledger": dict(sorted(promise_ledger.items())),
+        "lifecycle_events": sorted(lifecycle_events, key=lambda item: item["ts_us"]),
+        "coverage": {
+            "observed_members": len(values),
+            "restorable_members": sum(1 for item in values.values() if item["restorable"]),
+            "object_members": sum(1 for item in values.values() if item["value_kind"] == "object"),
+            "missing_value_events": missing_value_count,
+            "object_value_events": object_value_count,
+            "value_capture_complete": missing_value_count == 0,
+            "object_contract_events": contract_event_count,
+            "object_contract_objects": len(objects),
+            "object_contract_members": len(member_contracts),
+            "lifecycle_event_count": len(lifecycle_events),
+            "object_contract_incomplete_events": contract_incomplete_count,
+            "async_result_calls": async_result_calls,
+            "async_result_observations": async_result_observations,
+            "async_result_observed_pending": async_result_observed_pending,
+            "async_result_pending": async_result_pending,
+            "async_result_fulfilled": async_result_fulfilled,
+            "async_result_rejected": async_result_rejected,
+            "async_result_settlements": async_result_settlements,
+            "async_result_members": dict(sorted(async_result_members.items())),
+            "async_result_values_captured": async_result_values_captured,
+            "contract_deduplicated_stream": contract_deduplicated_stream,
+            "object_contract_complete": (
+                contract_event_count > 0
+                and contract_incomplete_count == 0
+                and (contract_deduplicated_stream or not dom_degraded)
+            ),
+        },
+        "notes": [
+            "Scalar getter values can seed an offline replay host.",
+            "Object entries form a non-recursive reference graph of accessed browser objects.",
+            "Member descriptors are engine metadata; capturing them does not invoke page getters.",
+            "A false value_capture_complete means this trace can locate dependencies but cannot prove an exact offline host replay.",
+            "A false object_contract_complete means object shape or DOM event evidence was incomplete.",
+            "A false async_result_values_captured means DOM returned one or more Promises but their fulfillment values were not captured.",
+            "promise_ledger distinguishes an observed pending Promise from one that settled after the stop boundary.",
+            "Deduplicated contract streams retain first-seen object metadata before hot-member sampling.",
+        ],
+    }
+
+
+def _manifest_env(manifest: dict[str, Any]) -> dict[str, str]:
+    raw = manifest.get("env") or {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key): str(value) for key, value in raw.items() if value is not None}
+
+
+def build_trace_health(
+    manifest: dict[str, Any],
+    rows: Iterable[dict[str, Any]],
+    field_rows: Iterable[dict[str, Any]],
+    environment_contract: dict[str, Any],
+) -> dict[str, Any]:
+    """Separate page execution from trace evidence completeness.
+
+    Trace limits are observer-side policies. They may remove evidence, but
+    they must not be interpreted as changing the page's JS/DOM/network result.
+    Every explicit loss signal is retained in a compact, machine-readable list.
+    """
+    all_rows = list(rows)
+    all_fields = list(field_rows)
+    env = _manifest_env(manifest)
+    incomplete: list[str] = []
+    triggers: list[dict[str, Any]] = []
+    seen_reasons: set[str] = set()
+
+    def add_trigger(reason: str, row: dict[str, Any] | None = None, **extra: Any) -> None:
+        reason = str(reason)
+        if reason not in seen_reasons:
+            seen_reasons.add(reason)
+            incomplete.append(reason)
+        item: dict[str, Any] = {"reason": reason}
+        if row:
+            for key in ("type", "module", "ts_us", "pid", "segment_id", "control_version", "config_hash"):
+                if row.get(key) is not None:
+                    item[key] = row.get(key)
+            for key in (
+                "limit", "count", "dropped", "dropped_bytes", "skipped_by_window",
+                "dropped_before_flush", "captured_size", "capture_truncated",
+                "raw_captured_size", "raw_capture_limit", "value_store_skipped",
+            ):
+                if row.get(key) is not None:
+                    item[key] = row.get(key)
+        item.update(extra)
+        triggers.append(item)
+
+    def nested_truncations(value: Any, path: str = "") -> Iterable[str]:
+        if isinstance(value, dict):
+            has_complete_value_artifact = (
+                value.get("value_stored") is True
+                and bool(str(value.get("value_store_path") or ""))
+            ) or (
+                value.get("bytes_stored") is True
+                and bool(str(value.get("bytes_store_path") or ""))
+            )
+            for key, child in value.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                is_truncation = (
+                    str(key).endswith("_truncated")
+                    or key in {"truncated", "capture_truncated"}
+                )
+                if child is True and is_truncation:
+                    if not (
+                        key == "value_preview_truncated"
+                        and has_complete_value_artifact
+                    ):
+                        yield child_path
+                yield from nested_truncations(child, child_path)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                yield from nested_truncations(child, f"{path}[{index}]")
+
+    for row in all_rows:
+        typ = str(row.get("type") or "")
+        if typ == "trace.degraded":
+            module = str(row.get("module") or "unknown")
+            reason = str(row.get("reason") or "unknown")
+            add_trigger(f"{module}:{reason}", row)
+        elif typ == "trace.suppressed":
+            add_trigger(
+                f"{str(row.get('module') or 'unknown')}:suppressed:{str(row.get('reason') or 'unknown')}",
+                row,
+            )
+        elif typ == "js.boundary.flush_summary" and row.get("complete_window") is False:
+            add_trigger("js:boundary_window_incomplete", row)
+
+        # Preview truncation is harmless only if the same record carries a
+        # complete value artifact. Nested JS arguments/returns are evidence
+        # too, so inspect the complete event tree rather than only top-level
+        # fields.
+        for path in nested_truncations(row):
+            add_trigger(f"{typ or 'event'}:{path}", row)
+        # ``below_min_bytes`` is an artifact-storage optimization. In
+        # particular, an empty string is fully represented by value_preview=""
+        # and has no bytes that could be lost. A storage-skip marker therefore
+        # is evidence loss only when a separate truncation marker says the
+        # inline value is incomplete (handled directly above).
+        if row.get("args_truncated") is True:
+            add_trigger(f"{typ or 'event'}:args_truncated", row)
+        if row.get("object_values") and isinstance(row.get("object_values"), dict):
+            if row["object_values"].get("_truncated") is True:
+                add_trigger(f"{typ or 'event'}:object_values_truncated", row)
+
+    coverage = environment_contract.get("coverage") or {}
+    dom_enabled = str(env.get("TRACE_DOM", env.get("FIREFOX_TRACE_DOM", "1"))).lower() not in {
+        "0", "false", "off", "none"
+    }
+    dom_rows = [row for row in all_rows if str(row.get("_category") or "") in {"dom", "bom"}]
+    if dom_enabled and dom_rows:
+        if coverage.get("value_capture_complete") is False:
+            add_trigger("environment:value_capture_incomplete")
+        if env.get("TRACE_DOM_CONTRACT") or env.get("FIREFOX_TRACE_DOM_CONTRACT"):
+            if coverage.get("object_contract_complete") is False:
+                add_trigger("environment:object_contract_incomplete")
+    # A Promise still pending when the operator stops a trace is an observed
+    # final state, not a dropped value. Treat it as incomplete only when no
+    # promise remains pending yet the ledger still lacks a required settlement.
+    pending_promises = int(coverage.get("async_result_pending", 0) or 0)
+    if (
+        coverage.get("async_result_calls", 0)
+        and coverage.get("async_result_values_captured") is False
+        and not pending_promises
+    ):
+        add_trigger("environment:promise_settlement_incomplete")
+
+    target_without_store = 0
+    for field in all_fields:
+        if not field.get("target"):
+            continue
+        raw_size = int(field.get("value_raw_size") or field.get("value_size") or 0)
+        preview = str(field.get("value_raw_preview") or field.get("value_preview") or "")
+        if raw_size > len(preview.encode("utf-8")) and not field.get("value_store_path"):
+            target_without_store += 1
+    if target_without_store:
+        add_trigger("request:target_value_without_complete_artifact", count=target_without_store)
+
+    # Keep configured policy visible without treating an unset variable as a
+    # hidden cap. Zero, false, none and empty are the documented unlimited/off
+    # values for the relevant limits.
+    limit_names = (
+        "LIMIT", "MAX_BYTES", "MAX_COUNT", "POOL_BYTES", "BUFFER_EVENTS",
+        "RATE", "DEPTH", "KEYS", "ITEMS", "CHUNK_EVENTS",
+    )
+    configured_limits = {
+        key: value
+        for key, value in sorted(env.items())
+        if any(token in key.upper() for token in limit_names)
+    }
+    return {
+        "schema": "firefox_trace.health.v1",
+        "evidence_complete": not incomplete,
+        "runtime_behavior_unchanged": True,
+        "runtime_behavior_check": "observer_only_design",
+        "runtime_behavior_note": (
+            "limits gate trace formatting, observer delivery, or artifact storage; "
+            "they do not gate JS/DOM/network execution"
+        ),
+        "incomplete_reasons": incomplete,
+        "limit_triggers": triggers,
+        "configured_limits": configured_limits,
+        "counts": {
+            "raw_events": len(all_rows),
+            "trace_degraded": sum(1 for row in all_rows if row.get("type") == "trace.degraded"),
+            "trace_suppressed": sum(1 for row in all_rows if row.get("type") == "trace.suppressed"),
+            "target_fields_without_complete_artifact": target_without_store,
+            "dom_bom_events": len(dom_rows),
+        },
+        "environment_coverage": coverage,
+        "notes": [
+            "evidence_complete=false means only the affected evidence claim is incomplete; it does not mean the page action did not run",
+            "runtime_behavior_unchanged is a trace-hook design assertion, not a byte-for-byte page replay proof",
+            "unset DOM/BOM limits are represented by absence from configured_limits; explicit zero remains unlimited",
+        ],
+    }
+
+
 def target_value_forms(field: dict[str, Any], trace_dir: pathlib.Path) -> list[dict[str, Any]]:
     raw = value_text_from_field(field, trace_dir)
     forms: list[dict[str, Any]] = []
@@ -635,6 +1207,189 @@ def asset_keyword_hits(text: str) -> dict[str, dict[str, Any]]:
     return hits
 
 
+def target_context_markers(wanted: set[str]) -> dict[str, int]:
+    """Return marker -> weight used to locate producer functions in JS assets."""
+    markers: dict[str, int] = {}
+    for item in wanted:
+        value = str(item or "").strip()
+        if value:
+            markers[value] = max(markers.get(value, 0), 850)
+    # These are not site names; they are generic VM/environment payload names
+    # that become strong only when found inside/near a target-family function.
+    markers.update({"envcode": 180, "ubcode": 180, "_$webrt": 220})
+    return markers
+
+
+def line_and_absolute_column(text: str, offset: int) -> tuple[int, int]:
+    """SpiderMonkey's reported column for minified assets tracks source offset.
+
+    In captured Firefox traces the function JSScript column is consistently the
+    function keyword offset plus a small parser offset.  Keep this estimate in
+    the index so the next pass can pin one target function without the user
+    guessing PC ranges.
+    """
+    return text.count("\n", 0, max(0, offset)) + 1, max(0, offset) + 3
+
+
+def extract_target_functions_from_text(
+    text: str, wanted: set[str], max_items: int = 8
+) -> list[dict[str, Any]]:
+    """Find likely target producer functions from downloaded JS content.
+
+    This is intentionally generic: it scans marker context and attributes the
+    hit to the nearest named function declaration in the same minified region.
+    The result feeds a second trace pass with function/script-column hints.
+    """
+    if not text:
+        return []
+    markers = target_context_markers(wanted)
+    if not markers:
+        return []
+
+    decls: list[dict[str, Any]] = []
+    for match in FUNCTION_DECL_RE.finditer(text):
+        name = match.group(1) or match.group(2) or ""
+        if not name:
+            continue
+        start = match.start(1) - len("function ") if match.group(1) else match.start()
+        if start < 0:
+            start = match.start()
+        line, column = line_and_absolute_column(text, start)
+        decls.append(
+            {
+                "name": name,
+                "source_offset": start,
+                "script_line": line,
+                "script_column": column,
+            }
+        )
+    if not decls:
+        return []
+
+    lower = text.lower()
+    indexed_markers = [(marker, marker.lower(), weight) for marker, weight in markers.items()]
+    by_key: dict[tuple[str, int], dict[str, Any]] = {}
+
+    for index, decl in enumerate(decls):
+        start = int(decl["source_offset"])
+        end = int(decls[index + 1]["source_offset"]) if index + 1 < len(decls) else min(len(text), start + 120_000)
+        if end <= start:
+            continue
+        region_lower = lower[start:end]
+        score = 0
+        hits: list[dict[str, Any]] = []
+        for marker, marker_lower, weight in indexed_markers:
+            pos = region_lower.find(marker_lower)
+            if pos < 0:
+                continue
+            absolute = start + pos
+            score += weight
+            hits.append(
+                {
+                    "marker": marker,
+                    "offset": absolute,
+                    "distance": absolute - start,
+                }
+            )
+        if not hits:
+            continue
+
+        hit_names = {str(hit["marker"]).lower() for hit in hits}
+        has_target_family = bool(hit_names & {str(item).lower() for item in wanted})
+        has_vm_env = bool(hit_names & {"envcode", "ubcode", "_$webrt"})
+        if has_target_family and has_vm_env:
+            score += 420
+
+        # Prefer compact producer bodies over giant wrappers when marker scores
+        # tie, but keep wrappers as secondary candidates.
+        span = end - start
+        score -= min(180, span // 1500)
+        key = (str(decl["name"]), start)
+        by_key[key] = {
+            **decl,
+            "score": int(score),
+            "markers": hits[:8],
+            "reason": "target field context"
+            + (" + vm/env markers" if has_vm_env else ""),
+            "estimated": True,
+        }
+
+    candidates = sorted(
+        by_key.values(),
+        key=lambda row: (
+            -int(row.get("score") or 0),
+            int((row.get("markers") or [{}])[0].get("distance") or 0),
+            int(row.get("source_offset") or 0),
+        ),
+    )
+    return candidates[:max_items]
+
+
+def asset_target_functions(
+    trace_dir: pathlib.Path, asset: dict[str, Any], wanted: set[str]
+) -> list[dict[str, Any]]:
+    existing = asset.get("target_functions")
+    if isinstance(existing, list) and existing:
+        return [item for item in existing if isinstance(item, dict)]
+    rel = str(asset.get("path") or "")
+    if not rel:
+        return []
+    try:
+        text = (trace_dir / rel).read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+    return extract_target_functions_from_text(text, wanted)
+
+
+def asset_target_signal_score(asset: dict[str, Any], wanted: set[str]) -> tuple[float, list[str]]:
+    """Score downloaded JS artifacts that look like target-field producers.
+
+    Request wrappers often own the XHR caller frame while the actual signing SDK
+    lives in a separately downloaded script.  This pass promotes script-content
+    evidence, without requiring the user to know a script keyword.
+    """
+    hits = asset.get("keyword_hits")
+    if not isinstance(hits, dict):
+        return 0.0, []
+    url = str(asset.get("url") or asset.get("final_url") or "")
+    url_lower = url.lower()
+    hit_keys = {str(key) for key in hits}
+    hit_lower = {key.lower() for key in hit_keys}
+    score = 0.0
+    reasons: list[str] = []
+
+    generic_security_hits = {
+        "signature",
+        "securitytoken",
+        "antitoken",
+        "authtoken",
+        "getjstoken",
+        "jstoken",
+        "sha256",
+        "functionid",
+        "fingerprint",
+        "encrypt",
+        "sign",
+    }
+    matched_generic = sorted(hit_lower & generic_security_hits)
+    if matched_generic:
+        score += min(180.0, 18.0 * sum(int(hits[key].get("count") or 1) for key in hit_keys if key.lower() in matched_generic))
+        reasons.append("script content security keywords")
+
+    # JSVMP/encoded interpreter markers: promote strongly when they co-occur
+    # with target-family or signing markers, but do not require site-specific names.
+    vm_hits = hit_lower & {"_$webrt", "envcode", "ubcode"}
+    if vm_hits:
+        score += 360.0 + 90.0 * len(vm_hits)
+        reasons.append("script content contains VM/environment markers")
+
+    if any(token in url_lower for token in ("security", "risk", "captcha")):
+        score += 160.0
+        reasons.append("script URL looks like security SDK")
+
+    return score, reasons
+
+
 def collect_trace_asset_urls(manifest: dict[str, Any], rows: list[dict[str, Any]]) -> list[str]:
     urls: list[str] = []
     seen: set[str] = set()
@@ -647,7 +1402,11 @@ def collect_trace_asset_urls(manifest: dict[str, Any], rows: list[dict[str, Any]
         if parsed.scheme not in {"http", "https"}:
             return
         path = parsed.path.lower()
-        if path.endswith(".js") or ".js" in path or "javascript" in item.lower():
+        is_script_path = bool(
+            re.search(r"\.(?:js|mjs|cjs)(?:$|/)", path)
+            or re.search(r"(?:^|[/_-])javascript(?:$|[/_-])", path)
+        )
+        if is_script_path:
             if item not in seen:
                 seen.add(item)
                 urls.append(item)
@@ -662,6 +1421,7 @@ def download_web_assets(
     trace_dir: pathlib.Path,
     manifest: dict[str, Any],
     rows: list[dict[str, Any]],
+    wanted: set[str] | None = None,
     max_scripts: int = 80,
 ) -> dict[str, Any]:
     target_url = str(manifest.get("target_url") or "")
@@ -729,6 +1489,9 @@ def download_web_assets(
                 "content_type": headers.get("content-type", ""),
                 "keyword_hits": asset_keyword_hits(text),
             }
+            target_functions = extract_target_functions_from_text(text, wanted or set())
+            if target_functions:
+                item["target_functions"] = target_functions
             result["scripts"].append(item)
         except Exception as error:  # noqa: BLE001
             result["errors"].append({"url": url, "stage": "script", "error": str(error)})
@@ -962,6 +1725,7 @@ def build_target_candidates(
     field_rows: list[dict[str, Any]],
     all_rows: list[dict[str, Any]],
     targets: list[dict[str, Any]],
+    web_assets: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the next-pass identity index without user-supplied script text."""
     target_rows = [row for row in field_rows if row.get("target") is True]
@@ -986,10 +1750,31 @@ def build_target_candidates(
         deduped_target_rows.append(row)
     target_rows = deduped_target_rows[:256]
 
+    # A full-page trace can contain many requests with the same dynamic field.
+    # The user action immediately before Stop is the operative one-pass target,
+    # so select its final request cluster instead of allowing an early SDK
+    # request with a coincidental value match to become the recommendation.
+    target_rows.sort(key=lambda row: _int_value(row.get("ts_us")))
+    target_scope_request_ids: list[str] = []
+    for row in reversed(target_rows):
+        request_id = str(row.get("request_id") or "")
+        if request_id and request_id not in target_scope_request_ids:
+            target_scope_request_ids.append(request_id)
+        if len(target_scope_request_ids) >= 4:
+            break
+    target_scope_request_ids.reverse()
+    if target_scope_request_ids:
+        target_scope_set = set(target_scope_request_ids)
+        target_rows = [
+            row for row in target_rows
+            if str(row.get("request_id") or "") in target_scope_set
+        ]
+
     js_enters = [
         row
         for row in all_rows
-        if row.get("type") == "js.call.enter" and row.get("script_url")
+        if row.get("type") in {"js.call.enter", "js.script.enter"}
+        and row.get("script_url")
     ]
     js_enters.sort(key=lambda row: _int_value(row.get("ts_us")))
     js_by_context: dict[tuple[str, str], list[dict[str, Any]]] = collections.defaultdict(list)
@@ -1002,6 +1787,7 @@ def build_target_candidates(
         js_by_context[context_key].append(row)
         js_times_by_context[context_key].append(_int_value(row.get("ts_us")))
     call_index: dict[tuple[str, str, str], dict[str, Any]] = {}
+    children_by_parent: dict[tuple[str, str, str], list[dict[str, Any]]] = collections.defaultdict(list)
     for row in js_enters:
         key = (
             str(row.get("pid") or "unknown"),
@@ -1010,6 +1796,11 @@ def build_target_candidates(
         )
         if key[2]:
             call_index[key] = row
+        parent = str(row.get("parent_call_id") or "")
+        if parent:
+            children_by_parent[
+                (str(row.get("pid") or "unknown"), str(row.get("segment_id") or "initial"), parent)
+            ].append(row)
 
     aggregated: dict[tuple[str, str], dict[str, Any]] = {}
 
@@ -1020,6 +1811,7 @@ def build_target_candidates(
         reason: str,
         field: dict[str, Any] | None = None,
         call: dict[str, Any] | None = None,
+        role: str = "static-fallback",
     ) -> None:
         url = str(script_url or "").strip()
         if not url or url in {"self-hosted", "null", "None"}:
@@ -1044,11 +1836,18 @@ def build_target_candidates(
                 "call_ids": [],
                 "function_names": [],
                 "call_sites": [],
+                "roles": [],
+                "runtime_score": 0.0,
+                "partial_origin_chain": False,
             },
         )
         if sha and not item.get("script_sha256"):
             item["script_sha256"] = sha
         item["score"] += score
+        if role != "static-fallback":
+            item["runtime_score"] += score
+        if role not in item["roles"]:
+            item["roles"].append(role)
         if reason not in item["reasons"]:
             item["reasons"].append(reason)
         if field:
@@ -1091,6 +1890,7 @@ def build_target_candidates(
             120,
             "request caller_url",
             field=field,
+            role="request-sink-frame",
         )
         origin = str(field.get("origin_call_id") or "")
         if origin:
@@ -1108,6 +1908,7 @@ def build_target_candidates(
                     "origin_call_id exact match",
                     field=field,
                     call=direct,
+                    role="request-writer",
                 )
                 parent = str(direct.get("parent_call_id") or "")
                 depth = 1
@@ -1128,9 +1929,35 @@ def build_target_candidates(
                         "origin call chain",
                         field=field,
                         call=parent_row,
+                        role="request-caller",
                     )
                     parent = str(parent_row.get("parent_call_id") or "")
                     depth += 1
+            else:
+                # A ring window can retain calls whose parent is the network
+                # sink even when the sink's own enter event predates the
+                # window.  Keep this causal evidence, but label it partial
+                # instead of inventing an exact writer identity.
+                for child in children_by_parent.get(key, [])[:32]:
+                    add(
+                        child.get("script_url"),
+                        child.get("script_sha256"),
+                        95,
+                        "retained descendant of origin_call_id",
+                        field=field,
+                        call=child,
+                        role="causal-descendant",
+                    )
+                    child_key = next(
+                        (
+                            existing
+                            for existing, item in aggregated.items()
+                            if item.get("script_url") == child.get("script_url")
+                        ),
+                        None,
+                    )
+                    if child_key:
+                        aggregated[child_key]["partial_origin_chain"] = True
 
         ts = _int_value(field.get("ts_us"))
         pid = str(field.get("pid") or "unknown")
@@ -1152,10 +1979,12 @@ def build_target_candidates(
                 "near request time",
                 field=field,
                 call=call,
+                role="nearby-runtime",
             )
 
     # Existing value matches remain useful when the request hook has no direct
     # caller metadata.  Match them back to their field by source identity.
+    scoped_request_ids = {str(row.get("request_id") or "") for row in target_rows}
     field_keys = {
         (
             str(item.get("field", {}).get("_source_file") or ""),
@@ -1166,6 +1995,8 @@ def build_target_candidates(
     }
     for item in targets:
         field = item.get("field") or {}
+        if str(field.get("request_id") or "") not in scoped_request_ids:
+            continue
         key = (
             str(field.get("_source_file") or ""),
             _int_value(field.get("_source_line")),
@@ -1180,11 +2011,49 @@ def build_target_candidates(
                 90,
                 "request value matched JS artifact",
                 field=field,
+                role="value-producer",
             )
+
+    # Promote downloaded script artifacts that contain target-family and VM/sign
+    # markers.  This catches the common shape where XHR caller_url points at a
+    # wrapper script while the real producer is a security SDK loaded nearby.
+    if isinstance(web_assets, dict):
+        anchor_field = target_rows[0] if target_rows else None
+        for asset in web_assets.get("scripts") or []:
+            if not isinstance(asset, dict):
+                continue
+            score, reasons = asset_target_signal_score(asset, wanted)
+            target_functions = asset_target_functions(trace_dir, asset, wanted)
+            if target_functions:
+                score += 520.0 + min(480.0, float(target_functions[0].get("score") or 0) / 4.0)
+                reasons.append("script source has target-field function context")
+            if score <= 0:
+                continue
+            add(
+                asset.get("final_url") or asset.get("url"),
+                asset.get("sha256"),
+                score,
+                " + ".join(reasons),
+                field=anchor_field,
+                role="static-fallback",
+            )
+
+    target_functions_by_url: dict[str, list[dict[str, Any]]] = {}
+    if isinstance(web_assets, dict):
+        for asset in web_assets.get("scripts") or []:
+            if not isinstance(asset, dict):
+                continue
+            url = str(asset.get("final_url") or asset.get("url") or "")
+            if not url:
+                continue
+            funcs = asset_target_functions(trace_dir, asset, wanted)
+            if funcs:
+                target_functions_by_url[url] = funcs
 
     candidates: list[dict[str, Any]] = []
     for item in aggregated.values():
         item["score"] = round(float(item["score"]), 2)
+        item["runtime_score"] = round(float(item["runtime_score"]), 2)
         item["reasons"].sort()
         item["confidence"] = (
             "correlated"
@@ -1198,12 +2067,56 @@ def build_target_candidates(
             item["script_url"],
             item.get("script_sha256") or "",
         )
+        target_functions = target_functions_by_url.get(str(item.get("script_url") or ""), [])
+        if target_functions:
+            item["target_functions"] = target_functions[:6]
+            item["target_function_names"] = [
+                str(fn.get("name") or "")
+                for fn in target_functions[:6]
+                if str(fn.get("name") or "")
+            ]
+        opcode_vm = dict(opcode)
+        opcode_column = _int_value(opcode.get("script_column"), -1)
+        opcode_target_mismatch = False
+        if target_functions and opcode_column >= 0:
+            nearest = min(
+                target_functions,
+                key=lambda fn: abs(_int_value(fn.get("script_column"), -10**12) - opcode_column),
+            )
+            distance = abs(_int_value(nearest.get("script_column"), -10**12) - opcode_column)
+            # Hot opcode windows often land in behavioural sensor functions
+            # (mousemove/touchmove) inside the same security SDK.  If source
+            # context says the target-field producer is elsewhere, keep the
+            # opcode evidence visible but do not auto-apply that wrong PC.
+            if distance > 1024:
+                opcode_target_mismatch = True
+                opcode_vm["pc_range"] = ""
+                opcode_vm["dispatcher_pc"] = ""
+                opcode_vm["target_context_mismatch"] = {
+                    "opcode_script_column": opcode_column,
+                    "nearest_target_function": nearest,
+                    "distance": distance,
+                    "action": "ignore_hot_opcode_window_for_auto_apply",
+                }
         item["opcode"] = opcode
         vm = {
             "script_contains": item["script_match"],
         }
         if item.get("script_sha256"):
             vm["script_sha256"] = item["script_sha256"]
+        if target_functions:
+            primary_fn = target_functions[0]
+            names = [
+                str(fn.get("name") or "")
+                for fn in target_functions[:4]
+                if str(fn.get("name") or "")
+            ]
+            if names:
+                vm["function_contains"] = ",".join(names)
+            if primary_fn.get("script_line") is not None:
+                vm["script_line"] = str(primary_fn.get("script_line"))
+            if primary_fn.get("script_column") is not None:
+                vm["script_column"] = str(primary_fn.get("script_column"))
         # Exact script identity for opcode is learned from opcode rows, not
         # guessed from a request caller's source location.
         for source, target in (
@@ -1211,28 +2124,72 @@ def build_target_candidates(
             ("script_column", "script_column"),
             ("script_bytecode_length", "script_bytecode_length"),
         ):
-            if opcode.get(source) is not None:
+            if opcode_target_mismatch:
+                continue
+            if target in vm:
+                continue
+            if opcode_vm.get(source) is not None:
                 vm[target] = str(opcode[source])
-        if opcode.get("pc_range"):
-            vm["pc_range"] = opcode["pc_range"]
-        if opcode.get("dispatcher_pc"):
-            vm["dispatch_pc"] = opcode["dispatcher_pc"]
+        if opcode_vm.get("pc_range"):
+            vm["pc_range"] = opcode_vm["pc_range"]
+        if opcode_vm.get("dispatcher_pc"):
+            vm["dispatch_pc"] = opcode_vm["dispatcher_pc"]
+        if opcode_vm.get("target_context_mismatch"):
+            vm["opcode_hot_window_status"] = "ignored: target function context mismatch"
         item["vm"] = vm
+        has_runtime_evidence = float(item.get("runtime_score") or 0) > 0
         item["stage"] = (
             "dispatcher-ready"
-            if opcode.get("dispatcher_pc")
+            if has_runtime_evidence and opcode_vm.get("dispatcher_pc")
             else "pc-ready"
-            if opcode.get("pc_range")
+            if has_runtime_evidence and opcode_vm.get("pc_range")
+            else "function-ready"
+            if has_runtime_evidence and target_functions
             else "script-ready"
-            if item.get("script_match")
+            if has_runtime_evidence and item.get("script_match")
             else "needs-review"
         )
         candidates.append(item)
 
+    def candidate_stage_priority(item: dict[str, Any]) -> int:
+        stage = str(item.get("stage") or "")
+        if stage == "dispatcher-ready":
+            return 4
+        if stage == "pc-ready":
+            return 3
+        if stage == "function-ready":
+            return 2
+        if _int_value((item.get("opcode") or {}).get("event_count")) > 0:
+            return 1
+        if stage == "script-ready":
+            return 1
+        return 0
+
+    def candidate_role_priority(item: dict[str, Any]) -> int:
+        roles = set(item.get("roles") or [])
+        # A value that exactly matches the final request field is direct
+        # producer evidence.  It outranks the transport wrapper and every
+        # nearby/static observation without naming any vendor-specific script.
+        if "value-producer" in roles:
+            return 5
+        if "request-writer" in roles:
+            return 4
+        if "request-sink-frame" in roles:
+            return 3
+        if "causal-descendant" in roles:
+            return 2
+        if "nearby-runtime" in roles:
+            return 1
+        return 0
+
     candidates.sort(
         key=lambda item: (
-            -float(item.get("score") or 0),
+            -candidate_role_priority(item),
+            -int(float(item.get("runtime_score") or 0) > 0),
+            -float(item.get("runtime_score") or 0),
+            -candidate_stage_priority(item),
             -_int_value((item.get("opcode") or {}).get("event_count")),
+            -float(item.get("score") or 0),
             str(item.get("script_url") or ""),
         )
     )
@@ -1257,6 +2214,7 @@ def build_target_candidates(
         "target_url": manifest.get("target_url"),
         "generated_at_unix": int(time.time()),
         "target_fields": sorted(wanted),
+        "target_scope_request_ids": target_scope_request_ids,
         "status": status,
         "selection": "automatic",
         "candidate_count": len(candidates),
@@ -1288,8 +2246,27 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
     field_rows: list[dict[str, Any]] = []
     all_rows: list[dict[str, Any]] = []
     source_files: collections.Counter[str] = collections.Counter()
+    request_callers: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     for path, line, row in jsonl_rows(trace_dir):
+        transport = "fetch" if "fetch" in path.name else "xhr" if "xhr" in path.name else ""
+        request_id = str(row.get("request_id") or "")
+        pid = str(row.get("pid") or "")
+        request_key = (transport, pid, request_id)
+        if transport and request_id and row.get("type") in {"fetch.call", "xhr.open"}:
+            request_callers[request_key] = {
+                key: row.get(key)
+                for key in ("origin_call_id", "caller_url", "caller_line", "caller_column")
+                if row.get(key) is not None
+            }
+        caller = request_callers.get(request_key)
+        if caller and not row.get("origin_call_id"):
+            # fetch.request/xhr.body are emitted after their call/open event and
+            # do not carry scripted caller data themselves. Preserve that
+            # identity on field records so value-to-call analysis can start at
+            # the request body rather than fall back to a time window.
+            row = dict(row)
+            row.update(caller)
         category = classify_event(path, row)
         decorated = compact_event(row, path, line, category)
         buckets.setdefault(category, []).append(decorated)
@@ -1297,9 +2274,26 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
         source_files[path.name] += 1
         field_rows.extend(iter_field_records(row, path, line, wanted, trace_dir))
 
+    script_identity = enrich_script_resource_identity(all_rows)
+
     for category, rows in buckets.items():
         write_jsonl(categorized / f"{category}.jsonl", rows)
     write_jsonl(categorized / "request-fields.jsonl", field_rows)
+
+    environment_contract = build_environment_contract(all_rows)
+    (index_dir / "environment-contract.json").write_text(
+        json.dumps(environment_contract, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    trace_health = build_trace_health(
+        manifest, all_rows, field_rows, environment_contract
+    )
+    (index_dir / "trace-health.json").write_text(
+        json.dumps(trace_health, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
 
     js_by_sha: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     js_artifacts_by_path: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
@@ -1409,7 +2403,7 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
             }
         )
 
-    web_assets = download_web_assets(trace_dir, manifest, all_rows) if download_assets else None
+    web_assets = download_web_assets(trace_dir, manifest, all_rows, wanted) if download_assets else None
     if web_assets is not None:
         (index_dir / "web-assets.json").write_text(
             json.dumps(web_assets, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -1427,11 +2421,15 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
     ]
     event_counts = collections.Counter(str(row.get("type") or "unknown") for row in all_rows)
     category_counts = {category: len(rows) for category, rows in buckets.items()}
-    js_value_artifact_count = sum(
-        1
+    # Deferred capture stores value identity directly in the enclosing call
+    # event, so it deliberately emits no second js.value.store record.
+    js_value_artifact_ids = {
+        str(item.get("value_store_path") or item.get("sha256") or "")
         for row in buckets.get("js", [])
-        if row.get("type") == "js.value.store" and row.get("stored") is True
-    )
+        for item in walk_sha_values(row)
+        if item.get("value_store_path")
+    }
+    js_value_artifact_count = len(js_value_artifact_ids)
     js_value_capture_event_count = sum(
         1
         for row in buckets.get("js", [])
@@ -1475,6 +2473,7 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
         field_rows,
         all_rows,
         targets,
+        web_assets,
     )
     (index_dir / "target-candidates.json").write_text(
         json.dumps(target_candidates, ensure_ascii=False, indent=2, sort_keys=True)
@@ -1484,6 +2483,8 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
     for generated in (
         index_dir / "causal-index.json",
         index_dir / "target-candidates.json",
+        index_dir / "environment-contract.json",
+        index_dir / "trace-health.json",
     ):
         try:
             files[str(generated.relative_to(trace_dir))] = generated.stat().st_size
@@ -1501,9 +2502,13 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
         or manifest.get("preset"),
         "target_fields": sorted(wanted),
         "event_count": len(all_rows),
+        "script_identity": script_identity,
         "event_counts": dict(event_counts),
         "category_counts": category_counts,
         "request_field_count": len(field_rows),
+        "target_field_match_count": sum(
+            1 for row in field_rows if bool(row.get("target"))
+        ),
         "js_value_artifact_count": js_value_artifact_count,
         "js_value_capture_event_count": js_value_capture_event_count,
         "js_value_missing_hint": js_value_missing_hint,
@@ -1516,9 +2521,13 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
             "request_fields": "categorized/request-fields.jsonl",
             "web_assets": "index/web-assets.json" if web_assets is not None else "",
             "target_candidates": "index/target-candidates.json",
+            "environment_contract": "index/environment-contract.json",
+            "trace_health": "index/trace-health.json",
         },
         "target_candidate_count": target_candidates["candidate_count"],
         "target_candidate_status": target_candidates["status"],
+        "environment_contract": environment_contract["coverage"],
+        "trace_health": trace_health,
         "recommended_target_script": (
             (target_candidates.get("recommended") or {}).get("script_url") or ""
         ),
@@ -1547,7 +2556,11 @@ def main() -> int:
     else:
         print(f"Finalized: {result['trace_dir']}")
         print(f"Events: {result['event_count']}  request fields: {result['request_field_count']}")
-        print(f"Matched JS values: {result['target_match_count']}  degraded: {result['degraded_count']}")
+        print(
+            f"Target fields: {result['target_field_match_count']}  "
+            f"matched JS values: {result['target_match_count']}  "
+            f"degraded: {result['degraded_count']}"
+        )
         for category, count in result["category_counts"].items():
             print(f"  {category}: {count}")
     return 0

@@ -13,6 +13,7 @@ import collections
 import json
 import os
 import pathlib
+import re
 import signal
 import subprocess
 import sys
@@ -27,7 +28,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 TRACE_CONTROL = ROOT / "tools" / "trace-control.sh"
 TRACE_FINALIZE = ROOT / "tools" / "trace_finalize.py"
 TRACE_LAUNCHER = ROOT / "tools" / "run-trace-firefox.sh"
-HTML_PATH = ROOT / "tools" / "trace-console.html"
 
 OPTION_FLAGS = {
     "profile": ("--profile", "TRACE_PROFILE"),
@@ -48,6 +48,9 @@ OPTION_FLAGS = {
     "primitive_metadata": ("--primitive-metadata", "TRACE_JS_PRIMITIVE_METADATA"),
     "value_store_min_bytes": ("--value-store-min-bytes", "TRACE_JS_VALUE_STORE_MIN_BYTES"),
     "value_store_max_bytes": ("--value-store-max-bytes", "TRACE_JS_VALUE_STORE_MAX_BYTES"),
+    "deferred_value_capture": ("--deferred-value-capture", "TRACE_JS_DEFERRED_VALUE_CAPTURE"),
+    "deferred_value_pool_bytes": ("--deferred-value-pool-bytes", "TRACE_JS_DEFERRED_VALUE_POOL_BYTES"),
+    "boundary_buffer_events": ("--boundary-buffer-events", "TRACE_JS_BOUNDARY_BUFFER_EVENTS"),
     "limit_events": ("--limit-events", "FIREFOX_TRACE_JS_LIMIT_EVENTS"),
 }
 
@@ -57,13 +60,49 @@ VM_SAFE_DEFAULTS = {
     "vm_step_limit": 2048,
     "opcode_max_events_per_second": 2000,
     "opcode_max_bytes_per_second": 4194304,
-    "ipc_max_events_per_second": 6000,
-    "ipc_max_bytes_per_second": 4194304,
+    "ipc_max_events_per_second": 12000,
+    "ipc_max_bytes_per_second": 8388608,
     "opcode_stack_slots": 2,
     "wasm_module_limit": 16,
     "wasm_preview_bytes": 128,
     "wasm_dump_max_bytes": 1048576,
     "wasm_insn_limit": 512,
+}
+
+# Identity values are read by the VM/opcode hook, not by ordinary JIT
+# boundary tracing.  Keep their aliases together so a later non-VM segment
+# cannot inherit a previous dispatcher/hash window.
+VM_IDENTITY_ENV = {
+    "script_contains": (
+        "TRACE_OPCODE_SCRIPT_CONTAINS",
+        "FIREFOX_TRACE_OPCODE_SCRIPT_CONTAINS",
+        "TRACE_JS_OPCODE_SCRIPT_CONTAINS",
+        "FIREFOX_TRACE_JS_OPCODE_SCRIPT_CONTAINS",
+    ),
+    "script_sha256": (
+        "TRACE_OPCODE_SCRIPT_SHA256",
+        "FIREFOX_TRACE_OPCODE_SCRIPT_SHA256",
+    ),
+    "script_line": (
+        "TRACE_OPCODE_SCRIPT_LINE",
+        "FIREFOX_TRACE_OPCODE_SCRIPT_LINE",
+    ),
+    "script_column": (
+        "TRACE_OPCODE_SCRIPT_COLUMN",
+        "FIREFOX_TRACE_OPCODE_SCRIPT_COLUMN",
+    ),
+    "script_bytecode_length": (
+        "TRACE_OPCODE_SCRIPT_BYTECODE_LENGTH",
+        "FIREFOX_TRACE_OPCODE_SCRIPT_BYTECODE_LENGTH",
+    ),
+    "pc_range": (
+        "TRACE_OPCODE_PC_RANGE",
+        "FIREFOX_TRACE_OPCODE_PC_RANGE",
+    ),
+    "dispatch_pc": (
+        "TRACE_VM_DISPATCH_PC",
+        "FIREFOX_TRACE_VM_DISPATCH_PC",
+    ),
 }
 
 
@@ -102,6 +141,22 @@ def resolve_vm_identity(
     discovery = load_target_candidates(trace_dir)
     candidate = discovery.get("recommended")
     if not isinstance(candidate, dict):
+        # An Agent handoff may carry an analyzer-confirmed identity while the
+        # next run intentionally uses a fresh output directory. Preserve that
+        # explicit identity; only fall back when the VM request has no usable
+        # script, hash, or function selector at all.
+        explicit_identity = any(
+            str(payload.get(key) or "").strip()
+            for key in ("script_contains", "script_sha256", "function_contains")
+        )
+        if explicit_identity:
+            return payload, {
+                "status": "explicit-identity-applied",
+                "applied": True,
+                "candidate": None,
+                "applied_keys": [],
+                "message": "配置文件已提供 VM 身份；新输出目录尚未生成候选索引，保留显式身份",
+            }
         payload["opcode"] = False
         payload["vm_step"] = False
         return payload, {
@@ -116,6 +171,7 @@ def resolve_vm_identity(
     for key in (
         "script_contains",
         "script_sha256",
+        "function_contains",
         "script_line",
         "script_column",
         "script_bytecode_length",
@@ -162,6 +218,31 @@ def resolve_vm_identity(
         "applied_keys": applied,
         "message": "已自动套用候选脚本及分析结果",
     }
+
+
+def resolve_payload_vm(
+    trace_dir: pathlib.Path, payload: dict
+) -> tuple[dict, dict]:
+    """Return a payload whose visible VM choice matches applied evidence."""
+    effective = dict(payload)
+    requested = payload.get("vm") if isinstance(payload.get("vm"), dict) else {}
+    effective_vm, auto_vm = resolve_vm_identity(trace_dir, requested)
+    effective["vm"] = effective_vm
+    requested_interpreter = boolish(requested.get("opcode")) or boolish(
+        requested.get("vm_step")
+    )
+    applied_interpreter = boolish(effective_vm.get("opcode")) or boolish(
+        effective_vm.get("vm_step")
+    )
+    if requested_interpreter and not applied_interpreter:
+        options = dict(payload.get("options") or {})
+        options["profile"] = "discover"
+        options["js_mode"] = "boundary"
+        options["script_contains"] = ""
+        options["function_contains"] = ""
+        options["script_sha256"] = ""
+        effective["options"] = options
+    return effective, auto_vm
 
 
 def bounded_int(value: object, default: int, minimum: int, maximum: int) -> int:
@@ -310,6 +391,7 @@ def vm_env_from_payload(vm: object) -> dict[str, str]:
     optional = {
         "script_contains": "TRACE_OPCODE_SCRIPT_CONTAINS",
         "script_sha256": "TRACE_SCRIPT_SHA256",
+        "function_contains": "TRACE_FUNCTION_CONTAINS",
         "script_line": "TRACE_OPCODE_SCRIPT_LINE",
         "script_column": "TRACE_OPCODE_SCRIPT_COLUMN",
         "script_bytecode_length": "TRACE_OPCODE_SCRIPT_BYTECODE_LENGTH",
@@ -318,7 +400,9 @@ def vm_env_from_payload(vm: object) -> dict[str, str]:
     }
     for source, target in optional.items():
         value = str(vm.get(source) or "").strip()
-        if value:
+        # A discovered VM identity shown in the UI must not silently turn a
+        # normal boundary/target segment into a stale VM-filtered segment.
+        if interpreter and value:
             env[target] = value
 
     script_contains = str(vm.get("script_contains") or "").strip()
@@ -409,6 +493,89 @@ def normalize_js_mode(value: object) -> str:
     return "boundary" if mode in {"", "auto", "discover", "full-chain"} else mode
 
 
+def resolve_payload_js_mode(payload: dict) -> tuple[dict, dict]:
+    """Prevent an empty target filter from silently producing zero JS calls."""
+    effective = dict(payload)
+    options = dict(payload.get("options") or {})
+    explicit_env = dict(payload.get("env") or {})
+    requested_mode = normalize_js_mode(
+        explicit_env.get(
+            "FIREFOX_TRACE_JS_MODE",
+            explicit_env.get("TRACE_JS_MODE", options.get("js_mode")),
+        )
+    )
+    filter_values = (
+        options.get("script_contains"),
+        options.get("function_contains"),
+        options.get("script_sha256"),
+        explicit_env.get("TRACE_JS_SCRIPT_CONTAINS"),
+        explicit_env.get("FIREFOX_TRACE_JS_SCRIPT_CONTAINS"),
+        explicit_env.get("TRACE_JS_FUNCTION_CONTAINS"),
+        explicit_env.get("FIREFOX_TRACE_JS_FUNCTION_CONTAINS"),
+        explicit_env.get("TRACE_JS_SCRIPT_SHA256"),
+        explicit_env.get("FIREFOX_TRACE_JS_SCRIPT_SHA256"),
+    )
+    has_target_filter = any(str(value or "").strip() for value in filter_values)
+    if requested_mode not in {"target", "deep"} or has_target_filter:
+        return effective, {
+            "status": "configured",
+            "requested_mode": requested_mode,
+            "effective_mode": requested_mode,
+        }
+
+    # Target/deep hooks deliberately reject an empty target set.  Boundary is
+    # the only useful first-pass mode until analysis has supplied a script,
+    # function, or hash filter.
+    options["js_mode"] = "boundary"
+    effective["options"] = options
+    env = dict(explicit_env)
+    for key in ("TRACE_JS_MODE", "FIREFOX_TRACE_JS_MODE"):
+        if key in env:
+            env[key] = "boundary"
+    effective["env"] = env
+    return effective, {
+        "status": "boundary-fallback-empty-target",
+        "requested_mode": requested_mode,
+        "effective_mode": "boundary",
+        "message": "target/deep 未加载脚本、函数或 SHA-256 候选，已自动使用 boundary，确保 JS Call 会记录。",
+    }
+
+
+def configured_fields(value: object) -> list[str]:
+    text = str(value or "").strip()
+    if not text or text == "__disabled__":
+        return []
+    return [item for item in re.split(r"[,;\s]+", text) if item]
+
+
+def target_boundary_flush_filter(payload: dict) -> str:
+    options = payload.get("options") if isinstance(payload.get("options"), dict) else {}
+    query_fields = configured_fields(
+        options.get("query_fields", payload.get("query_fields"))
+    )
+    body_fields = configured_fields(
+        options.get("body_fields", payload.get("body_fields"))
+    )
+    reasons: list[str] = []
+    for field in query_fields:
+        reasons.extend((f"=xhr.send.{field}", f"=fetch.call.{field}"))
+    for field in body_fields:
+        reasons.extend((f"=xhr.body.{field}", f"=fetch.request.{field}"))
+    return ",".join(dict.fromkeys(reasons))
+
+
+def promise_drain_ms(payload: dict) -> int:
+    """Give already-observed DOM Promises a short, bounded settle window."""
+    raw = payload.get("promise_drain_ms")
+    if raw is None:
+        raw = os.environ.get("FIREFOX_TRACE_PROMISE_DRAIN_MS", "250")
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        value = 250
+    return max(0, min(value, 2000))
+
+
 
 def startup_env_from_payload(payload: dict) -> dict[str, str]:
     """Translate UI payload into launcher env before Firefox starts.
@@ -452,14 +619,68 @@ def startup_env_from_payload(payload: dict) -> dict[str, str]:
     # stores preview/hash/path metadata.
     plan_name = str(payload.get("plan") or payload.get("preset") or "").strip()
     if plan_name in {"", "full-chain"}:
+        # Full-chain keeps the historical capture defaults. The added spool is
+        # an output transport optimization: it does not narrow the observed
+        # page events or alter the browser's execution path.
+        env.setdefault("TRACE_JS_CAPTURE_VALUES", "1")
+        env.setdefault("TRACE_JS_AUTO_CAPTURE_VALUES", "1")
+        env.setdefault("TRACE_JS_THIS", "preview")
+        env.setdefault("TRACE_JS_VALUE_STORE", "1")
+        env.setdefault("TRACE_JS_DEFERRED_VALUE_CAPTURE", "1")
+        env.setdefault("TRACE_JS_DEFERRED_VALUE_POOL_BYTES", str(64 * 1024 * 1024))
+        env.setdefault("TRACE_JS_FULL_SPOOL", "1")
+        env.setdefault("TRACE_JS_VALUE_METADATA_MIN_BYTES", "1")
+        env.setdefault("TRACE_JS_MAX_VALUE_BYTES", "0")
+        env.setdefault("TRACE_JS_TYPED_ARRAY_BYTES", "0")
+        env.setdefault("TRACE_JS_OBJECT_TARGET_ONLY", "1")
+        env.setdefault("TRACE_JS_BOUNDARY_BUFFER", "1")
+        env.setdefault("TRACE_JS_BOUNDARY_BUFFER_EVENTS", "8192")
+        env.setdefault(
+            "TRACE_JS_BOUNDARY_FLUSH_ON",
+            "dom.get,dom.call,xhr.send,xhr.body,fetch.call,fetch.request,cookie.get,cookie.set,storage.get,storage.set",
+        )
+        # Full-chain observes the complete WebIDL event surface. Object-value
+        # capture remains non-recursive by default, so this does not invoke a
+        # page-wide JS object walk merely to record the binding operation.
+        env.setdefault("TRACE_DOM_EVENTS", "all")
+        env.setdefault("TRACE_DOM_PREVIEW", "all")
+        env.setdefault("TRACE_DOM_MODE", "all")
+        env.setdefault("TRACE_DOM_CONTRACT", "1")
+        env.setdefault("TRACE_DOM_CONTRACT_PROTOTYPE_DEPTH", "0")
+        env.setdefault("TRACE_DOM_VALUE_STORE", "1")
+        env.setdefault("TRACE_DOM_VALUE_STORE_MIN_BYTES", "1")
+        env.setdefault("TRACE_DOM_VALUE_STORE_MAX_BYTES", "0")
+        env.setdefault("TRACE_DOM_OBJECT_VALUES", "1")
+        env.setdefault("TRACE_FETCH_REQUEST_BODY", "full")
+        env.setdefault("TRACE_FETCH_REQUEST_BODY_MAX_BYTES", "0")
+        env.setdefault("TRACE_FETCH_REQUEST_BODY_HEX_BYTES", "0")
+        env.setdefault("TRACE_XHR_REQUEST_BODY", "full")
+        env.setdefault("TRACE_XHR_REQUEST_BODY_MAX_BYTES", "0")
+        env.setdefault("TRACE_XHR_REQUEST_BODY_HEX_BYTES", "0")
         env.setdefault("TRACE_XHR_RESPONSE_BODY", "full")
         env.setdefault("TRACE_XHR_RESPONSE_BODY_STORE", "1")
         env.setdefault("TRACE_XHR_RESPONSE_BODY_STORE_MAX_BYTES", "0")
-        env.setdefault("TRACE_FETCH_RESPONSE_BODY", "preview")
+        env.setdefault("TRACE_FETCH_RESPONSE_BODY", "full")
+        env.setdefault("TRACE_FETCH_RESPONSE_BODY_MAX_BYTES", "0")
+        env.setdefault("TRACE_FETCH_RESPONSE_BODY_HEX_BYTES", "0")
         env.setdefault("TRACE_FETCH_RESPONSE_BODY_STORE", "1")
         env.setdefault("TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES", "0")
+        env.setdefault("TRACE_FETCH_RESPONSE_BODY_CHUNK_EVENTS", "0")
         env.setdefault("TRACE_XHR_EVENTS", "open,header,send,body,response")
         env.setdefault("TRACE_FETCH_REQUEST_HEADERS", "preview")
+        env.setdefault("TRACE_FETCH_RESPONSE_HEADERS", "full")
+        env.setdefault("TRACE_FETCH_RESPONSE_HEADERS_MAX_COUNT", "0")
+        env.setdefault("TRACE_FETCH_RESPONSE_HEADER_VALUE_MAX_BYTES", "0")
+        env.setdefault("TRACE_WS_PREVIEW_BYTES", "0")
+        env.setdefault("TRACE_WASM_DUMP", "0")
+        env.setdefault("TRACE_SCRIPT_RESOURCE_MAX_BYTES", "0")
+        env.setdefault("TRACE_SCRIPT_RESOURCE_PREVIEW_LIMIT", "0")
+        env.setdefault("TRACE_PREVIEW_LIMIT", "0")
+        # vm_env_from_payload supplies guarded IPC defaults even while VM is
+        # off. Full-chain must override those inherited values; an explicit
+        # custom env line is applied below and still takes precedence.
+        env["TRACE_IPC_MAX_EVENTS_PER_SECOND"] = "0"
+        env["TRACE_IPC_MAX_BYTES_PER_SECOND"] = "0"
 
     vm_payload = payload.get("vm") if isinstance(payload.get("vm"), dict) else {}
     if vm_payload:
@@ -515,6 +736,8 @@ def startup_env_from_payload(payload: dict) -> dict[str, str]:
         ("TRACE_JS_PRIMITIVE_METADATA", "FIREFOX_TRACE_JS_PRIMITIVE_METADATA"),
         ("TRACE_JS_VALUE_STORE_MIN_BYTES", "FIREFOX_TRACE_JS_VALUE_STORE_MIN_BYTES"),
         ("TRACE_JS_VALUE_STORE_MAX_BYTES", "FIREFOX_TRACE_JS_VALUE_STORE_MAX_BYTES"),
+        ("TRACE_JS_DEFERRED_VALUE_CAPTURE", "FIREFOX_TRACE_JS_DEFERRED_VALUE_CAPTURE"),
+        ("TRACE_JS_DEFERRED_VALUE_POOL_BYTES", "FIREFOX_TRACE_JS_DEFERRED_VALUE_POOL_BYTES"),
         ("TRACE_JS_VALUE_METADATA_MIN_BYTES", "FIREFOX_TRACE_JS_VALUE_METADATA_MIN_BYTES"),
         ("TRACE_JS_MAX_VALUE_BYTES", "FIREFOX_TRACE_JS_MAX_VALUE_BYTES"),
         ("TRACE_JS_MAX_ARGS", "FIREFOX_TRACE_JS_MAX_ARGS"),
@@ -545,6 +768,22 @@ def startup_env_from_payload(payload: dict) -> dict[str, str]:
             "TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES",
             "FIREFOX_TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES",
         ),
+        ("TRACE_DOM_PREVIEW", "FIREFOX_TRACE_DOM_PREVIEW"),
+        ("TRACE_DOM_LIMIT_EVENTS", "FIREFOX_TRACE_DOM_LIMIT_EVENTS"),
+        ("TRACE_DOM_PROMISES", "FIREFOX_TRACE_DOM_PROMISES"),
+        ("TRACE_DOM_PROMISE_LIMIT", "FIREFOX_TRACE_DOM_PROMISE_LIMIT"),
+        ("TRACE_DOM_ARG_LIMIT", "FIREFOX_TRACE_DOM_ARG_LIMIT"),
+        ("TRACE_DOM_OBJECT_VALUE_ITEMS", "FIREFOX_TRACE_DOM_OBJECT_VALUE_ITEMS"),
+        ("TRACE_DOM_CONTRACT", "FIREFOX_TRACE_DOM_CONTRACT"),
+        (
+            "TRACE_DOM_CONTRACT_PROTOTYPE_DEPTH",
+            "FIREFOX_TRACE_DOM_CONTRACT_PROTOTYPE_DEPTH",
+        ),
+        ("TRACE_DOM_HOT_MEMBER_LIMIT", "FIREFOX_TRACE_DOM_HOT_MEMBER_LIMIT"),
+        ("TRACE_DOM_HOT_MEMBER_SAMPLE", "FIREFOX_TRACE_DOM_HOT_MEMBER_SAMPLE"),
+        ("TRACE_DOM_VALUE_STORE", "FIREFOX_TRACE_DOM_VALUE_STORE"),
+        ("TRACE_DOM_VALUE_STORE_MIN_BYTES", "FIREFOX_TRACE_DOM_VALUE_STORE_MIN_BYTES"),
+        ("TRACE_DOM_VALUE_STORE_MAX_BYTES", "FIREFOX_TRACE_DOM_VALUE_STORE_MAX_BYTES"),
     ]
     for source, target in aliases:
         if source in env:
@@ -746,11 +985,8 @@ class TraceConsole:
                 )
             trace_dir = trace_dir.resolve()
             trace_dir.mkdir(parents=True, exist_ok=True)
-            effective_payload = dict(payload)
-            effective_vm, auto_vm = resolve_vm_identity(
-                trace_dir, payload.get("vm")
-            )
-            effective_payload["vm"] = effective_vm
+            effective_payload, auto_vm = resolve_payload_vm(trace_dir, payload)
+            effective_payload, js_capture = resolve_payload_js_mode(effective_payload)
             existing_manifest = trace_dir / "manifest.json"
             if existing_manifest.exists() and not boolish(payload.get("reuse_trace")):
                 raise RuntimeError(
@@ -844,6 +1080,7 @@ class TraceConsole:
                 "started_at_unix": now_unix(),
                 "process": process,
                 "auto_vm": auto_vm,
+                "js_capture": js_capture,
             }
             self._active = session
             self._last_trace_dir = trace_dir
@@ -1099,6 +1336,11 @@ class TraceConsole:
             [label],
             payload.get("control_file"),
         )
+        drained_ms = 0
+        if name == "stop":
+            drained_ms = promise_drain_ms(payload)
+            if drained_ms:
+                time.sleep(drained_ms / 1000.0)
         if self._active and pathlib.Path(self._active["trace_dir"]) == trace_dir:
             self._active["phase"] = (
                 "recording" if control_action in {"start", "prewarm"} else "paused"
@@ -1110,6 +1352,7 @@ class TraceConsole:
             "action": name,
             "trace_dir": str(trace_dir),
             "control": control,
+            "promise_drain_ms": drained_ms,
         }
         if name == "stop" and payload.get("finalize", True):
             response["finalize"] = self.finalize(trace_dir)["result"]
@@ -1117,24 +1360,32 @@ class TraceConsole:
 
     def config(self, payload: dict) -> dict:
         trace_dir = safe_trace_dir(payload.get("trace_dir"), self.default_trace_dir)
-        effective_vm, auto_vm = resolve_vm_identity(
-            trace_dir, payload.get("vm")
-        )
+        effective_payload, auto_vm = resolve_payload_vm(trace_dir, payload)
+        effective_payload, js_capture = resolve_payload_js_mode(effective_payload)
+        effective_vm = effective_payload.get("vm") or {}
         args: list[str] = []
+        unset_keys: set[str] = set()
+
+        def add_unset(key: str):
+            key = str(key).strip()
+            if key and key not in unset_keys:
+                unset_keys.add(key)
+                args.extend(["--unset", key])
+
         if payload.get("segment"):
             args += ["--segment", str(payload["segment"])]
         if payload.get("preset"):
             args += ["--preset", str(payload["preset"])]
         vm_env = vm_env_from_payload(effective_vm)
-        for key, value in (payload.get("options") or {}).items():
+        for key, value in (effective_payload.get("options") or {}).items():
             if key not in OPTION_FLAGS:
                 continue
             flag, env_key = OPTION_FLAGS[key]
             if value is None or str(value) == "":
-                args += ["--unset", env_key]
+                add_unset(env_key)
             else:
                 args += [flag, normalize_js_mode(value) if key == "js_mode" else str(value)]
-        for module, enabled in (payload.get("modules") or {}).items():
+        for module, enabled in (effective_payload.get("modules") or {}).items():
             if module in MODULES:
                 args += ["--module", f"{module}={1 if enabled else 0}"]
         vm_payload = effective_vm
@@ -1149,9 +1400,9 @@ class TraceConsole:
             vm_payload.get("wasm_insn")
         ):
             args += ["--module", f"wasm={1 if wasm_selected else 0}"]
-        for key, value in (payload.get("env") or {}).items():
+        for key, value in (effective_payload.get("env") or {}).items():
             if value is None or str(value) == "":
-                args += ["--unset", str(key)]
+                add_unset(str(key))
             else:
                 env_key = str(key)
                 env_value = (
@@ -1160,15 +1411,37 @@ class TraceConsole:
                     else str(value)
                 )
                 args += ["--set", f"{env_key}={env_value}"]
-        for key in payload.get("unset") or []:
-            args += ["--unset", str(key)]
+        for key in effective_payload.get("unset") or []:
+            add_unset(str(key))
         explicit_env = {
-            str(key) for key in (payload.get("env") or {}) if str(key).strip()
+            str(key)
+            for key in (effective_payload.get("env") or {})
+            if str(key).strip()
         }
-        explicit_unset = {str(key) for key in payload.get("unset") or []}
+        explicit_unset = {str(key) for key in effective_payload.get("unset") or []}
         for key, value in vm_env.items():
             if key not in explicit_env and key not in explicit_unset:
                 args += ["--set", f"{key}={value}"]
+
+        # A VM identity is meaningful only while opcode/VM step is enabled.
+        # Clear the opcode-only aliases when the UI switches back to the
+        # one-round target/value mode.  Shared regular filters remain governed
+        # by the visible options above.
+        if isinstance(payload.get("vm"), dict):
+            vm_interpreter = boolish(effective_vm.get("opcode")) or boolish(
+                effective_vm.get("vm_step")
+            )
+            options = effective_payload.get("options") or {}
+            for source, aliases in VM_IDENTITY_ENV.items():
+                vm_value = str(effective_vm.get(source) or "").strip()
+                if vm_interpreter and vm_value:
+                    continue
+                if source in {"script_sha256", "function_contains"} and str(
+                    options.get(source) or ""
+                ).strip():
+                    continue
+                for key in aliases:
+                    add_unset(key)
         control = self.run_control(
             trace_dir, "config", args, payload.get("control_file")
         )
@@ -1181,6 +1454,7 @@ class TraceConsole:
             "control": control,
             "restart_required_keys": restart_keys,
             "auto_vm": auto_vm,
+            "js_capture": js_capture,
         }
 
     def finalize(self, trace_dir: pathlib.Path) -> dict:
@@ -1212,6 +1486,9 @@ class TraceConsole:
             )
         except Exception:
             pass
+        drained_ms = promise_drain_ms(payload)
+        if drained_ms:
+            time.sleep(drained_ms / 1000.0)
         finalized = None
         try:
             finalized = self.finalize(trace_dir)["result"]
@@ -1257,6 +1534,7 @@ class TraceConsole:
             "trace_dir": str(trace_dir),
             "pid": pid,
             "terminated": terminated,
+            "promise_drain_ms": drained_ms,
             "finalize": finalized,
         }
 
@@ -1318,16 +1596,6 @@ def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -
     handler.wfile.write(blob)
 
 
-def html_response(handler: BaseHTTPRequestHandler) -> None:
-    blob = HTML_PATH.read_bytes()
-    handler.send_response(200)
-    handler.send_header("content-type", "text/html; charset=utf-8")
-    handler.send_header("cache-control", "no-store")
-    handler.send_header("content-length", str(len(blob)))
-    handler.end_headers()
-    handler.wfile.write(blob)
-
-
 def read_json_body(handler: BaseHTTPRequestHandler) -> dict:
     length = int(handler.headers.get("content-length") or "0")
     if length <= 0:
@@ -1345,9 +1613,6 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
         try:
-            if parsed.path in {"/", "/index.html"}:
-                html_response(self)
-                return
             if parsed.path == "/api/latest":
                 json_response(self, 200, self.console.latest())
                 return

@@ -41,7 +41,30 @@ TRACE_DIR/
 | `dom` | Document, nodes, canvas, DOM calls/events. | Supplement DOM environment. |
 | `bom` | Navigator, screen, location, history, performance, crypto. | Supplement browser environment. |
 | `wasm-vm` | WASM modules, opcode, VM step. | Route JSVM/WASM cases. |
+
+## JSONL consumer contract
+
+Read JSONL incrementally. Do not use whole-file `readFileSync(...).split()` for
+large streams. An empty stream has zero records, not one empty JSON value.
+Portable exporters must preserve record discriminator fields such as `type`,
+plus IDs needed by downstream joins; field minimization is valid only after the
+fixture is replayed independently.
 | `control-health` | control, ACK, degraded, boundary summary. | Decide evidence quality. |
+
+DOM Promise records are split into two event types. Observation is unbounded by
+default; an Agent may add `TRACE_DOM_PROMISE_LIMIT` as an explicit observer-side
+budget, which is reported as `trace.degraded` when reached:
+
+```text
+dom.promise.observe  { promise_id, state: pending|fulfilled|rejected, origin_call_id }
+dom.promise.settle   { promise_id, state: fulfilled|rejected, value, origin_call_id }
+```
+
+`index/environment-contract.json.promise_ledger` is the joined view. Use
+`coverage.async_result_pending` for unresolved calls at the stop boundary and
+`coverage.async_result_values_captured` as the replay gate. A short stop drain is
+applied by the UI so settlement events that are already queued can arrive without
+keeping the whole page trace open.
 
 ## Value alignment
 
@@ -55,6 +78,8 @@ parent_call_id
 origin_call_id
 request_id
 script_sha256
+script_raw_sha256
+script_hash_source
 ```
 
 A producer claim is strong when the request field SHA-256 equals a JS value SHA-256 and the request context matches by `origin_call_id` or explicit call/request linkage.

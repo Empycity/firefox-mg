@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>trace-env-contract-frame</title>
+<body>
+<script>
+  const frame = document.createElement("iframe");
+  frame.addEventListener("load", () => {
+    document.title = "trace-env-contract-frame-loaded";
+  });
+  frame.src = "/trace-smoke.html";
+  document.body.insertBefore(frame, null);
+  void frame.contentDocument;
+  void frame.contentWindow;
+</script>
+</body>

@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Firefox Trace Promise smoke</title>
+<pre id="result">pending</pre>
+<script>
+  const result = document.querySelector("#result");
+  const permission = navigator.permissions.query({name: "geolocation"})
+    .then(value => value.state)
+    .catch(error => String(error));
+  const digest = crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode("trace-promise"),
+  ).then(value => value.byteLength)
+    .catch(error => String(error));
+  Promise.all([permission, digest]).then(values => {
+    result.textContent = JSON.stringify(values);
+    document.title = "trace-promise-complete";
+  });
+</script>
