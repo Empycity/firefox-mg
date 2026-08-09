@@ -38,6 +38,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-bytes", type=int, default=2 * 1024**3)
     parser.add_argument("--poll-ms", type=int, default=200)
     parser.add_argument("--ack-seconds", type=float, default=5.0)
+    parser.add_argument(
+        "--url-contains",
+        default="",
+        help="Stop only when the target event URL contains this substring.",
+    )
     parser.add_argument("--control-script", type=pathlib.Path, default=here / "trace-control.sh")
     parser.add_argument("--finalize-script", type=pathlib.Path, default=here / "trace_finalize.py")
     parser.add_argument("--python", default=os.environ.get("FIREFOX_TRACE_PYTHON", sys.executable))
@@ -103,7 +108,10 @@ def find_target(
     event: dict[str, Any],
     targets: dict[str, set[str]],
     source_file: str,
+    url_contains: str = "",
 ) -> dict[str, Any] | None:
+    if url_contains and url_contains not in str(event.get("url") or ""):
+        return None
     for field_key in FIELD_KEYS:
         values = event.get(field_key)
         if not isinstance(values, dict):
@@ -117,6 +125,7 @@ def find_target(
                     "field_location": field_key.removesuffix("_fields"),
                     "event_type": str(event.get("type") or "unknown"),
                     "request_id": event.get("request_id"),
+                    "url": event.get("url"),
                     "source_file": source_file,
                 }
     return None
@@ -257,10 +266,19 @@ def main() -> int:
         )
         still_pending: list[tuple[str, dict[str, Any]]] = []
         for source_file, event in pending:
-            match = find_target(args.trace_dir, event, targets, source_file)
+            match = find_target(
+                args.trace_dir,
+                event,
+                targets,
+                source_file,
+                args.url_contains,
+            )
             if match:
                 return stop_and_finalize(args, "target-found", match, started)
-            if may_contain_target(event, targets):
+            if (
+                (not args.url_contains or args.url_contains in str(event.get("url") or ""))
+                and may_contain_target(event, targets)
+            ):
                 still_pending.append((source_file, event))
         pending = still_pending
         elapsed = time.monotonic() - started

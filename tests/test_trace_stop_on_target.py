@@ -102,6 +102,42 @@ class TraceStopOnTargetTests(unittest.TestCase):
             (trace_dir / "values/token.txt").write_text("complete", encoding="utf-8")
             self.assertIsNotNone(MODULE.find_target(trace_dir, event, targets, "fetch.jsonl"))
 
+    def test_target_url_filter_ignores_other_endpoints(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            trace_dir = pathlib.Path(raw_dir)
+            targets = {
+                "query_fields": {"x-dynosaur"},
+                "body_fields": set(),
+                "header_fields": set(),
+                "cookie_fields": set(),
+            }
+            other = {
+                "url": "https://fixture.test/api/post/item_list/?X-Dynosaur=a",
+                "query_fields": {"X-Dynosaur": "a"},
+            }
+            playlist = {
+                "url": "https://fixture.test/api/user/playlist/?X-Dynosaur=b",
+                "request_id": "playlist-1",
+                "query_fields": {"X-Dynosaur": "b"},
+            }
+            self.assertIsNone(
+                MODULE.find_target(
+                    trace_dir,
+                    other,
+                    targets,
+                    "fetch.jsonl",
+                    "/api/user/playlist/",
+                )
+            )
+            match = MODULE.find_target(
+                trace_dir,
+                playlist,
+                targets,
+                "fetch.jsonl",
+                "/api/user/playlist/",
+            )
+            self.assertEqual(match["request_id"], "playlist-1")
+
     def test_unconfigured_event_is_retained_until_manifest_fields_arrive(self):
         event = {"body_fields": {"p": "value"}}
         empty = {key: set() for key in MODULE.FIELD_KEYS}

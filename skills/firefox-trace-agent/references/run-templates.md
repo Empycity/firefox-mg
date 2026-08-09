@@ -21,6 +21,15 @@ python3 tools/trace-stop-on-target.py "$TRACE_DIR" \
 TRACE_WATCHDOG_PID=$!
 ```
 
+If the same field occurs on several requests, narrow the watchdog without
+changing field extraction:
+
+```bash
+python3 tools/trace-stop-on-target.py "$TRACE_DIR" \
+  --url-contains '/exact/endpoint/' \
+  --max-seconds 120 --max-bytes 2147483648
+```
+
 ## Paused target action
 
 ```bash

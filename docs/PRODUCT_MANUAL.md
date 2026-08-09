@@ -119,6 +119,9 @@ web-assets/
 
 - 首轮查链路：保持默认勾选，使用 `full-chain` + `打开即记录`；当前默认是“通用完整值落盘”，异步 spool 只优化写盘路径，不偷偷减少普通 JS/DOM/BOM/网络覆盖。
 - 目标字段出现在哪就填哪：query 填 Query，body 填 Body，header 填 Request Header，cookie 填 Cookie。
+- 同一字段会出现在多个接口时，Agent 启动 watchdog 时增加
+  `--url-contains '/exact/endpoint/'`；只有 URL 命中该子串且字段制品已落盘才停止，
+  避免被更早的无关请求截停。
 - 一轮同时拿请求字节、环境和 JS 调用窗口：采集计划选 `full-chain`，JS Call 选 `boundary`，填写实际目标字段，VM/Opcode/WASM 指令保持关闭。字段命中请求后只写出相关 JS 窗口。
 - `target` 与 `deep` 是已知脚本身份后的精确模式，必须已有脚本名、函数名或 SHA-256 候选。候选为空时，桌面端会明确切到 `boundary` 并写入日志，避免空 JS Call 产物。
 - JSVMP/WASM 是附加面板，不是替代前面模块；先让 Network/JS/Script/State 证据齐，再追加 VM/WASM。

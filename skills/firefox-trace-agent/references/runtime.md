@@ -68,6 +68,11 @@ and runs `trace_finalize.py`. It performs the same stop/finalize sequence at
 120 seconds or 2 GiB. Keep its PID, inspect the receipt, and stop collection
 immediately if the process exits without one.
 
+When the same configured field occurs on several endpoints, add
+`--url-contains '/exact/endpoint/'`. The target receipt then requires both the
+field and that URL substring, so an earlier unrelated request does not stop the
+run.
+
 ## Analyze/finalize
 
 ```bash
