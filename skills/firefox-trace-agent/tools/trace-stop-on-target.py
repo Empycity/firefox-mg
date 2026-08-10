@@ -43,6 +43,11 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Stop only when the target event URL contains this substring.",
     )
+    parser.add_argument(
+        "--segment-id",
+        default="",
+        help="Only inspect events from this segment (defaults to the current trace-control segment).",
+    )
     parser.add_argument("--control-script", type=pathlib.Path, default=here / "trace-control.sh")
     parser.add_argument("--finalize-script", type=pathlib.Path, default=here / "trace_finalize.py")
     parser.add_argument("--python", default=os.environ.get("FIREFOX_TRACE_PYTHON", sys.executable))
@@ -253,16 +258,22 @@ def main() -> int:
     pending: list[tuple[str, dict[str, Any]]] = []
     last_size_check = 0.0
     size = 0
+    initial_control = read_json(args.trace_dir / "trace-control.json")
+    active_segment = args.segment_id or str(initial_control.get("segment_id") or "")
     while True:
         manifest = read_json(args.trace_dir / "manifest.json")
-        parsed = configured_fields(manifest)
+        control = read_json(args.trace_dir / "trace-control.json")
+        parsed = configured_fields(control)
+        if not any(parsed.values()):
+            parsed = configured_fields(manifest)
         if any(parsed.values()):
             targets = parsed
         new_events = list(tail.events(args.trace_dir))
         pending.extend(
             (source_file, event)
             for source_file, event in new_events
-            if may_contain_target(event, targets)
+            if (not active_segment or event.get("segment_id") == active_segment)
+            and may_contain_target(event, targets)
         )
         still_pending: list[tuple[str, dict[str, Any]]] = []
         for source_file, event in pending:

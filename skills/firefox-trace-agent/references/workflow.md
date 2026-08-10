@@ -8,13 +8,17 @@ parameter combinations.
 ## Phase -1: Bound every Agent-started trace
 
 Start `tools/trace-stop-on-target.py` in the same turn as any Agent launch or
-resume. The configured target becoming durable is the stop condition, not page
-idle or a later manual check. The watchdog must immediately send stop, wait for
-the control acknowledgement when available, and finalize. Its mandatory fuses
-are 120 seconds and 2 GiB, including for `full-chain`. If the watchdog is not
-alive, immediately stop collection before troubleshooting. Retain its JSON
-receipt until acceptance, then remove the Agent-created full trace after the
-portable fixture passes independently.
+resume. For Agent-driven actions, the configured target becoming durable is
+the stop condition. For user-driven actions, configure a nonmatching sentinel,
+keep only the time/size fuses automatic, and stop immediately when the user
+explicitly says stop. Never use broad `code` or `token` targets without an
+exact endpoint filter. A resumed watchdog reads current `trace-control.json`
+fields and only the current `segment_id`; it must not stop on an old segment.
+The mandatory fuses are 120 seconds and 2 GiB unless the user-driven window has
+an explicitly bounded longer duration. If the watchdog is not alive,
+immediately stop collection before troubleshooting. Retain its JSON receipt
+until acceptance, then remove the Agent-created full trace after the portable
+fixture passes independently.
 
 ## Phase 0: Offline review
 

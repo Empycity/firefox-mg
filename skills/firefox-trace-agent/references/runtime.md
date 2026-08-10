@@ -69,6 +69,13 @@ and runs `trace_finalize.py`. It performs the same stop/finalize sequence at
 120 seconds or 2 GiB. Keep its PID, inspect the receipt, and stop collection
 immediately if the process exits without one.
 
+For a resumed run, it must use the active `trace-control.json` target fields and
+current `segment_id`, not the launch manifest and old events. If the user is
+performing the browser action and will explicitly say stop, use a nonmatching
+sentinel target so the watchdog supplies only time/size fuses. Avoid broad
+targets such as `code` or `token` unless `--url-contains` pins the exact
+endpoint.
+
 Agent runs must set `TRACE_HEADLESS=0` explicitly. Confirm the headed Firefox
 window/process after launch. Once the watchdog receipt reports finalized, close
 the Firefox process group; stopping trace collection alone does not close the

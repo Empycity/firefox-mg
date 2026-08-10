@@ -63,7 +63,7 @@ failure after executing it.
 | User supplies `TRACE_DIR` | Read `manifest.json`; finalize only when the derived index is absent; then inspect health/request fields. | Read the relevant log-schema reference. |
 | Browser page/profile is already open and one DOM/BOM value is missing | Reuse that exact Firefox page/profile and run the direct DevTools/RDP/BiDi probe. | Read `environment-repair-playbook.md`; do not request a new trace for a readable built-in value. |
 | User says open/reopen/restart Firefox or the task needs a new live page | Use the project launcher path immediately: UI task -> `open "Firefox Trace Console.app"`; known URL/task -> `tools/run-trace-firefox.sh` with a fresh profile/output directory. Never open a second generic Firefox instance. | Run the deterministic preflight/recovery commands in `firefox-startup.md`. |
-| Agent starts or resumes a trace | In the same turn, start `tools/trace-stop-on-target.py "$TRACE_DIR" --max-seconds 120 --max-bytes 2147483648`; retain its PID and receipt. The moment the configured target field and its referenced artifact are durable, it sends stop, waits for ACK, and finalizes. | If the watchdog does not start, stop the trace immediately; do not leave Firefox collecting while diagnosing it. |
+| Agent starts or resumes a trace | In the same turn, start `tools/trace-stop-on-target.py "$TRACE_DIR" --max-seconds 120 --max-bytes 2147483648`; retain its PID and receipt. For Agent-driven actions, stop on the durable target. For user-driven actions, use a nonmatching sentinel target plus time/size fuses and stop immediately when the user explicitly says stop. | If the watchdog does not start, stop the trace immediately; do not leave Firefox collecting while diagnosing it. |
 | A Firefox launch exits, shows no window, or reports code-signing/XPCOM/profile failure | Read that run's `ui-launcher.log`, `manifest.json`, and `trace-control.json`, then execute the matching recovery command. | Escalate only the concrete unresolved runtime error. |
 | Logs prove a causality/serialization/value gap requiring another trace | Write a complete `agent-next.json` in the current Agent working directory, including visible UI fields and env; tell the user only to load it and perform the one target action. | Read `trace-mode-playbook.md` before choosing VM/opcode or targeted overlay fields. |
 | Logs prove only an environment value/object gap | Probe the open Firefox first, patch the local host, then run the retained request vector. | New trace only for inaccessible Worker/iframe/closure state or missing producer causality. |
@@ -82,6 +82,15 @@ Every plan, including `full-chain`, has the watchdog time and directory-size
 fuses. A target hit, 120-second limit, or 2 GiB limit must immediately issue
 stop and finalize. Do not claim a trace is controlled when the watchdog was not
 started or its PID has exited without a receipt.
+
+Choose stop ownership before collection. During Agent-driven browser actions,
+the target watchdog owns stop/finalize. During user-driven actions, the user's
+explicit stop message owns the normal stop point; the watchdog remains only as
+a time/size fuse and must use a deliberately nonmatching sentinel field. Never
+use broad names such as `code` or `token` without an exact endpoint filter.
+For a resumed multi-segment trace, bind the watchdog to the current
+`trace-control.json` fields and `segment_id`; never rescan old segments using
+the launch manifest's original fields.
 
 Agent-started browser traces are headed by default. Set `TRACE_HEADLESS=0`
 explicitly, verify that the Firefox application process/window exists, and use

@@ -34,7 +34,11 @@ const client = createClient(endpoint);
 try {
   await client.command("session.new", { capabilities: {} });
   const tree = await client.command("browsingContext.getTree", {});
-  const pages = tree.contexts.map(({ context, url, children = [] }) => ({ context, url, children: children.length }));
+  const flatten = (contexts, parent = null) => contexts.flatMap(({ context, url, children = [] }) => [
+    { context, parent, url, children: children.length },
+    ...flatten(children, context),
+  ]);
+  const pages = flatten(tree.contexts);
   console.log(JSON.stringify({ endpoint, pages }, null, 2));
 } finally {
   try {

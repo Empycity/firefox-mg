@@ -182,6 +182,28 @@ class TraceStopOnTargetTests(unittest.TestCase):
             self.assertTrue(receipt["finalized"])
             self.assertEqual((trace_dir / "calls.log").read_text().splitlines(), ["stop target-found", "finalize"])
 
+    def test_runtime_control_fields_and_segment_override_manifest(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            trace_dir = pathlib.Path(raw_dir)
+            (trace_dir / "manifest.json").write_text(
+                json.dumps({"env": {"TRACE_QUERY_FIELDS": "old_token"}}), encoding="utf-8"
+            )
+            (trace_dir / "trace-control.json").write_text(
+                json.dumps({"segment_id": "seg_002", "env": {"TRACE_QUERY_FIELDS": "new_token"}}),
+                encoding="utf-8",
+            )
+            events = [
+                {"segment_id": "seg_001", "query_fields": {"old_token": "old"}},
+                {"segment_id": "seg_002", "request_id": "r2", "query_fields": {"new_token": "new"}},
+            ]
+            (trace_dir / "firefox-fetch-1.jsonl").write_text(
+                "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+            )
+            result = self.run_watchdog(trace_dir)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            receipt = json.loads(result.stdout)
+            self.assertEqual(receipt["request_id"], "r2")
+
     def test_process_time_and_size_limits_stop_and_finalize(self):
         for args, expected_code, expected_reason in (
             (("--max-seconds", "0.03", "--max-bytes", "0"), 3, "time-limit"),

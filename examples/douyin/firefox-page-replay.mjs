@@ -42,6 +42,9 @@ function createClient(url) {
 const unsignedUrl = contract.request.unsigned_url;
 const config = contract.init;
 const headers = contract.request.headers;
+const method = String(contract.request.method || "GET").toUpperCase();
+const body = contract.request.body == null ? null :
+  (typeof contract.request.body === "string" ? contract.request.body : JSON.stringify(contract.request.body));
 const expression = `
 (async () => {
   const url = new URL(${JSON.stringify(unsignedUrl)});
@@ -52,14 +55,14 @@ const expression = `
   else await window.bdms.init(initConfig);
   const outcome = await new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("GET", url.href, true);
+    xhr.open(${JSON.stringify(method)}, url.href, true);
     xhr.withCredentials = true;
     for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
     xhr.timeout = 30000;
     xhr.onload = () => resolve({ status: xhr.status, responseURL: xhr.responseURL, body: xhr.responseText });
     xhr.onerror = () => resolve({ status: xhr.status, responseURL: xhr.responseURL, error: "network_error" });
     xhr.ontimeout = () => resolve({ status: xhr.status, responseURL: xhr.responseURL, error: "timeout" });
-    xhr.send(null);
+    xhr.send(${JSON.stringify(body)});
   });
   let parsed = null;
   try { parsed = JSON.parse(outcome.body || ""); } catch {}
@@ -78,7 +81,7 @@ const expression = `
     supplied_a_bogus_preserved: suppliedSignature ? signature === suppliedSignature : null,
     a_bogus_is_fresh: Boolean(signature),
     json_status_code: parsed?.status_code ?? null,
-    comments: Array.isArray(parsed?.comments) ? parsed.comments.length : 0,
+    comments: Array.isArray(parsed?.comments) ? parsed.comments.length : null,
     response_bytes: (outcome.body || "").length,
   });
 })()`;
@@ -87,7 +90,8 @@ const client = createClient(endpoint);
 try {
   await client.command("session.new", { capabilities: {} });
   const { contexts } = await client.command("browsingContext.getTree", {});
-  const page = contexts.find(({ url }) => url.startsWith("https://www.douyin.com/"));
+  const pageOrigin = new URL(unsignedUrl).origin;
+  const page = contexts.find(({ url }) => url.startsWith(`${pageOrigin}/`));
   if (!page) throw new Error("Douyin page is not open in the remote Firefox profile");
   const result = await client.command("script.evaluate", {
     expression,
@@ -98,11 +102,23 @@ try {
   if (result.type === "exception") throw new Error(result.exceptionDetails.text);
   const output = JSON.parse(result.result.value);
   output.contract = contractPath;
-  output.accepted = output.http_status === 200 && output.json_status_code === 0 && output.comments > 0 &&
+  const requestPath = new URL(unsignedUrl).pathname;
+  const expectsComments = requestPath.includes("/comment/list/");
+  const isCreatorSubmit = requestPath.includes("/web/api/media/aweme/create_v2/");
+  output.response_kind = outcomeKind(output, { isCreatorSubmit });
+  output.accepted = output.http_status === 200 && output.json_status_code === 0 && (!expectsComments || output.comments > 0) &&
     (output.supplied_a_bogus_preserved ?? true);
   console.log(JSON.stringify(output, null, 2));
   process.exitCode = output.accepted ? 0 : 2;
 } finally {
   try { await client.command("session.end"); } catch {}
   client.close();
+}
+
+function outcomeKind(output, { isCreatorSubmit }) {
+  if (output.network_error) return output.network_error;
+  if (output.http_status !== 200) return "http_error";
+  if (isCreatorSubmit && output.response_bytes === 0) return "verification_intercepted";
+  if (output.json_status_code === 0) return "success";
+  return "business_error";
 }

@@ -6,6 +6,7 @@ const [source] = process.argv.slice(2);
 if (!source) throw new Error("Usage: node examples/douyin/firefox-bidi-eval.mjs expression.js");
 
 const endpoint = process.env.FIREFOX_BIDI_ENDPOINT || "ws://127.0.0.1:9224/session";
+const pagePrefix = process.env.FIREFOX_PAGE_PREFIX || "https://www.douyin.com/";
 const expression = await readFile(source, "utf8");
 
 function clientFor(url) {
@@ -40,8 +41,8 @@ const client = clientFor(endpoint);
 try {
   await client.command("session.new", { capabilities: {} });
   const { contexts } = await client.command("browsingContext.getTree", {});
-  const page = contexts.find(({ url }) => url.startsWith("https://www.douyin.com/"));
-  if (!page) throw new Error("Douyin page is not open in the remote Firefox profile");
+  const page = contexts.find(({ url }) => url.startsWith(pagePrefix));
+  if (!page) throw new Error(`Page starting with ${pagePrefix} is not open in the remote Firefox profile`);
   const result = await client.command("script.evaluate", {
     expression,
     target: { context: page.context },
