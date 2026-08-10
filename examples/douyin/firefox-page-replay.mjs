@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const contractPath = resolve(process.argv[2] || fileURLToPath(new URL("./runtime-contract.json", import.meta.url)));
+const contractPath = resolve(process.argv[2] || fileURLToPath(new URL("./creator-live-contract.json", import.meta.url)));
 const contract = JSON.parse(await readFile(contractPath, "utf8"));
 const endpoint = process.env.FIREFOX_BIDI_ENDPOINT || "ws://127.0.0.1:9224/session";
 const signatureFlag = process.argv.indexOf("--a-bogus");
@@ -81,7 +81,6 @@ const expression = `
     supplied_a_bogus_preserved: suppliedSignature ? signature === suppliedSignature : null,
     a_bogus_is_fresh: Boolean(signature),
     json_status_code: parsed?.status_code ?? null,
-    comments: Array.isArray(parsed?.comments) ? parsed.comments.length : null,
     response_bytes: (outcome.body || "").length,
   });
 })()`;
@@ -103,10 +102,9 @@ try {
   const output = JSON.parse(result.result.value);
   output.contract = contractPath;
   const requestPath = new URL(unsignedUrl).pathname;
-  const expectsComments = requestPath.includes("/comment/list/");
   const isCreatorSubmit = requestPath.includes("/web/api/media/aweme/create_v2/");
   output.response_kind = outcomeKind(output, { isCreatorSubmit });
-  output.accepted = output.http_status === 200 && output.json_status_code === 0 && (!expectsComments || output.comments > 0) &&
+  output.accepted = output.http_status === 200 && output.json_status_code === 0 &&
     (output.supplied_a_bogus_preserved ?? true);
   console.log(JSON.stringify(output, null, 2));
   process.exitCode = output.accepted ? 0 : 2;

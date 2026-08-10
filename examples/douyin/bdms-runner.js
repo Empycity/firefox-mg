@@ -21,7 +21,7 @@ const environmentContract = runtimeContract?.environment_contract || readJson(
   path.join(traceDir, "index", "environment-contract.json")
 ) || { coverage: {}, values: {} };
 const targetCandidates = runtimeContract ? null : readJson(path.join(traceDir, "index", "target-candidates.json"));
-const bdmsPath = findAsset("bdms_1.0.1.19_fix.js");
+const bdmsPath = findAsset("bdms_1.0.1.16.js");
 const ledger = legacyLedger || { restore_seed: {} };
 const seed = runtimeContract?.restore_seed || legacyLedger?.restore_seed || traceRestoreSeed();
 const xhrLog = [];
@@ -515,7 +515,7 @@ function findUnsignedTargetUrl() {
     target.searchParams.delete("a_bogus");
     return target.href;
   }
-  throw new Error("No comment/list a_bogus request was found in request-fields.jsonl");
+  throw new Error("No a_bogus target request was found in request-fields.jsonl");
 }
 
 function runtimeRequestBody() {
@@ -609,7 +609,7 @@ function main() {
         pageId: Number.isFinite(overridePageId)
           ? overridePageId
           : Number(traceBdmsInitConfig.pageId || 1),
-        paths: traceBdmsInitConfig.paths || ["/aweme/v1/web/comment/list/", "/aweme/v1/web/comment/list/reply/"],
+        paths: traceBdmsInitConfig.paths || { include: ["/aweme", "/web/api", "/passport"] },
       };
       for (const key of ["boe", "ddrt", "ic"]) {
         if (traceBdmsInitConfig[key] === undefined) continue;
