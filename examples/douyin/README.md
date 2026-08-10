@@ -49,3 +49,29 @@ node examples/douyin/request-comment-list.js examples/douyin/runtime-contract.js
 Acceptance is `HTTP 200`, JSON `status_code=0`, and a non-empty `comments`
 array. The final acceptance run belongs in Firefox's native page/network
 context because a Node HTTP client does not reproduce Firefox transport state.
+
+## Creator create_v2
+
+The creator-page BDMS build uses a different initialization contract:
+
+```sh
+node examples/douyin/export-creator-create-v2-contract.js \
+  TARGET_TRACE_DIR examples/douyin/creator-runtime-contract.json ENVIRONMENT_TRACE_DIR
+
+node examples/douyin/bdms-runner.js \
+  --config examples/douyin/creator-runtime-contract.json
+```
+
+The exported contract embeds the minimal observed Firefox environment and the
+session snapshot used by the local VM. The runner does not read the source
+trace after export. Refresh the contract when the Firefox environment or
+session changes. Local `a_bogus` generation uses:
+
+- BDMS `aid=2906`, `pageId=33638`, and the configured `paths.include` list;
+- the complete unsigned URL, including dynamic `msToken` and common query
+  fields;
+- the current browser environment, time, and random sequence.
+
+The POST body is replayed by the runner but is not a direct BDMS signing input:
+the browser trace shows `a_bogus` already present at `XMLHttpRequest.open`,
+before the body reaches `XMLHttpRequest.send`.

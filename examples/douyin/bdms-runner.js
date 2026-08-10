@@ -518,6 +518,12 @@ function findUnsignedTargetUrl() {
   throw new Error("No comment/list a_bogus request was found in request-fields.jsonl");
 }
 
+function runtimeRequestBody() {
+  const body = runtimeContract?.request?.body;
+  if (body === null || body === undefined || typeof body === "string") return body ?? null;
+  return JSON.stringify(body);
+}
+
 function summarizeValue(value) {
   if (value === null || value === undefined) return { type: String(value) };
   if (typeof value === "object") return { type: value.constructor?.name || "object" };
@@ -622,12 +628,24 @@ function main() {
 
     try {
       const unsignedUrl = findUnsignedTargetUrl();
+      const expectedPath = new URL(unsignedUrl).pathname;
+      const method = String(runtimeContract?.request?.method || "GET").toUpperCase();
+      const body = runtimeRequestBody();
       const request = new context.XMLHttpRequest();
-      request.open("GET", unsignedUrl, true);
-      request.send(null);
-      const finalRequest = xhrLog.findLast((entry) => entry.phase === "send" && entry.url.includes("/comment/list/"));
+      request.open(method, unsignedUrl, true);
+      for (const [name, value] of Object.entries(runtimeContract?.request?.headers || {})) {
+        request.setRequestHeader(name, value);
+      }
+      request.send(body);
+      const finalRequest = xhrLog.findLast((entry) => {
+        if (entry.phase !== "send" || !entry.url) return false;
+        return new URL(entry.url).pathname === expectedPath;
+      });
       const finalUrl = finalRequest?.url ? new URL(finalRequest.url) : null;
       result.replay = {
+        method,
+        request_body_kind: body === null ? "null" : typeof body,
+        request_body_bytes: body === null ? 0 : Buffer.byteLength(body),
         unsigned_url_has_a_bogus: new URL(unsignedUrl).searchParams.has("a_bogus"),
         sent_url_has_a_bogus: Boolean(finalUrl?.searchParams.has("a_bogus")),
         sent_a_bogus_length: finalUrl?.searchParams.get("a_bogus")?.length || 0,

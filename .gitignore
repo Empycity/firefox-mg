@@ -20,6 +20,7 @@
 /examples/**/.idea/
 /examples/**/.run-stats.json
 /examples/douyin/runtime-contract.json
+/examples/douyin/creator-runtime-contract.json
 
 # Local agent/editor/cache state.
 /.codex/
