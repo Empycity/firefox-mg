@@ -1,6 +1,8 @@
 # Browser Runtime
 
-The Agent-facing entrypoint is the bundled `tools/run-trace-firefox.sh`. It creates an isolated profile, writes `manifest.json` and `trace-control.json`, applies the selected plan, and starts the headed modified Firefox build.
+The Agent-facing entrypoint is the bundled `tools/run-trace-firefox.sh`. Run it in the normal OS process environment rather than a restricted child sandbox, with an explicit packaged Nightly `FIREFOX_BIN`, fresh `TRACE_DIR`/`PROFILE_DIR`, and `TRACE_HEADLESS=0`. It creates the isolated profile, writes `manifest.json` and `trace-control.json`, applies the selected plan, and starts the headed modified Firefox build. `Firefox Trace Console.app` is the UI entrypoint only when the desktop panel itself is requested.
+
+The modified browser is an analysis and validation dependency, not a final runtime dependency. Portable field generators and replay clients must run locally under their declared Node/Python environment without starting Firefox.
 
 Set the runtime explicitly when the skill is installed outside this repository:
 

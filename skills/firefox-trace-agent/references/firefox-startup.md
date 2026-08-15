@@ -5,7 +5,31 @@ launcher both create an isolated profile and pass the trace control file to
 the modified Firefox binary. Do not start a second Firefox manually for the
 same run.
 
-## Preferred UI path
+## Preferred Agent path
+
+For a known URL or verification task, start the browser directly through the
+project launcher. Run this command in the normal macOS process environment,
+not inside a restricted child sandbox:
+
+```bash
+cd /absolute/path/to/firefoxTrace
+TRACE_DIR="/private/tmp/firefox-trace-$(date +%Y%m%d-%H%M%S)" \
+PROFILE_DIR="/private/tmp/firefox-trace-profile-$$" \
+TRACE_HEADLESS=0 \
+FIREFOX_BIN="/Users/empycity/Desktop/Ai_MCP/firefox-trace-runtime/Nightly.app/Contents/MacOS/firefox" \
+FIREFOX_TRACE_PYTHON="/opt/miniconda3/envs/firefox-trace/bin/python" \
+tools/run-trace-firefox.sh \
+  --trace-preset manual \
+  --trace-start paused \
+  "TARGET_URL"
+```
+
+Successful startup means the launcher remains alive, `manifest.json` records
+the requested Nightly/profile/URL, and the headed `firefox` GUI process exists.
+The modified browser is used for Trace collection, environment repair and live
+validation. Final Node runners must not start or depend on Firefox.
+
+## Desktop UI path
 
 From the repository root:
 
@@ -42,9 +66,10 @@ reach `paused` or `recording` before touching the page. The first trace should
 use a fresh output directory and a temporary profile unless a session profile
 is part of the test.
 
-## Command-line equivalent
+## Full Trace command
 
-Use the packaged Nightly app executable, not `dist/bin/firefox`:
+Use the packaged Nightly app executable, not `dist/bin/firefox`. This is the
+same backend path used by the desktop console:
 
 ```bash
 cd /absolute/path/to/firefoxTrace

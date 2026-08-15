@@ -35,3 +35,19 @@ node examples/闪购/login_crypto_cli.js \
 ```bash
 node examples/闪购/test_login_crypto.js
 ```
+
+### 2. `metas.AsuraId`
+
+`asura_id.js` 在 Node 内运行 Trace 对齐的 AWSC/UAB vendor 脚本和 Firefox 环境合同。运行时不启动或连接浏览器，每次都使用新的时间、轨迹时序和轻微坐标偏移生成 `140#...` 值。
+
+```bash
+node examples/闪购/asura_id_cli.js
+```
+
+运行连续生成回归：
+
+```bash
+node examples/闪购/test_asura_id.js
+```
+
+实现使用 Node 内置模块，无 npm 依赖，支持 Node 22.14 的 macOS 和 Windows 环境。
