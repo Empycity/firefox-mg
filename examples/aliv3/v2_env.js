@@ -2070,7 +2070,7 @@ Array.prototype.join = function(separator = ', ') {
         // the two browser traces from this run.
         const zhiwParts = "W.10054#####MacIntel#Firefox#142.0#############24#DYNAMIC_SEED###########94433880daa9f55b02a5836769d31ee2##12##Mac OS#10.15#####DYNAMIC_IP#DYNAMIC_LOGS#true###1117*1728##0##################saf-captcha#0###DYNAMIC_R1#DYNAMIC_T1#DYNAMIC_R2#DYNAMIC_T2#desktop#false#DYNAMIC_CERTIFY#9d4568c009d203ab10e33ea9953a0264#########DYNAMIC_DEVICE_TS#MCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMxIzEjMCMwMTExMTEwMDExMTExMTExMTExMTExMTExMQ==#0#0#true##################-1################################".split('#');
         // Browser collection includes async feature probes; both traces are in the 2-3.2s range.
-        const elapsed = 2000 + Math.floor(Math.random() * 1200);
+        const elapsed = Math.max(1, Date.now() - nowMs);
         const stage = n => Math.max(1, Math.floor(elapsed * n));
         zhiwParts[21] = runtimeSeed;
         zhiwParts[42] = deviceConfig.ip;
