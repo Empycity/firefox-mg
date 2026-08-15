@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
@@ -13,6 +14,35 @@ const PLUGIN_NAMES = [
   "Microsoft Edge PDF Viewer",
   "WebKit built-in PDF",
 ];
+
+function randomUrlToken(length) {
+  let value = "";
+  while (value.length < length) value += crypto.randomBytes(32).toString("base64url");
+  return value.slice(0, length);
+}
+
+function materializeResourceNames(names, now) {
+  const navigationTime = now - 6500;
+  return names.map((name) => String(name)
+    .replace(/(%22navigationTime%22%3A)\d{13}/g, `$1${navigationTime}`)
+    .replace(/([?&](?:t|b)=)\d{13}/g, (_match, prefix) => `${prefix}${now}`)
+    .replace(/([?&]random=)\d+/g, (_match, prefix) => `${prefix}${secretsRandomDigits(16)}`)
+    .replace(/([?&](?:c|z)=)[0-9a-f]{64}/gi, (_match, prefix) =>
+      `${prefix}${crypto.randomBytes(32).toString("hex")}`
+    )
+    .replace(/([?&](?:token|cna|data)=)([^&#]+)/g, (_match, prefix, value) =>
+      `${prefix}${randomUrlToken(value.length)}`
+    )
+    .replace(/(a2f1q\.bx1425860\.cx289452\.)[0-9a-f]{32}/gi, (_match, prefix) =>
+      `${prefix}${crypto.randomBytes(16).toString("hex")}`
+    ));
+}
+
+function secretsRandomDigits(length) {
+  let value = "";
+  while (value.length < length) value += String(crypto.randomInt(0, 10));
+  return value;
+}
 
 function nativeFunction(name, implementation) {
   Object.defineProperty(implementation, "name", { value: name, configurable: true });
@@ -318,6 +348,7 @@ class AudioContextFixture {
     AudioContextFixture.created = (AudioContextFixture.created || 0) + 1;
     this.state = "suspended";
     this.baseLatency = 0;
+    this.sampleRate = 48000;
     this.destination = new AudioNodeFixture();
   }
 
@@ -487,10 +518,15 @@ function createAsuraEnvironment(options = {}) {
     : value;
   const fixtureDir = path.join(__dirname, "fixtures");
   const canvasDataUrl = fs.readFileSync(path.join(fixtureDir, "canvas-data-url.txt"), "utf8").trim();
-  const resourceNames = JSON.parse(fs.readFileSync(path.join(fixtureDir, "resource-names.json"), "utf8"));
+  const now = Date.now();
+  const resourceNames = materializeResourceNames(
+    JSON.parse(fs.readFileSync(path.join(fixtureDir, "resource-names.json"), "utf8")),
+    now
+  );
+  const timeOrigin = options.timeOrigin ?? now - 6500;
   const dimensions = {
-    screenLeft: options.screenLeft ?? 196,
-    screenTop: options.screenTop ?? 77,
+    screenLeft: options.screenLeft ?? 183,
+    screenTop: options.screenTop ?? 101,
     innerWidth: 1280,
     innerHeight: 891,
     outerWidth: 1280,
@@ -582,7 +618,14 @@ function createAsuraEnvironment(options = {}) {
     plugins,
     mimeTypes: [plugins[0][0], plugins[0][1]],
   });
-  const screen = observed("Screen", { width: 1728, height: 1117, availWidth: 1728, availHeight: 1084 });
+  const screen = observed("Screen", {
+    width: 1728,
+    height: 1117,
+    availWidth: 1728,
+    availHeight: 1084,
+    colorDepth: 30,
+    pixelDepth: 30,
+  });
   const location = observed("Location", {
     href: "https://melody.shop.ele.me/login",
     protocol: "https:",
@@ -595,7 +638,15 @@ function createAsuraEnvironment(options = {}) {
     toString() { return this.href; },
   });
   const performance = observed("Performance", {
-    timeOrigin: options.timeOrigin ?? Date.now() - 6500,
+    timeOrigin,
+    navigation: { redirectCount: 0 },
+    timing: {
+      navigationStart: timeOrigin,
+      connectStart: timeOrigin + 338,
+      connectEnd: timeOrigin + 338,
+      responseStart: timeOrigin + 339,
+      responseEnd: timeOrigin + 391,
+    },
     now: nativeFunction("now", () => Date.now() - performance.timeOrigin),
     getEntries: nativeFunction("getEntries", () =>
       resourceNames.map((name) => ({ name }))
@@ -640,9 +691,14 @@ function createAsuraEnvironment(options = {}) {
     innerHeight: dimensions.innerHeight,
     outerWidth: dimensions.outerWidth,
     outerHeight: dimensions.outerHeight,
+    devicePixelRatio: 2,
     AudioContext: AudioContextFixture,
     webkitAudioContext: AudioContextFixture,
     Image: ImageFixture,
+    getComputedStyle: nativeFunction("getComputedStyle", () => ({
+      length: 432,
+      getPropertyValue: nativeFunction("getPropertyValue", () => ""),
+    })),
     setTimeout,
     clearTimeout,
     setInterval: browserSetInterval,
@@ -716,6 +772,8 @@ function createAsuraEnvironment(options = {}) {
     const button = makeTarget("button", "", "cook-btn cook-btn-primary cook-btn-round cook-btn-lg cook-btn-block", [710, 459.2166748046875, 340, 40]);
     const auxiliary = {
       input: password,
+      username,
+      password,
       span: makeTarget("span", "", "cook-input-suffix", [998, 402, 24, 26]),
       form: makeTarget("form", "", "login-form", [710, 322, 340, 230]),
       div: makeTarget("div", "", "cook-form-item", [710, 450, 340, 70]),
@@ -749,23 +807,37 @@ function createAsuraEnvironment(options = {}) {
       await emit("mouseup", target, x, y);
       await emit("click", target, x, y);
     };
-    const keyups = async (target, count) => {
-      for (let index = 0; index < count; index += 1) await emit("keyup", target);
+    const keypresses = async (target, keys) => {
+      for (const key of keys) {
+        const upper = key.toUpperCase();
+        const code = /\d/.test(key) ? `Digit${key}` : `Key${upper}`;
+        const keyCode = upper.charCodeAt(0);
+        await emit("keydown", target, undefined, undefined, { key, code, keyCode, which: keyCode });
+        await emit("keyup", target, undefined, undefined);
+      }
     };
     const moves = async (points) => {
       for (const [x, y, targetName = "input"] of points) await emit("mousemove", auxiliary[targetName], x, y);
     };
 
-    await clickCycle(username, 793, 352);
-    await keyups(username, 10);
     await moves([
-      [793,353],[796,363],[798,366,"span"],[810,387,"form"],[815,393,"form"],
+      [720,48,"form"],[731,286,"form"],[736,317,"form"],[746,383,"form"],
+      [749,389,"form"],[751,398,"form"],[751,400,"form"],[770,404,"form"],
+      [774,405,"form"],[776,405,"form"],[779,387,"form"],[787,365,"form"],
+      [789,363,"username"],[791,361,"username"],[793,354,"username"],
+      [793,353,"username"],[793,353,"username"],[793,352,"username"],
+    ]);
+    await clickCycle(username, 793, 352);
+    await keypresses(username, "18765447821");
+    await moves([
+      [793,353,"username"],[796,363,"username"],[798,366,"span"],
+      [810,386.5,"form"],[810,387,"form"],[815,393,"form"],
       [817,396,"span"],[818,397,"span"],[818,399,"span"],[818,399,"span"],
       [818,400,"span"],[819,401,"span"],[819,402,"span"],[819,402,"span"],
-      [819,403],[819,405],[819,406],
+      [819,403,"password"],[819,405,"password"],[819,406,"password"],
     ]);
     await clickCycle(password, 819, 406, username);
-    await keyups(password, 5);
+    await keypresses(password, "143");
     await moves([
       [819,407],[819,409],[818,411],[817,412],[816,414],[815,416],[813,418],
       [805,430,"span"],[799,439,"form"],[764,470,"button"],[753,477,"button"],
@@ -775,7 +847,7 @@ function createAsuraEnvironment(options = {}) {
       [719,507,"div"],[718,509,"label"],[717,510,"label"],[717,511,"label"],
       [716,511],[716,512],[716,512],
     ]);
-    await keyups(password, 4);
+    await keypresses(password, "safqw");
     await clickCycle(privacy, 716, 512, password);
     await moves([
       [745,499,"button"],[773,487,"button"],[785,483,"button"],[804,473,"button"],

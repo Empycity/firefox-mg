@@ -101,10 +101,10 @@ async function createFields(options = {}, includeUmid = false) {
       throw new Error("AWSC configFY was not exported");
     }
     runScript(context, "fireyejs-1.231.13.js");
-    if (typeof sandbox.AWSC.configFYSyncEx !== "function") {
-      throw new Error("AWSC configFYSyncEx was not exported");
+    if (typeof sandbox.AWSC.configFYEx !== "function") {
+      throw new Error("AWSC configFYEx was not exported");
     }
-    fireEye = sandbox.AWSC.configFYSyncEx({ ...FIRE_EYE_CONFIG });
+    fireEye = sandbox.AWSC.configFYEx(undefined, { ...FIRE_EYE_CONFIG });
     fyPromise = new Promise((resolve) => {
       sandbox.AWSC.configFY(resolve, { appName: "eleme-napos-pc" });
     });
@@ -128,6 +128,14 @@ async function createFields(options = {}, includeUmid = false) {
   if (includeUmid && fyObject.uabModule !== module) {
     throw new Error("AWSC configFY and Napos did not share the UAB module");
   }
+  const fireEyeModule = includeUmid && fireEye && fireEye.fyObj;
+  const configBxUa = fireEyeModule && callWithFirefoxDescriptorGuard(
+    context,
+    () => fireEyeModule.getFYToken()
+  );
+  if (includeUmid && (typeof configBxUa !== "string" || !configBxUa.startsWith("231!"))) {
+    throw new Error("FireEye returned an invalid pre-interaction bxUa value");
+  }
   if (includeUmid) {
     await loadUmidCallbackScripts(sandbox, context, fetchImpl);
     sandbox.document.__setCurrentScript(null);
@@ -145,16 +153,16 @@ async function createFields(options = {}, includeUmid = false) {
   if (typeof fireUmid !== "string" || !/^T2gA[A-Za-z0-9_-]{63}=$/.test(fireUmid)) {
     throw new Error("WebUMID returned an invalid fireUmid value");
   }
-  const bxUmidToken = fireEye && fireEye.getUidToken();
+  const bxUmidToken = fireEyeModule && fireEyeModule.getUidToken();
   if (typeof bxUmidToken !== "string" || !/^T2gA[A-Za-z0-9_-]{63}=$/.test(bxUmidToken)) {
     const storedToken = sandbox.localStorage.getItem("lswucn");
     throw new Error(
       `FireEye returned an invalid bxUmidToken value (lswucn=${storedToken || "empty"})`
     );
   }
-  const bxUa = fireEye && callWithFirefoxDescriptorGuard(
+  const bxUa = fireEyeModule && callWithFirefoxDescriptorGuard(
     context,
-    () => fireEye.getFYToken()
+    () => fireEyeModule.getFYToken()
   );
   if (typeof bxUa !== "string" || !bxUa.startsWith("231!") || bxUa.length < 1000) {
     const fireEyeReport = Object.keys(sandbox)
@@ -167,7 +175,7 @@ async function createFields(options = {}, includeUmid = false) {
       `prefix=${typeof bxUa === "string" ? bxUa.slice(0, 24) : ""}, report=${fireEyeReport || "none"})`
     );
   }
-  return { asuraId, fireUa, fireUmid, bxUmidToken, bxUa };
+  return { asuraId, fireUa, fireUmid, bxUmidToken, bxUa, configBxUa };
 }
 
 async function createUabFields(options = {}) {

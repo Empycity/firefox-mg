@@ -76,6 +76,22 @@ part of the deliverable:
 If the native page passes but the client fails, report a transport/session gap,
 not an algorithm failure.
 
+### Transport fingerprint checkpoint
+
+Run this checkpoint before changing a producer or rebuilding Firefox. Keep the
+browser's user-agent and language headers, use one session for configuration and
+target calls, and make TLS/HTTP2 impersonation, fetch metadata, redirects, and
+connection reuse explicit. Compare the native-page baseline and client response
+at the application layer: status, JSON shape, business code/result, and redirect
+or punishment URL. A `200` response with a validation error is still a failed
+checkpoint. Change one transport/session variable per A/B run and retain the
+first response that reaches the application handler.
+
+If the native page accepts a fresh candidate while the client does not, label the
+gap `transport/session` and keep the producer unchanged. Enter byte-level field
+diff only after this checkpoint passes; a different dynamic-field length by
+itself is not evidence of an algorithm mismatch.
+
 ## 5. Session dependency minimization
 
 Start from a passing full-session client baseline. Test disjoint cookie/state

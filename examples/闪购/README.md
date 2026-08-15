@@ -117,3 +117,35 @@ node examples/闪购/test_bx_ua.js
 `bx-ua`、`bx-umidtoken` 与 body 字段应通过一次
 `createLoginSecurityFields()` 调用取得，避免拆成多次会话。最终 Node 运行时不启动或
 连接浏览器，且只使用 Node 内置模块，兼容 Node 22.14 的 macOS 和 Windows。
+
+## 一条龙接口验收
+
+`demo.py` 会在一次 Node 会话中生成全部五个风控字段，动态取登录公钥，
+用 RSA PKCS#1 v1.5 加密每次随机的测试手机号和密码，然后立即发起登录请求。
+最终以 HTTP 和业务响应为验收结果，不依赖浏览器。
+
+Python 请求使用 `curl_cffi` 的 Firefox TLS/HTTP2 指纹，并让
+`getLoginConfig` 与最终登录共用一个 Session。请求头的 `Accept-Language`
+与 Node 环境中的 Firefox `navigator.language` 保持为 `en-US,en;q=0.5`。
+普通 `requests` 的 TLS 指纹会在相同业务参数下触发 `FAIL_SYS_USER_VALIDATE`，
+因此它不属于本案例的可替换传输实现。
+
+```bash
+/opt/miniconda3/envs/Andriod-MG/bin/python examples/闪购/demo.py
+```
+
+Windows 上将 Node 22.14.0 加入 `PATH` 后直接运行：
+
+```powershell
+python -m pip install curl_cffi
+python examples/闪购/demo.py
+```
+
+默认每次生成随机测试账号。也可通过 `SHANGOU_USERNAME` 和 `SHANGOU_PASSWORD`
+传入指定值。`NODE_BINARY` 可用于指定 Node 22.14.0 可执行文件。
+`SHANGOU_IMPERSONATE` 默认是当前 `curl_cffi 0.9.0` 支持的 `firefox133`。
+
+本地生成值不要求和某一轮浏览器输出等长。已验收的本地运行中，`140#`
+约为 1250-1330 字符、最终 `231!` 约为 1810-1860 字符，仍能得到正常业务响应；
+浏览器值更长主要来自页面累计的资源和交互记录。有效性以接口进入
+`code=200` 且返回业务 `result` 为准，不以固定长度判断。

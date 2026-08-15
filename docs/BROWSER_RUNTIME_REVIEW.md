@@ -172,6 +172,13 @@ Worker/iframe/closure，或需要新的调用因果证据时，才创建下一�
 
 ## 浏览器改进方向
 
+本轮复盘新增一条通用发布门槛：字段生成、传输协议和浏览器 native/runtime
+分别验收。若浏览器页面用新鲜字段进入业务层，而独立客户端被校验页拦截，
+先检查 TLS/HTTP2 指纹、UA/语言、fetch 元数据、连接复用和 session；这类问题
+属于 runner transport，不触发 Firefox 重编译。只有 focused probe 明确指向
+XUL/WebIDL、descriptor/prototype/brand、原生指纹值、realm/async 行为或采集器
+丢失时，才建立最小 patch、headed startup smoke 和同一 request vector 回归。
+
 Worker 网络请求已纳入通用完整性门槛：Dedicated/Shared/Service Worker 缺少
 `page_url` 或当前 JS caller 时，使用持久化的 Worker 脚本 URL 判断内容上下文；XHR
 主线程代理从创建起保存 `worker_id/type/script_url/window_id`，因此

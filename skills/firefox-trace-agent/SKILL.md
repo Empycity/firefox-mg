@@ -216,6 +216,40 @@ Use the strongest available gate in this order:
 
 Do not treat HTTP 200 by itself as success. Require the endpoint's JSON/application success condition and expected non-empty business payload. A successful live validation is evidence that the generated field works in that current runtime; it does not retroactively turn an incomplete historical byte diff into an aligned vector.
 
+## Standalone transport gate
+
+Treat field generation and transport acceptance as separate gates. A locally
+generated value can be byte-correct while a standalone client is rejected before
+the application handler because its TLS/HTTP2 fingerprint, user-agent,
+`Accept-Language`, fetch metadata, connection reuse, or session state differs
+from the browser. Do not infer an algorithm defect from a generic validation or
+punishment response until the transport has been matched.
+
+For a client replay, keep `getLoginConfig` and the target request on one session,
+use the browser's observed UA and language, preserve method/body/header ordering
+where the protocol exposes it, and select a transport implementation whose TLS
+and HTTP/2 fingerprint can be stated explicitly. Establish a browser or full
+session baseline first, then change one transport variable at a time. Record the
+HTTP status, response schema, application code, business result, and any redirect
+or punishment URL. `HTTP 200` alone is not a pass.
+
+When a client fails but the same fresh field succeeds in the native page, classify
+the result as `transport/session gap`; continue with a fixed-vector header,
+cookie, body, and first-difference comparison. Only classify it as an algorithm
+gap after the transport gate passes.
+
+## Browser rebuild gate
+
+Do not rebuild Firefox merely because a standalone request failed or a generated
+string has a different length. Rebuild only when retained evidence names a
+browser/runtime defect: a missing or wrong WebIDL member, descriptor/prototype or
+brand mismatch, incorrect native fingerprint value, broken realm/async behavior,
+or a Trace collector loss that prevents proving the producer chain. Before a
+rebuild, capture a focused probe and a retained request vector; after the rebuild,
+run the same probe and vector plus a headed startup smoke. Transport-only fixes
+belong in the portable Node/Python runner and must leave the browser binary
+unchanged.
+
 ## Environment vs pure calculation
 
 Use this split:
