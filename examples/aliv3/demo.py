@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from loguru import logger
 from Crypto.Cipher import AES
 import subprocess
-import os
 import numpy as np
 from pathlib import Path
 from curl_cffi import requests
@@ -19,9 +18,7 @@ from track import generate_trajectory
 from captcha_recognizer.recognizer import Recognizer
 import threading
 
-BASE_DIR = Path(__file__).resolve().parent
 feilin_lock = threading.Lock()
-recognizer_lock = threading.Lock()
 recognizer = Recognizer()
 staticPath_key = {
             "3.23.0/sg.050.8d97ad83a8636f23": "6dayfg2n4o2z0je4",
@@ -204,40 +201,20 @@ class Yuekeyun:
         self.sess = requests.Session(impersonate='chrome131')
         self.sess.headers.update(self.headers)
         self.feilinText = ''
-        self.image_path = BASE_DIR / f'.captcha-{uuid.uuid4().hex}.png'
 
         if proxies:
             self.sess.proxies = proxies
 
     def run_feilin(self):
-        node_script_path = str(BASE_DIR / "v2_env.js")
+        node_script_path = r"v2_env.js"
         feilin_context = {**self.devices, "certifyId": self.certifyId or ""}
-        node_bin = os.environ.get(
-            "ALIV3_NODE",
-            str(Path.home() / ".nvm/versions/node/v22.14.0/bin/node"),
-        )
-        command = [node_bin, node_script_path, json.dumps(feilin_context, separators=(',', ':'))]
-        node_env = os.environ.copy()
-        node_modules = os.environ.get(
-            "ALIV3_NODE_MODULES",
-            str(Path.home() / "Desktop/Andriod-MG/node_modules"),
-        )
-        node_env["NODE_PATH"] = os.pathsep.join(
-            value for value in (node_modules, node_env.get("NODE_PATH")) if value
-        )
+        command = ["node", node_script_path, json.dumps(feilin_context, separators=(',', ':'))]
 
         # 强制加锁：同一时刻只允许一个线程执行 subprocess
         with feilin_lock:
             try:
                 # 加上 timeout 防止某个进程卡死导致全部线程死锁
-                result = subprocess.check_output(
-                    command,
-                    text=True,
-                    encoding='utf-8',
-                    timeout=10,
-                    env=node_env,
-                    cwd=BASE_DIR,
-                ).strip()
+                result = subprocess.check_output(command, text=True, encoding='utf-8', timeout=10).strip()
                 marker = '__FEILIN_RESULT__'
                 if marker in result:
                     collected = json.loads(result.rsplit(marker, 1)[1])
@@ -252,16 +229,10 @@ class Yuekeyun:
                 print(f"执行 JS 失败: {e}")
                 return None
 
-    def slide_verify(self):
-        with recognizer_lock:
-            box, confidence = recognizer.identify_gap(source=str(self.image_path),
-                                                      verbose=False)
-        try:
-            self.image_path.unlink()
-        except FileNotFoundError:
-            pass
-        if not box:
-            raise ValueError('captcha recognizer returned no gap')
+    @staticmethod
+    def slide_verify():
+        box, confidence = recognizer.identify_gap(source=r'./Image.png',
+                                                    verbose=False)
         mouse_x = box[0]
         return int(mouse_x)
 
@@ -427,21 +398,10 @@ class Yuekeyun:
         }
         # logger.success(f'设备配置信息：{devices}')
         self.devices = devices
-        feilin_path = BASE_DIR / 'feilin.js'
-        expected_sha = deviceConfigInfo[3].rsplit('.', 1)[-1]
-        cached = False
-        if feilin_path.exists():
-            cached = hashlib.sha256(feilin_path.read_bytes()).hexdigest() == expected_sha
-        if not cached:
-            with feilin_lock:
-                if not feilin_path.exists() or hashlib.sha256(feilin_path.read_bytes()).hexdigest() != expected_sha:
-                    response = self.sess.get(
-                        url='https://g.alicdn.com/captcha-frontend/FeiLin/' + deviceConfigInfo[3] + '.js')
-                    response.raise_for_status()
-                    temp_path = feilin_path.with_suffix('.js.tmp')
-                    temp_path.write_text(response.text, encoding='utf-8')
-                    temp_path.replace(feilin_path)
-        self.feilinText = feilin_path.read_text(encoding='utf-8')
+        self.feilinText = self.sess.get(
+            url='https://g.alicdn.com/captcha-frontend/FeiLin/' + deviceConfigInfo[3] + '.js').text
+        with open('./feilin.js', 'w', encoding='utf-8') as f:
+            f.write(self.feilinText)
 
     def aliyuncs_CaptchaType_CertifyId(self):
 
@@ -484,7 +444,7 @@ class Yuekeyun:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf254186b) XWEB/11275"
             }
             Image_  = requests.get(Image,headers = headers).content
-            with open(self.image_path,'wb') as f:
+            with open('./Image.png','wb') as f:
                 f.write(Image_)
             # PuzzleImage_ = requests.get(PuzzleImage,headers = headers).content
 
@@ -527,10 +487,14 @@ class Yuekeyun:
             # 'Signature': 'fql2Sx9UOXnlKH2z6UoCgkxm8vs=',
         }
 
-        # return data['CaptchaVerifyParam']
-        # VerifyCaptchaV3 is intentionally not sent here. The caller only
-        # needs the browser-produced CaptchaVerifyParam payload.
         return data['CaptchaVerifyParam']
+        # data['Signature'] = self.get_Signature(data,key='YSKfst7GaVkXwZYvVihJsKF9r89koz')
+        # response = requests.post('https://1oa2ns.captcha-open.aliyuncs.com/', data=data)
+        # # logger.success(f'问卷星阿里VerifyCaptchaV3接口：{response.json()}')
+        # if response.json()['Result']['VerifyCode'] == 'T001':
+        #     logger.success(f'阿里VerifyCaptchaV3接口验证成功：{response.json()}')
+        # else:
+        #     logger.error(f'阿里VerifyCaptchaV3接口验证失败：{response.json()}')
 
 
     def aliyuncs_log2(self):

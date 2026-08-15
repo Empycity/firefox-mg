@@ -2003,17 +2003,14 @@ const randomText = length => nodeCrypto.randomBytes(length * 2).toString('base64
 const nowMs = Date.now();
 const initMs = Number(deviceConfig.timestamp);
 const scriptUrl = `https://g.alicdn.com/captcha-frontend/FeiLin/${deviceConfig.version}.js`;
-const runtimeSeed = nodeCrypto.randomBytes(8).toString('base64');
-const runtimeRandom1 = randomText(40);
-const runtimeRandom2 = randomText(42);
-window._ORDVD_huanj.v78d98s = runtimeSeed;
+window._ORDVD_huanj.v78d98s = nodeCrypto.randomBytes(8).toString('base64');
 window._ORDVD_huanj.ifghjgfhjp = deviceConfig.ip;
 window._ORDVD_huanj.nghjdfgsh = '';
 window._ORDVD_huanj.dfghfgdh6 = nodeCrypto.randomBytes(25).toString('hex');
 window._ORDVD_huanj.gfhjfgh567 = Math.floor(Math.random() * 100);
-window._ORDVD_huanj.gfdc6456 = runtimeRandom1;
+window._ORDVD_huanj.gfdc6456 = randomText(40);
 window._ORDVD_huanj.hgvh4435 = nowMs;
-window._ORDVD_huanj.gdffd98u9 = runtimeRandom2;
+window._ORDVD_huanj.gdffd98u9 = randomText(42);
 window._ORDVD_huanj.cxvcx324 = nowMs;
 window._ORDVD_huanj.vcxb45 = deviceConfig.certifyId || '';
 window._ORDVD_huanj.v8w7102 = String(deviceConfig.timestamp);
@@ -2069,15 +2066,14 @@ Array.prototype.join = function(separator = ', ') {
         // the stable Firefox projection and fill fields that changed between
         // the two browser traces from this run.
         const zhiwParts = "W.10054#####MacIntel#Firefox#142.0#############24#DYNAMIC_SEED###########94433880daa9f55b02a5836769d31ee2##12##Mac OS#10.15#####DYNAMIC_IP#DYNAMIC_LOGS#true###1117*1728##0##################saf-captcha#0###DYNAMIC_R1#DYNAMIC_T1#DYNAMIC_R2#DYNAMIC_T2#desktop#false#DYNAMIC_CERTIFY#9d4568c009d203ab10e33ea9953a0264#########DYNAMIC_DEVICE_TS#MCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMxIzEjMCMwMTExMTEwMDExMTExMTExMTExMTExMTExMQ==#0#0#true##################-1################################".split('#');
-        // Browser collection includes async feature probes; both traces are in the 2-3.2s range.
         const elapsed = Math.max(1, Date.now() - nowMs);
         const stage = n => Math.max(1, Math.floor(elapsed * n));
-        zhiwParts[21] = runtimeSeed;
+        zhiwParts[21] = result['v78d98s'];
         zhiwParts[42] = deviceConfig.ip;
         zhiwParts[43] = `20-${stage(.22)}|23-${stage(.76)}|30-2|40-${stage(.02)}|41-${stage(.73)}|70-${stage(.74)}|71-${stage(.9)}|80-${stage(.9)}|81-${stage(.93)}|93-${stage(2.4)}|94-${stage(2.45)}`;
-        zhiwParts[71] = runtimeRandom1;
+        zhiwParts[71] = result['gfdc6456'];
         zhiwParts[72] = String(result['hgvh4435']);
-        zhiwParts[73] = runtimeRandom2;
+        zhiwParts[73] = result['gdffd98u9'];
         zhiwParts[74] = String(nowMs + elapsed);
         zhiwParts[77] = deviceConfig.certifyId || result['vcxb45'] || '';
         zhiwParts[87] = String(deviceConfig.timestamp);
