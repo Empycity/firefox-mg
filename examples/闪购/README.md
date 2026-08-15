@@ -30,24 +30,12 @@ node examples/闪购/login_crypto_cli.js \
   '{"publicKey":"PUBLIC_KEY_BASE64","username":"USERNAME","password":"PASSWORD"}'
 ```
 
-运行回归：
-
-```bash
-node examples/闪购/test_login_crypto.js
-```
-
 ### 2. `metas.AsuraId`
 
 `asura_id.js` 在 Node 内运行 Trace 对齐的 AWSC/UAB vendor 脚本和 Firefox 环境合同。运行时不启动或连接浏览器，每次都使用新的时间、轨迹时序和轻微坐标偏移生成 `140#...` 值。
 
 ```bash
 node examples/闪购/asura_id_cli.js
-```
-
-运行连续生成回归：
-
-```bash
-node examples/闪购/test_asura_id.js
 ```
 
 实现使用 Node 内置模块，无 npm 依赖，支持 Node 22.14 的 macOS 和 Windows 环境。
@@ -62,11 +50,10 @@ const { createUabFields } = require("./asura_id");
 const { asuraId, fireUa } = await createUabFields();
 ```
 
-单字段 CLI 和成对回归：
+单字段 CLI：
 
 ```bash
 node examples/闪购/fire_ua_cli.js
-node examples/闪购/test_uab_fields.js
 ```
 
 ### 4. `metas.fire_umid`
@@ -84,7 +71,6 @@ Node 运行时会直接请求 `https://ynuf.aliapp.org/service/um.json`，不启
 
 ```bash
 node examples/闪购/fire_umid_cli.js
-node examples/闪购/test_login_security_fields.js
 ```
 
 ### 5. Header `bx-umidtoken`
@@ -96,7 +82,6 @@ FireEye 1.231.13 的原始 `getUidToken()` 去掉时间后缀并返回 68 字节
 
 ```bash
 node examples/闪购/bx_umidtoken_cli.js
-node examples/闪购/test_bx_umidtoken.js
 ```
 
 Node 会直接加载 `/w/wu.json` 的原始回调脚本，与 WebUMID/FireEye 共享当前内存
@@ -111,7 +96,6 @@ typed vector、GPU 字符串和 shader precision 均来自 Firefox Trace 的实�
 
 ```bash
 node examples/闪购/bx_ua_cli.js
-node examples/闪购/test_bx_ua.js
 ```
 
 `bx-ua`、`bx-umidtoken` 与 body 字段应通过一次
