@@ -30,7 +30,7 @@ function callGetUA(context, module) {
   }
 }
 
-async function createAsuraId(options = {}) {
+async function createUabFields(options = {}) {
   const sandbox = createAsuraEnvironment(options);
   const context = vm.createContext(sandbox);
   runScript(context, "awsc-napos-puzzle-0.0.4.js");
@@ -51,11 +51,22 @@ async function createAsuraId(options = {}) {
   sandbox.document.__setCurrentScript(null);
   await sandbox.__emitTraceInput();
   const module = await modulePromise;
-  const value = callGetUA(context, module);
-  if (typeof value !== "string" || !value.startsWith("140#")) {
-    throw new Error("UAB getUA returned an invalid value");
+  const asuraId = callGetUA(context, module);
+  const fireUa = callGetUA(context, module);
+  for (const [name, value] of Object.entries({ asuraId, fireUa })) {
+    if (typeof value !== "string" || !value.startsWith("140#")) {
+      throw new Error(`UAB getUA returned an invalid ${name} value`);
+    }
   }
-  return value;
+  return { asuraId, fireUa };
 }
 
-module.exports = { createAsuraId };
+async function createAsuraId(options = {}) {
+  return (await createUabFields(options)).asuraId;
+}
+
+async function createFireUa(options = {}) {
+  return (await createUabFields(options)).fireUa;
+}
+
+module.exports = { createAsuraId, createFireUa, createUabFields };

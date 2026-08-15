@@ -51,3 +51,20 @@ node examples/闪购/test_asura_id.js
 ```
 
 实现使用 Node 内置模块，无 npm 依赖，支持 Node 22.14 的 macOS 和 Windows 环境。
+
+### 3. `metas.fire_ua`
+
+Trace 中 `AsuraId` 和 `fire_ua` 由同一个 collina 1.140.0 模块实例按顺序生成。请求组装时应调用 `createUabFields()` 一次取得同一环境和行为轨迹下的两个值：
+
+```js
+const { createUabFields } = require("./asura_id");
+
+const { asuraId, fireUa } = await createUabFields();
+```
+
+单字段 CLI 和成对回归：
+
+```bash
+node examples/闪购/fire_ua_cli.js
+node examples/闪购/test_uab_fields.js
+```
