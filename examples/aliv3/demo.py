@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from loguru import logger
 from Crypto.Cipher import AES
 import subprocess
+import os
 import numpy as np
 from pathlib import Path
 from curl_cffi import requests
@@ -208,13 +209,31 @@ class Yuekeyun:
     def run_feilin(self):
         node_script_path = r"v2_env.js"
         feilin_context = {**self.devices, "certifyId": self.certifyId or ""}
-        command = ["node", node_script_path, json.dumps(feilin_context, separators=(',', ':'))]
+        node_bin = os.environ.get(
+            "ALIV3_NODE",
+            str(Path.home() / ".nvm/versions/node/v22.14.0/bin/node"),
+        )
+        command = [node_bin, node_script_path, json.dumps(feilin_context, separators=(',', ':'))]
+        node_env = os.environ.copy()
+        node_modules = os.environ.get(
+            "ALIV3_NODE_MODULES",
+            str(Path.home() / "Desktop/Andriod-MG/node_modules"),
+        )
+        node_env["NODE_PATH"] = os.pathsep.join(
+            value for value in (node_modules, node_env.get("NODE_PATH")) if value
+        )
 
         # 强制加锁：同一时刻只允许一个线程执行 subprocess
         with feilin_lock:
             try:
                 # 加上 timeout 防止某个进程卡死导致全部线程死锁
-                result = subprocess.check_output(command, text=True, encoding='utf-8', timeout=10).strip()
+                result = subprocess.check_output(
+                    command,
+                    text=True,
+                    encoding='utf-8',
+                    timeout=10,
+                    env=node_env,
+                ).strip()
                 marker = '__FEILIN_RESULT__'
                 if marker in result:
                     collected = json.loads(result.rsplit(marker, 1)[1])
@@ -487,14 +506,14 @@ class Yuekeyun:
             # 'Signature': 'fql2Sx9UOXnlKH2z6UoCgkxm8vs=',
         }
 
-        return data['CaptchaVerifyParam']
-        # data['Signature'] = self.get_Signature(data,key='YSKfst7GaVkXwZYvVihJsKF9r89koz')
-        # response = requests.post('https://1oa2ns.captcha-open.aliyuncs.com/', data=data)
-        # # logger.success(f'问卷星阿里VerifyCaptchaV3接口：{response.json()}')
-        # if response.json()['Result']['VerifyCode'] == 'T001':
-        #     logger.success(f'阿里VerifyCaptchaV3接口验证成功：{response.json()}')
-        # else:
-        #     logger.error(f'阿里VerifyCaptchaV3接口验证失败：{response.json()}')
+        # return data['CaptchaVerifyParam']
+        data['Signature'] = self.get_Signature(data,key='YSKfst7GaVkXwZYvVihJsKF9r89koz')
+        response = requests.post('https://1oa2ns.captcha-open.aliyuncs.com/', data=data)
+        # logger.success(f'问卷星阿里VerifyCaptchaV3接口：{response.json()}')
+        if response.json()['Result']['VerifyCode'] == 'T001':
+            logger.success(f'阿里VerifyCaptchaV3接口验证成功：{response.json()}')
+        else:
+            logger.error(f'阿里VerifyCaptchaV3接口验证失败：{response.json()}')
 
 
     def aliyuncs_log2(self):
