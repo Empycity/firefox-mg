@@ -121,7 +121,7 @@ Python 请求使用 `curl_cffi` 的 Firefox TLS/HTTP2 指纹，并让
 Windows 上将 Node 22.14.0 加入 `PATH` 后直接运行：
 
 ```powershell
-python -m pip install curl_cffi
+python -m pip install curl_cffi loguru
 python examples/闪购/demo.py
 ```
 
@@ -134,6 +134,9 @@ python examples/闪购/demo.py
 ```bash
 python examples/闪购/demo.py -user=USERNAME -pwd=PASSWORD
 ```
+
+运行时通过 `loguru` 输出完整的明文输入、风控字段、加密参数、请求头、请求体和
+接口响应，长字段保持原值，不做 preview 截断。
 
 本地生成值不要求和某一轮浏览器输出等长。已验收的本地运行中，`140#`
 约为 1250-1330 字符、最终 `231!` 约为 1810-1860 字符，仍能得到正常业务响应；

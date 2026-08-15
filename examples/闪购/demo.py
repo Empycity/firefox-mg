@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from curl_cffi import requests
+from loguru import logger
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -27,6 +28,27 @@ USER_AGENT = (
     "Gecko/20100101 Firefox/142.0"
 )
 IMPERSONATE = os.environ.get("SHANGOU_IMPERSONATE", "firefox133")
+
+
+def configure_logger():
+    logger.remove()
+    logger.add(
+        sys.stdout,
+        level="DEBUG",
+        colorize=sys.stdout.isatty(),
+        backtrace=False,
+        diagnose=False,
+        format=(
+            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+            "<level>{level: <8}</level> | "
+            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+            "<level>{message}</level>"
+        ),
+    )
+
+
+def json_text(value):
+    return json.dumps(value, ensure_ascii=False, indent=2)
 
 
 def find_node():
@@ -137,6 +159,7 @@ def parse_args():
 
 
 def main():
+    configure_logger()
     args = parse_args()
     node, node_version = find_node()
     username = args.username or os.environ.get("SHANGOU_USERNAME")
@@ -144,26 +167,36 @@ def main():
     if not username or not password:
         username, password = random_credentials()
 
-    print(
-        "[1/4] Node: {} ({}) transport=curl_cffi/{}".format(
-            node, node_version, IMPERSONATE
-        )
+    logger.info(
+        "Node={} version={} transport=curl_cffi/{}",
+        node,
+        node_version,
+        IMPERSONATE,
     )
+    logger.info("登录明文参数 username={} password={}", username, password)
+
     fields = run_node_json(node, "login_security_fields_cli.js")
-    print(
-        "[2/4] security lengths: AsuraId={} fire_ua={} fire_umid={} "
-        "bx-umidtoken={} config-bx-ua={} bx-ua={}".format(
-            len(fields["asuraId"]),
-            len(fields["fireUa"]),
-            len(fields["fireUmid"]),
-            len(fields["bxUmidToken"]),
-            len(fields["configBxUa"]),
-            len(fields["bxUa"]),
-        )
+    logger.info("完整风控参数:\n{}", json_text(fields))
+    logger.info(
+        "风控参数长度 AsuraId={} fire_ua={} fire_umid={} bx-umidtoken={} "
+        "config-bx-ua={} bx-ua={}",
+        len(fields["asuraId"]),
+        len(fields["fireUa"]),
+        len(fields["fireUmid"]),
+        len(fields["bxUmidToken"]),
+        len(fields["configBxUa"]),
+        len(fields["bxUa"]),
     )
 
     config_headers = make_headers(fields, config_phase=True)
+    logger.info("配置接口 URL={}", CONFIG_URL)
+    logger.info("配置接口完整请求头:\n{}", json_text(config_headers))
     config_response, config_body = post_json(CONFIG_URL, config_headers)
+    logger.info(
+        "配置接口完整响应 HTTP={} body=\n{}",
+        config_response.status_code,
+        json_text(config_body),
+    )
     public_key = (config_body.get("result") or {}).get("publicKey")
     if config_response.status_code != 200 or not public_key:
         raise RuntimeError(
@@ -172,13 +205,14 @@ def main():
                 json.dumps(config_body, ensure_ascii=False),
             )
         )
-    print("[3/4] login public key: {} bytes".format(len(public_key)))
+    logger.info("登录公钥 length={} value={}", len(public_key), public_key)
 
     encrypted = run_node_json(
         node,
         "login_crypto_cli.js",
         {"publicKey": public_key, "username": username, "password": password},
     )
+    logger.info("完整加密结果:\n{}", json_text(encrypted))
     payload = {
         "metas": {
             "shopId": None,
@@ -196,10 +230,20 @@ def main():
         },
     }
     login_headers = make_headers(fields)
+    logger.info("登录接口 URL={}", LOGIN_URL)
+    logger.info("登录接口完整请求头:\n{}", json_text(login_headers))
+    logger.info("登录接口完整请求体:\n{}", json_text(payload))
     login_response, login_body = post_json(LOGIN_URL, login_headers, payload)
-    print("[4/4] test username={} password={}".format(username, password))
-    print("HTTP {}".format(login_response.status_code))
-    print(json.dumps(login_body, ensure_ascii=False, indent=2))
+    response_logger = (
+        logger.success
+        if login_response.status_code == 200 and login_body.get("code") == 200
+        else logger.error
+    )
+    response_logger(
+        "登录接口完整响应 HTTP={} body=\n{}",
+        login_response.status_code,
+        json_text(login_body),
+    )
 
     if login_response.status_code != 200 or login_body.get("code") != 200:
         return 1
@@ -212,5 +256,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:
-        print("ERROR: {}".format(exc), file=sys.stderr)
+        logger.exception("执行失败: {}", exc)
         sys.exit(1)
