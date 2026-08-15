@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from loguru import logger
 from Crypto.Cipher import AES
 import subprocess
+import os
 import numpy as np
 from pathlib import Path
 from curl_cffi import requests
@@ -18,6 +19,7 @@ from track import generate_trajectory
 from captcha_recognizer.recognizer import Recognizer
 import threading
 
+BASE_DIR = Path(__file__).resolve().parent
 feilin_lock = threading.Lock()
 recognizer = Recognizer()
 staticPath_key = {
@@ -206,15 +208,34 @@ class Yuekeyun:
             self.sess.proxies = proxies
 
     def run_feilin(self):
-        node_script_path = r"v2_env.js"
+        node_script_path = str(BASE_DIR / "v2_env.js")
         feilin_context = {**self.devices, "certifyId": self.certifyId or ""}
-        command = ["node", node_script_path, json.dumps(feilin_context, separators=(',', ':'))]
+        node_bin = os.environ.get(
+            "ALIV3_NODE",
+            str(Path.home() / ".nvm/versions/node/v22.14.0/bin/node"),
+        )
+        command = [node_bin, node_script_path, json.dumps(feilin_context, separators=(',', ':'))]
+        node_env = os.environ.copy()
+        node_modules = os.environ.get(
+            "ALIV3_NODE_MODULES",
+            str(Path.home() / "Desktop/Andriod-MG/node_modules"),
+        )
+        node_env["NODE_PATH"] = os.pathsep.join(
+            value for value in (node_modules, node_env.get("NODE_PATH")) if value
+        )
 
         # 强制加锁：同一时刻只允许一个线程执行 subprocess
         with feilin_lock:
             try:
                 # 加上 timeout 防止某个进程卡死导致全部线程死锁
-                result = subprocess.check_output(command, text=True, encoding='utf-8', timeout=10).strip()
+                result = subprocess.check_output(
+                    command,
+                    text=True,
+                    encoding='utf-8',
+                    timeout=10,
+                    env=node_env,
+                    cwd=BASE_DIR,
+                ).strip()
                 marker = '__FEILIN_RESULT__'
                 if marker in result:
                     collected = json.loads(result.rsplit(marker, 1)[1])
@@ -231,7 +252,7 @@ class Yuekeyun:
 
     @staticmethod
     def slide_verify():
-        box, confidence = recognizer.identify_gap(source=r'./Image.png',
+        box, confidence = recognizer.identify_gap(source=str(BASE_DIR / 'Image.png'),
                                                     verbose=False)
         mouse_x = box[0]
         return int(mouse_x)
@@ -400,7 +421,7 @@ class Yuekeyun:
         self.devices = devices
         self.feilinText = self.sess.get(
             url='https://g.alicdn.com/captcha-frontend/FeiLin/' + deviceConfigInfo[3] + '.js').text
-        with open('./feilin.js', 'w', encoding='utf-8') as f:
+        with open(BASE_DIR / 'feilin.js', 'w', encoding='utf-8') as f:
             f.write(self.feilinText)
 
     def aliyuncs_CaptchaType_CertifyId(self):
@@ -444,7 +465,7 @@ class Yuekeyun:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf254186b) XWEB/11275"
             }
             Image_  = requests.get(Image,headers = headers).content
-            with open('./Image.png','wb') as f:
+            with open(BASE_DIR / 'Image.png','wb') as f:
                 f.write(Image_)
             # PuzzleImage_ = requests.get(PuzzleImage,headers = headers).content
 
