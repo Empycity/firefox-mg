@@ -528,13 +528,9 @@ class Yuekeyun:
         }
 
         # return data['CaptchaVerifyParam']
-        # data['Signature'] = self.get_Signature(data,key='YSKfst7GaVkXwZYvVihJsKF9r89koz')
-        response = requests.post('https://1oa2ns.captcha-open.aliyuncs.com/', data=data)
-        logger.success(f'问卷星阿里VerifyCaptchaV3接口：{response.json()}')
-        if response.json()['Result']['VerifyCode'] == 'T001':
-            logger.success(f'阿里VerifyCaptchaV3接口验证成功：{response.json()}')
-        else:
-            logger.error(f'阿里VerifyCaptchaV3接口验证失败：{response.json()}')
+        # VerifyCaptchaV3 is intentionally not sent here. The caller only
+        # needs the browser-produced CaptchaVerifyParam payload.
+        return data['CaptchaVerifyParam']
 
 
     def aliyuncs_log2(self):
