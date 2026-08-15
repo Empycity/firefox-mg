@@ -6,6 +6,16 @@ const vm = require("vm");
 const { createAsuraEnvironment } = require("./asura_env");
 
 const VENDOR_DIR = path.join(__dirname, "vendor");
+const FIRE_EYE_CONFIG = Object.freeze({
+  timeout: 100,
+  noProxy: false,
+  MaxMTLog: 20,
+  MaxNGPLog: 10,
+  MaxKS: 5,
+  MaxFocusLog: 3,
+  location: "cn",
+});
+const UMID_SCRIPT_PATTERN = /^https:\/\/ynuf\.aliapp\.org\/w\/wu\.json(?:[?#]|$)/;
 
 function runScript(context, filename) {
   const source = fs.readFileSync(path.join(VENDOR_DIR, filename), "utf8");
@@ -38,9 +48,41 @@ function findDynamicScript(sandbox, pattern, description) {
   return script;
 }
 
+async function loadUmidCallbackScripts(sandbox, context, fetchImpl) {
+  const loadedScripts = new Set();
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const scripts = sandbox.document
+      .getElementsByTagName("script")
+      .filter((entry) => UMID_SCRIPT_PATTERN.test(entry.src || ""));
+    const pending = scripts.filter((entry) => !loadedScripts.has(entry));
+    for (const script of pending) {
+      const response = await fetchImpl(script.src, {
+        headers: {
+          Accept: "*/*",
+          "Accept-Language": "en-US,en;q=0.5",
+          Referer: "https://melody.shop.ele.me/",
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`WebUMID callback script returned HTTP ${response.status}`);
+      }
+      const source = await response.text();
+      if (!source.includes("umx.wu") && !source.includes("__fycb")) {
+        throw new Error("WebUMID callback script had an unexpected response");
+      }
+      sandbox.document.__setCurrentScript(script);
+      vm.runInContext(source, context, { filename: script.src, timeout: 10000 });
+      loadedScripts.add(script);
+    }
+    if (sandbox.localStorage.getItem("lswucn")) return;
+  }
+}
+
 async function createFields(options = {}, includeUmid = false) {
   const sandbox = createAsuraEnvironment(options);
   const context = vm.createContext(sandbox);
+  const fetchImpl = options.fetch || globalThis.fetch;
   runScript(context, "awsc-napos-puzzle-0.0.4.js");
 
   const bridge = sandbox.__napos_awsc_uab__;
@@ -49,10 +91,16 @@ async function createFields(options = {}, includeUmid = false) {
   }
   const modulePromise = bridge.getUabModule();
   let fyPromise = null;
+  let fireEye = null;
   if (includeUmid) {
     if (!sandbox.AWSC || typeof sandbox.AWSC.configFY !== "function") {
       throw new Error("AWSC configFY was not exported");
     }
+    runScript(context, "fireyejs-1.231.13.js");
+    if (typeof sandbox.AWSC.configFYSyncEx !== "function") {
+      throw new Error("AWSC configFYSyncEx was not exported");
+    }
+    fireEye = sandbox.AWSC.configFYSyncEx({ ...FIRE_EYE_CONFIG });
     fyPromise = new Promise((resolve) => {
       sandbox.AWSC.configFY(resolve, { appName: "eleme-napos-pc" });
     });
@@ -76,6 +124,10 @@ async function createFields(options = {}, includeUmid = false) {
   if (includeUmid && fyObject.uabModule !== module) {
     throw new Error("AWSC configFY and Napos did not share the UAB module");
   }
+  if (includeUmid) {
+    await loadUmidCallbackScripts(sandbox, context, fetchImpl);
+    sandbox.document.__setCurrentScript(null);
+  }
   await sandbox.__emitTraceInput();
   const asuraId = callGetUA(context, module);
   const fireUa = callGetUA(context, module);
@@ -89,7 +141,14 @@ async function createFields(options = {}, includeUmid = false) {
   if (typeof fireUmid !== "string" || !/^T2gA[A-Za-z0-9_-]{63}=$/.test(fireUmid)) {
     throw new Error("WebUMID returned an invalid fireUmid value");
   }
-  return { asuraId, fireUa, fireUmid };
+  const bxUmidToken = fireEye && fireEye.getUidToken();
+  if (typeof bxUmidToken !== "string" || !/^T2gA[A-Za-z0-9_-]{63}=$/.test(bxUmidToken)) {
+    const storedToken = sandbox.localStorage.getItem("lswucn");
+    throw new Error(
+      `FireEye returned an invalid bxUmidToken value (lswucn=${storedToken || "empty"})`
+    );
+  }
+  return { asuraId, fireUa, fireUmid, bxUmidToken };
 }
 
 async function createUabFields(options = {}) {
@@ -112,10 +171,15 @@ async function createFireUmid(options = {}) {
   return (await createLoginSecurityFields(options)).fireUmid;
 }
 
+async function createBxUmidToken(options = {}) {
+  return (await createLoginSecurityFields(options)).bxUmidToken;
+}
+
 module.exports = {
   createAsuraId,
   createFireUa,
   createFireUmid,
+  createBxUmidToken,
   createUabFields,
   createLoginSecurityFields,
 };

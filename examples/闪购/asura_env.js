@@ -163,6 +163,7 @@ function makeCanvas(dimensions, canvasDataUrl) {
     fillText: nativeFunction("fillText", () => undefined),
   };
   const webgl = {
+    getSupportedExtensions: nativeFunction("getSupportedExtensions", () => []),
     getExtension: nativeFunction("getExtension", (name) =>
       name === "WEBGL_debug_renderer_info"
         ? { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 }
@@ -489,6 +490,9 @@ function createAsuraEnvironment(options = {}) {
   const performance = observed("Performance", {
     timeOrigin: options.timeOrigin ?? Date.now() - 6500,
     now: nativeFunction("now", () => Date.now() - performance.timeOrigin),
+    getEntries: nativeFunction("getEntries", () =>
+      resourceNames.map((name) => ({ name }))
+    ),
     getEntriesByName: nativeFunction("getEntriesByName", (name) =>
       scripts.some((script) => script.src === name) ? [{ name, decodedBodySize: 0 }] : []
     ),
@@ -500,6 +504,11 @@ function createAsuraEnvironment(options = {}) {
   const sessionStorage = makeStorage();
   const fetchImpl = options.fetch || globalThis.fetch;
   const XMLHttpRequest = makeXMLHttpRequest(fetchImpl, location.href, TRACE_USER_AGENT);
+  const browserSetInterval = (...args) => {
+    const timer = setInterval(...args);
+    if (typeof timer.unref === "function") timer.unref();
+    return timer;
+  };
 
   const windowBase = Object.assign(eventRoot, {
     window: null,
@@ -529,9 +538,19 @@ function createAsuraEnvironment(options = {}) {
     Image: ImageFixture,
     setTimeout,
     clearTimeout,
-    setInterval,
+    setInterval: browserSetInterval,
     clearInterval,
     queueMicrotask,
+    postMessage(data, targetOrigin) {
+      if (targetOrigin !== "*" && targetOrigin !== location.origin) return;
+      queueMicrotask(() => eventRoot.dispatchEvent({
+        type: "message",
+        data,
+        origin: location.origin,
+        source: window,
+        target: window,
+      }));
+    },
     console,
     atob: (value) => Buffer.from(value, "base64").toString("binary"),
     btoa: (value) => Buffer.from(value, "binary").toString("base64"),

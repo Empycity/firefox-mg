@@ -71,12 +71,13 @@ node examples/闪购/test_uab_fields.js
 
 ### 4. `metas.fire_umid`
 
-`fire_umid` 是 `AWSC.configFY` 加载 WebUMID 1.93.0 后向 UM 服务交换得到的 `tn`，不是本地随机拼接值。完整请求使用 `createLoginSecurityFields()`，确保三个字段来自同一次 AWSC 会话：
+`fire_umid` 是 `AWSC.configFY` 加载 WebUMID 1.93.0 后向 UM 服务交换得到的 `tn`，不是本地随机拼接值。完整请求使用 `createLoginSecurityFields()`，确保风控字段来自同一次 AWSC 会话：
 
 ```js
 const { createLoginSecurityFields } = require("./asura_id");
 
-const { asuraId, fireUa, fireUmid } = await createLoginSecurityFields();
+const { asuraId, fireUa, fireUmid, bxUmidToken } =
+  await createLoginSecurityFields();
 ```
 
 Node 运行时会直接请求 `https://ynuf.aliapp.org/service/um.json`，不启动浏览器。
@@ -85,3 +86,18 @@ Node 运行时会直接请求 `https://ynuf.aliapp.org/service/um.json`，不启
 node examples/闪购/fire_umid_cli.js
 node examples/闪购/test_login_security_fields.js
 ```
+
+### 5. Header `bx-umidtoken`
+
+Trace 中该头字段走 `securityHeader -> FireEye.getUidToken() -> localStorage.lswucn`。
+WebUMID 通过 `GET https://ynuf.aliapp.org/w/wu.json` 写入 `TOKEN@@timestamp`，
+FireEye 1.231.13 的原始 `getUidToken()` 去掉时间后缀并返回 68 字节 token。
+它和 body 的 `fire_umid` 是同一会话中的两个不同值，不得互相复用。
+
+```bash
+node examples/闪购/bx_umidtoken_cli.js
+node examples/闪购/test_bx_umidtoken.js
+```
+
+Node 会直接加载 `/w/wu.json` 的原始回调脚本，与 WebUMID/FireEye 共享当前内存
+`localStorage`，运行时不启动或连接浏览器。
