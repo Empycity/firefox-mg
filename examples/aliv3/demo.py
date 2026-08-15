@@ -512,8 +512,10 @@ class Yuekeyun:
         # logger.success(f'问卷星阿里VerifyCaptchaV3接口：{response.json()}')
         if response.json()['Result']['VerifyCode'] == 'T001':
             logger.success(f'阿里VerifyCaptchaV3接口验证成功：{response.json()}')
+            return data['CaptchaVerifyParam']
         else:
             logger.error(f'阿里VerifyCaptchaV3接口验证失败：{response.json()}')
+            return None
 
 
     def aliyuncs_log2(self):
