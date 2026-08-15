@@ -68,3 +68,20 @@ const { asuraId, fireUa } = await createUabFields();
 node examples/闪购/fire_ua_cli.js
 node examples/闪购/test_uab_fields.js
 ```
+
+### 4. `metas.fire_umid`
+
+`fire_umid` 是 `AWSC.configFY` 加载 WebUMID 1.93.0 后向 UM 服务交换得到的 `tn`，不是本地随机拼接值。完整请求使用 `createLoginSecurityFields()`，确保三个字段来自同一次 AWSC 会话：
+
+```js
+const { createLoginSecurityFields } = require("./asura_id");
+
+const { asuraId, fireUa, fireUmid } = await createLoginSecurityFields();
+```
+
+Node 运行时会直接请求 `https://ynuf.aliapp.org/service/um.json`，不启动浏览器。
+
+```bash
+node examples/闪购/fire_umid_cli.js
+node examples/闪购/test_login_security_fields.js
+```

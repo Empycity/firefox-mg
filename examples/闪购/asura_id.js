@@ -30,7 +30,15 @@ function callGetUA(context, module) {
   }
 }
 
-async function createUabFields(options = {}) {
+function findDynamicScript(sandbox, pattern, description) {
+  const script = sandbox.document
+    .getElementsByTagName("script")
+    .find((entry) => pattern.test(entry.src || ""));
+  if (!script) throw new Error(`AWSC did not append the ${description} script`);
+  return script;
+}
+
+async function createFields(options = {}, includeUmid = false) {
   const sandbox = createAsuraEnvironment(options);
   const context = vm.createContext(sandbox);
   runScript(context, "awsc-napos-puzzle-0.0.4.js");
@@ -40,17 +48,35 @@ async function createUabFields(options = {}) {
     throw new Error("AWSC UAB bridge was not exported");
   }
   const modulePromise = bridge.getUabModule();
-  const collinaScript = sandbox.document
-    .getElementsByTagName("script")
-    .find((script) => /\/AWSC\/uab\/1\.140\.0\/collina\.js(?:[?#]|$)/.test(script.src || ""));
-  if (!collinaScript) {
-    throw new Error("AWSC did not append the collina script");
+  let fyPromise = null;
+  if (includeUmid) {
+    if (!sandbox.AWSC || typeof sandbox.AWSC.configFY !== "function") {
+      throw new Error("AWSC configFY was not exported");
+    }
+    fyPromise = new Promise((resolve) => {
+      sandbox.AWSC.configFY(resolve, { appName: "eleme-napos-pc" });
+    });
+    const umidScript = findDynamicScript(
+      sandbox,
+      /\/AWSC\/WebUMID\/1\.93\.0\/um\.js(?:[?#]|$)/,
+      "WebUMID"
+    );
+    sandbox.document.__setCurrentScript(umidScript);
+    runScript(context, "web-umid-1.93.0.js");
   }
+  const collinaScript = findDynamicScript(
+    sandbox,
+    /\/AWSC\/uab\/1\.140\.0\/collina\.js(?:[?#]|$)/,
+    "collina"
+  );
   sandbox.document.__setCurrentScript(collinaScript);
   runScript(context, "collina-1.140.0.js");
   sandbox.document.__setCurrentScript(null);
+  const [module, fyObject] = await Promise.all([modulePromise, fyPromise]);
+  if (includeUmid && fyObject.uabModule !== module) {
+    throw new Error("AWSC configFY and Napos did not share the UAB module");
+  }
   await sandbox.__emitTraceInput();
-  const module = await modulePromise;
   const asuraId = callGetUA(context, module);
   const fireUa = callGetUA(context, module);
   for (const [name, value] of Object.entries({ asuraId, fireUa })) {
@@ -58,7 +84,20 @@ async function createUabFields(options = {}) {
       throw new Error(`UAB getUA returned an invalid ${name} value`);
     }
   }
-  return { asuraId, fireUa };
+  if (!includeUmid) return { asuraId, fireUa };
+  const fireUmid = fyObject && fyObject.umidToken;
+  if (typeof fireUmid !== "string" || !/^T2gA[A-Za-z0-9_-]{63}=$/.test(fireUmid)) {
+    throw new Error("WebUMID returned an invalid fireUmid value");
+  }
+  return { asuraId, fireUa, fireUmid };
+}
+
+async function createUabFields(options = {}) {
+  return createFields(options, false);
+}
+
+async function createLoginSecurityFields(options = {}) {
+  return createFields(options, true);
 }
 
 async function createAsuraId(options = {}) {
@@ -69,4 +108,14 @@ async function createFireUa(options = {}) {
   return (await createUabFields(options)).fireUa;
 }
 
-module.exports = { createAsuraId, createFireUa, createUabFields };
+async function createFireUmid(options = {}) {
+  return (await createLoginSecurityFields(options)).fireUmid;
+}
+
+module.exports = {
+  createAsuraId,
+  createFireUa,
+  createFireUmid,
+  createUabFields,
+  createLoginSecurityFields,
+};

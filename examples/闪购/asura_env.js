@@ -261,6 +261,118 @@ class AudioContextFixture {
   }
 }
 
+function makeStorage() {
+  const values = new Map();
+  const storage = {
+    get length() { return values.size; },
+    key(index) { return [...values.keys()][index] ?? null; },
+    getItem(key) { return values.has(String(key)) ? values.get(String(key)) : null; },
+    setItem(key, value) { values.set(String(key), String(value)); },
+    removeItem(key) { values.delete(String(key)); },
+    clear() { values.clear(); },
+  };
+  return new Proxy(storage, {
+    get(target, property, receiver) {
+      if (typeof property !== "string" || property in target) return Reflect.get(target, property, receiver);
+      return values.has(property) ? values.get(property) : undefined;
+    },
+    set(target, property, value, receiver) {
+      if (typeof property !== "string" || property in target) return Reflect.set(target, property, value, receiver);
+      values.set(property, String(value));
+      return true;
+    },
+    deleteProperty(target, property) {
+      if (typeof property === "string" && !(property in target)) return values.delete(property);
+      return Reflect.deleteProperty(target, property);
+    },
+  });
+}
+
+function makeXMLHttpRequest(fetchImpl, baseUrl, userAgent) {
+  return class XMLHttpRequestFixture extends EventTargetFixture {
+    constructor() {
+      super();
+      this.readyState = 0;
+      this.status = 0;
+      this.response = "";
+      this.responseText = "";
+      this.responseType = "";
+      this.timeout = 0;
+      this.withCredentials = false;
+      this.onreadystatechange = null;
+      this.onload = null;
+      this.onerror = null;
+      this.onloadend = null;
+      this._headers = {
+        Accept: "*/*",
+        "Accept-Language": "en-US,en;q=0.5",
+        Origin: new URL(baseUrl).origin,
+        Referer: `${new URL(baseUrl).origin}/`,
+        "User-Agent": userAgent,
+      };
+    }
+
+    open(method, url) {
+      this._method = String(method).toUpperCase();
+      this._url = new URL(String(url), baseUrl).href;
+      this.readyState = 1;
+      this._notifyReadyState();
+    }
+
+    setRequestHeader(name, value) {
+      this._headers[String(name)] = String(value);
+    }
+
+    getAllResponseHeaders() {
+      return this._responseHeaders || "";
+    }
+
+    getResponseHeader(name) {
+      return this._responseHeaderMap?.get(String(name).toLowerCase()) ?? null;
+    }
+
+    send(body = null) {
+      const controller = new AbortController();
+      const timer = this.timeout > 0 ? setTimeout(() => controller.abort(), this.timeout) : null;
+      fetchImpl(this._url, {
+        method: this._method,
+        headers: this._headers,
+        body: this._method === "GET" || this._method === "HEAD" ? undefined : body,
+        signal: controller.signal,
+      }).then(async (response) => {
+        this.status = response.status;
+        this.responseURL = response.url;
+        this._responseHeaderMap = response.headers;
+        this._responseHeaders = [...response.headers].map(([name, value]) => `${name}: ${value}`).join("\r\n");
+        this.responseText = await response.text();
+        this.response = this.responseType === "json" ? JSON.parse(this.responseText) : this.responseText;
+        this.readyState = 4;
+        this._notifyReadyState();
+        this._notify("load");
+      }).catch((error) => {
+        this._error = error;
+        this.readyState = 4;
+        this._notifyReadyState();
+        this._notify("error");
+      }).finally(() => {
+        if (timer) clearTimeout(timer);
+        this._notify("loadend");
+      });
+    }
+
+    _notifyReadyState() {
+      if (typeof this.onreadystatechange === "function") this.onreadystatechange({ type: "readystatechange", target: this });
+      this.dispatchEvent({ type: "readystatechange", target: this });
+    }
+
+    _notify(type) {
+      const handler = this[`on${type}`];
+      if (typeof handler === "function") handler({ type, target: this });
+      this.dispatchEvent({ type, target: this });
+    }
+  };
+}
+
 function createAsuraEnvironment(options = {}) {
   const missing = new Set();
   const observed = (name, value) => options.debugMissing
@@ -384,6 +496,10 @@ function createAsuraEnvironment(options = {}) {
       type === "resource" ? resourceNames.map((name) => ({ name })) : []
     ),
   });
+  const localStorage = makeStorage();
+  const sessionStorage = makeStorage();
+  const fetchImpl = options.fetch || globalThis.fetch;
+  const XMLHttpRequest = makeXMLHttpRequest(fetchImpl, location.href, TRACE_USER_AGENT);
 
   const windowBase = Object.assign(eventRoot, {
     window: null,
@@ -396,6 +512,9 @@ function createAsuraEnvironment(options = {}) {
     screen,
     location,
     performance,
+    localStorage,
+    sessionStorage,
+    XMLHttpRequest,
     screenLeft: dimensions.screenLeft,
     screenX: dimensions.screenLeft,
     mozInnerScreenX: dimensions.screenLeft,
