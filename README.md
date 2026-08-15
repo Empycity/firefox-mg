@@ -136,7 +136,8 @@ tools/trace-desktop.sh
 2. 点击“打开网站（暂停记录）”，在 Firefox 窗口里完成登录和前置跳转；
 3. 点击“开始记录”，执行一次目标操作；
 4. 点击“停止并整理”，日志会生成 `categorized/` 分类文件和
-   `index/summary.json`、`index/causal-index.json`、`index/target-candidates.json`；
+   `index/summary.json`、`index/causal-index.json`、`index/request-timelines.json`、
+   `index/target-candidates.json`；
 5. 需要结束浏览器时点击“关闭 Firefox”，中控台会先 stop、整理，再结束本轮进程组。
 
 命令行等价入口：
@@ -195,6 +196,7 @@ segment、请求前父链最深的 exact JS return，并输出紧凑
 | `firefox-cookie-*.jsonl` | document.cookie、CookieStore、底层 CookieService 生命周期 |
 | `firefox-script-*.jsonl` | 静态/动态脚本加载、脚本 hash、artifact 路径 |
 | `values/` | 完整长值、请求字段、body、JS return/args 的落盘制品 |
+| `index/request-timelines.json` | XHR/Fetch 阶段、页面显式头与最终 HTTP channel 头；启发式关联明确标记 `exact_id=false` |
 
 ### value_store / sha256 对齐
 
@@ -1284,6 +1286,7 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_FETCH_REQUEST_BODY_MAX_BYTES` | 整数 | `65536` | Fetch request body 最多读取字节数，上限 2 MiB |
 | `TRACE_FETCH_REQUEST_BODY_HEX_BYTES` | 整数 | `64` | Fetch request `body_bytes_hex` 最多输出字节数 |
 | `TRACE_FETCH_REQUEST_BODY_STORE` | `1` / `0` | `0` | 将 Fetch request body 预览片段写入 `values/fetch_req_body_<pid>_<seq>.txt` |
+| `TRACE_FETCH_REQUEST_HEADERS` | `none` / `preview` / `full` | `preview`（full-chain=`full`） | Fetch 逻辑请求头，并独立控制 parent HTTP channel 最终请求头快照；不要求开启 `TRACE_HTTP_RAW` |
 | `TRACE_FETCH_RESPONSE_HEADERS` | `none` / `preview` / `full` | `preview`（full-chain=`full`） | 在 `fetch.response` 输出响应头元数据；不读取 body |
 | `TRACE_FETCH_RESPONSE_HEADER_NAMES` | CSV | 空 | 只输出命中的 response header 名；空表示输出可见 entries |
 | `TRACE_FETCH_RESPONSE_HEADERS_MAX_COUNT` | 整数 | `64`（full-chain=`0`） | 单个 `fetch.response` 最多输出 header 条数；`0` 不按条数截断。 |
@@ -1322,6 +1325,11 @@ CSV 过滤支持两种写法：`token` 表示 substring 匹配，`=token` 表示
 | `TRACE_WASM_INSN_LIMIT` | 整数 | `256` | 单模块 code-section byte 事件最大数，上限 `65536` |
 
 当前 Fetch 已实现轻量生命周期事件：`fetch.call` 记录 JS 调用入口、caller、page、query fields 和 body length；`fetch.request` 记录最终 Request 元数据，并可显式开启 request body clone preview/store；`fetch.response` 记录 status、response type、redirect、body size 和 response headers；`fetch.done` 记录结束原因。显式设置 `TRACE_FETCH_REQUEST_BODY=preview|full` 后，`fetch.request` 会克隆 InternalRequest body stream 后限量读取，失败会写 `body_preview_skipped`，不会消费真实上传 body。显式设置 `TRACE_FETCH_RESPONSE_BODY=preview|full` 后，`fetch.response` 会先尝试 trace-only body clone 做轻量 preview；完整响应体由 `FetchDriver::OnDataAvailable` 在原复制网络数据到 pipe 的同一轮旁路保存为 `fetch.body_artifact`，`TRACE_FETCH_RESPONSE_BODY_STORE_MAX_BYTES=0` 表示 trace 层不按大小丢弃。XHR request body 需要显式设置 `TRACE_XHR_REQUEST_BODY=preview|full`；开启后 `xhr.body` 会记录 `request_body_size/captured_size/truncated/sha256`，可选写入 `values/xhr_req_body_*`，并从 JSON body 或 form-urlencoded body 中按 `TRACE_QUERY_FIELDS` 抽取 `body_fields/body_fields_meta`。XHR response 可用 `TRACE_XHR_RESPONSE_BODY=full` + `TRACE_XHR_RESPONSE_BODY_STORE=1` 保存 text/json/默认 `responseText` 的完整 artifact。WebSocket 默认关闭；开启后在 `firefox-websocket-*.jsonl` 写入 `websocket.frame` 的 send/recv 逻辑边界、socket id、URL、binary、size 和 bounded preview。二进制 preview 用 hex，Blob/stream send 仅记录大小并将 `preview_available=false`。真实站长 URL/query 日志过大时，可设置 `TRACE_REQUEST_URL=preview` 或 `none` 降低写盘量；这不会影响 `TRACE_QUERY_FIELDS` 从完整 URL 中提取字段。需要把请求中的目标参数与 JS return/value_store 做完整等值对齐时，使用 `TRACE_QUERY_FIELD_VALUE_STORE=1`，或短时间设置 `TRACE_QUERY_FIELD_VALUES=full`；默认 `preview` 只适合候选定位。
+
+Worker 发起的 Fetch/XHR 会额外记录 `worker_id`、`worker_type`、
+`worker_script_url`、`worker_window_id`。Worker 缺少 `page_url` 或当前 JS caller 时，
+脚本 URL 作为持久内容上下文，避免只留下孤立 response；各阶段继续用同一
+`request_id` 关联。
 
 `http.raw_chunk` 是 parent HTTP 已读响应块，事件含 frame/top-frame 标识，可与 XHR/Fetch
 的同名字段关联；它不是 TCP 包捕获。`wasm.module` 是成功编译的 WASM 模块元数据，optional
@@ -1923,6 +1931,10 @@ score/confidence；它用于候选排序，不代表已经解码 VMP virtual ins
 ### 17.1 正确性
 
 - DOM/BOM get/set/call 的 API、值、脚本位置和 stack 与 demo 真值一致。
+- DOM/BOM 对跨 iframe/Xray realm 的对象先校验 compartment；不一致时只记录
+  identity/preview/`cross_compartment=true`，不得在当前 context 深读 prototype、
+  descriptor、Promise 或属性快照。`tests/trace-cross-realm-constructor.html` 必须完成且
+  content 进程保持存活。
 - jscall 的 call/parent/origin ID、参数、返回值、脚本 hash 和 limit 哨兵正确。
 - fetch/XHR/form body builder 能关联逻辑请求字段、initiator 和当前调用。
 - Cookie、Storage、IndexedDB 事件能回到对应调用上下文和页面来源。

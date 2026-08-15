@@ -1,0 +1,16 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Firefox Trace Worker Network Smoke</title>
+<output id="result">running</output>
+<script>
+  const worker = new Worker("trace-worker-network.js");
+  worker.onmessage = ({data}) => {
+    document.querySelector("#result").textContent = JSON.stringify(data);
+    document.title = "worker-network-complete";
+  };
+  worker.onerror = ({message}) => {
+    document.querySelector("#result").textContent = message;
+    document.title = "worker-network-failed";
+  };
+  worker.postMessage("start");
+</script>

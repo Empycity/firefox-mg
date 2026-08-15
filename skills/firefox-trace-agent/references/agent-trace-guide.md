@@ -26,6 +26,7 @@ TRACE_DIR=/path/to/firefox-trace-...
 manifest.json
 index/summary.json
 index/causal-index.json
+index/request-timelines.json
 index/target-candidates.json
 categorized/request-fields.jsonl
 categorized/network.jsonl
@@ -63,14 +64,15 @@ python3 tools/trace_finalize.py "$TRACE_DIR" --json
 3. 读 `index/environment-contract.json`：离线补环境须同时满足 `value_capture_complete=true` 与 `object_contract_complete=true`。`values` 是完整标量制品索引，`objects/members` 是已触达环境对象的 realm、原型链和 descriptor 引用图；任一标记为 false 时仅用于定位缺失宿主依赖。
 4. 读 `categorized/request-fields.jsonl`：选目标字段记录，位置可能是 `url.query`、`body`、`headers`、`cookies`；保留 `request_id`、`origin_call_id`、raw/decoded SHA-256、`value_store_path`。
 5. 读 `categorized/network.jsonl`：还原完整 URL、headers、cookies、body 和 response；需要完整值就进 `values/`。
-6. 读 `index/target-candidates.json`：确认工具推荐脚本、置信度、自动匹配片段、PC range 和 dispatcher 状态。
-7. 读 `index/causal-index.json`：先看 `producer_match/producer_chain`，再审计 `producer_candidates`。
-8. `origin_call_id` 只落到请求 wrapper 时，运行 `tools/trace_analyzer.py`，用请求字段 SHA-256 对齐同进程、同 segment、请求前的 JS return；优先父链最深的 exact return，并沿 `parent_call_id` 输出 producer 链。
-9. 读 `categorized/js.jsonl`：用 `call_id -> parent_call_id` 回溯局部链，用 `origin_call_id` 和请求关联。
-10. 读 `categorized/script.jsonl`、`scripts/`、`web-assets/`、`source_maps/`：定位算法文件。
-11. 读 `state/dom/bom`：列出环境和状态依赖。
-12. 判断是纯算、补环境，还是混合。
-13. 如果缺证据，给出下一轮最窄采集计划，不直接扩大为全站 deep/opcode。
+6. 读 `index/request-timelines.json`：区分页面显式 XHR/Fetch headers 与 parent HTTP channel 最终 headers。`exact_id=false` 表示 URL+method+时间启发式关联，遇到同 URL 并发请求时继续核对 body/initiator。
+7. 读 `index/target-candidates.json`：确认工具推荐脚本、置信度、自动匹配片段、PC range 和 dispatcher 状态。
+8. 读 `index/causal-index.json`：先看 `producer_match/producer_chain`，再审计 `producer_candidates`。
+9. `origin_call_id` 只落到请求 wrapper 时，运行 `tools/trace_analyzer.py`，用请求字段 SHA-256 对齐同进程、同 segment、请求前的 JS return；优先父链最深的 exact return，并沿 `parent_call_id` 输出 producer 链。
+10. 读 `categorized/js.jsonl`：用 `call_id -> parent_call_id` 回溯局部链，用 `origin_call_id` 和请求关联。
+11. 读 `categorized/script.jsonl`、`scripts/`、`web-assets/`、`source_maps/`：定位算法文件。
+12. 读 `state/dom/bom`：列出环境和状态依赖。
+13. 判断是纯算、补环境，还是混合。
+14. 如果缺证据，给出下一轮最窄采集计划，不直接扩大为全站 deep/opcode。
 
 首轮或“一轮回溯”要求 JS Call 使用 `boundary`。`target/deep` 只有在配置中已有 `script_contains`、`function_contains` 或 `script_sha256` 时才是有效精确模式；空候选导致的 target/deep 必须报告为配置问题，桌面中控台会显式回退为 boundary，不能把 `categorized/js.jsonl=0` 当成浏览器未触发。
 

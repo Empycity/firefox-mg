@@ -170,7 +170,7 @@ preview / size / sha256 / value_store_path / stored / truncated
 
 这样既保真，又避免单行 JSONL 过大导致 UI 和 Agent 读取困难。`*_MAX_BYTES=0` 在本工具里表示 trace 层不按大小丢弃该 artifact。
 
-对象环境不使用递归 JSON 展开。Agent 显式启用 DOM contract overlay 后，`full-chain` 会为实际触达对象记录稳定 `object_id`、realm、原型 class 链、成员 descriptor、构造/调用与返回对象引用，汇总在 `index/environment-contract.json` 的 `objects` 和 `members`。默认 DOM/BOM signal 不自动开启该对象合同。iframe 的原生 `load` 派发顺序会进入 `lifecycle_events`，并通过同一 `object_id` 与监听注册、节点插入关联。该过程只读取引擎元数据，不执行 getter；完整性由 `object_contract_complete` 明确标示。
+对象环境不使用递归 JSON 展开。Agent 显式启用 DOM contract overlay 后，`full-chain` 会为实际触达对象记录稳定 `object_id`、realm、原型 class 链、成员 descriptor、构造/调用与返回对象引用，汇总在 `index/environment-contract.json` 的 `objects` 和 `members`。默认 DOM/BOM signal 不自动开启该对象合同。iframe 的原生 `load` 派发顺序会进入 `lifecycle_events`，并通过同一 `object_id` 与监听注册、节点插入关联。该过程只读取引擎元数据，不执行 getter；完整性由 `object_contract_complete` 明确标示。对象来自其他 iframe/Xray realm 时，当前 context 只记录 identity、preview 和 `cross_compartment=true`；原型、descriptor、Promise 和属性快照必须在对象所属 realm 采集。
 
 当对象类型已记录、但 `ImageData.data`、WebGL vector、extension array 或
 `TextMetrics` 的内部值仍缺失时，Agent 在下一轮完整配置中加入
@@ -210,8 +210,8 @@ Raw HTTP
 | 模块 | 输出 | Agent 用途 |
 |---|---|---|
 | JS 调用 | `firefox-js-*.jsonl` / `categorized/js.jsonl` | 找 `call_id`、`parent_call_id`、`origin_call_id`、函数名、args/return、value metadata。 |
-| XHR | `firefox-xhr-*.jsonl` / network | 看接口 URL、query/body、`xhr.header`、response、request_id。 |
-| Fetch | `firefox-fetch-*.jsonl` / network | 同 XHR，覆盖 fetch API；`fetch.request.headers` 会按 Request Header 目标字段记录。 |
+| XHR | `firefox-xhr-*.jsonl` / network | 看接口 URL、query/body、`xhr.header`、response、request_id；Worker 请求附带 worker id/type/script/window 上下文。 |
+| Fetch | `firefox-fetch-*.jsonl` / network | 同 XHR，覆盖 fetch API；`fetch.request.headers` 会按 Request Header 目标字段记录，Worker 来源由 `fetch.call` 与同 request_id 关联。 |
 | DOM / BOM | `firefox-dom-*.jsonl`，finalize 后拆为 dom/bom | 补 `document`、节点、canvas、navigator、screen、location、history、performance、crypto 等环境。 |
 | Cookie | `firefox-cookie-*.jsonl` / state | 看 cookie 读写、变化、风控状态。 |
 | Storage | `firefox-storage-*.jsonl` / state | 看 localStorage/sessionStorage/IndexedDB 线索。 |
@@ -512,6 +512,7 @@ TRACE_DIR/
 index/
   summary.json
   causal-index.json
+  request-timelines.json
   target-candidates.json
     web-assets.json
 ```
@@ -529,6 +530,7 @@ index/
 | `categorized/` | 停止后按用途归类的 JSONL，Agent 首选入口。 |
 | `index/summary.json` | 本轮总览、分类计数、目标字段命中、degraded 数、生成文件。 |
 | `index/causal-index.json` | 请求字段、JS value SHA-256、origin 上下文和 producer 关联索引；`producer_match` 给出最深 exact return，`producer_chain` 给出紧凑父链，`producer_candidates` 保留完整候选。 |
+| `index/request-timelines.json` | 按逻辑 request_id 汇总 XHR/Fetch 阶段，区分页面显式头和最终 HTTP channel 头；跨进程启发式关联带 `exact_id=false`。 |
 | `index/target-candidates.json` | 工具自动排名的请求关联脚本、脚本匹配片段、精确脚本身份、opcode PC 范围和 dispatcher 候选；下一轮由中控台读取。 |
 
 ---
@@ -742,7 +744,7 @@ JS return/arg/object value metadata 与请求字段 SHA-256 对齐
 | `tools/trace-desktop.sh` | 启动桌面 UI。 |
 | `tools/run-trace-firefox.sh` | 底层启动 Firefox。 |
 | `tools/trace-control.sh` | 对现有 `TRACE_DIR` start/stop/prewarm/config/new-segment/status。 |
-| `tools/trace_finalize.py` | 生成 `categorized/`、`index/summary.json`、`index/causal-index.json`、`index/target-candidates.json`。 |
+| `tools/trace_finalize.py` | 生成 `categorized/`、`index/summary.json`、`index/causal-index.json`、`index/request-timelines.json`、`index/target-candidates.json`。 |
 | `tools/trace_analyzer.py` | 离线找字段、脚本、函数和下一轮 env；当 request origin 只到 transport wrapper 时，用字段 SHA-256 解析最深 JS return producer 及父链。 |
 | `tools/trace_store.py` | 多轮导入 SQLite，按 field/value/call chain 查询。 |
 | `tools/trace_opcode_analyzer.py` | 分析 opcode 窗口，找热点 PC/dispatcher 线索。 |

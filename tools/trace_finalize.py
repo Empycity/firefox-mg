@@ -300,6 +300,156 @@ def compact_event(row: dict[str, Any], path: pathlib.Path, line: int, category: 
     return result
 
 
+def build_request_timelines(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build logical request stages and join final parent-channel headers.
+
+    XHR/Fetch events use a content-process request_id, while the parent HTTP
+    channel currently exposes channel_id.  Preserve that distinction: an exact
+    URL+method nearest-time join is useful evidence but is explicitly labeled
+    heuristic until the IDs are propagated through IPC.
+    """
+
+    timelines: dict[str, dict[str, Any]] = {}
+    final_channels: list[dict[str, Any]] = []
+
+    for row in rows:
+        typ = str(row.get("type") or "")
+        if typ == "http.request_headers":
+            final_channels.append(row)
+            continue
+        request_id = str(row.get("request_id") or "")
+        if not request_id or not typ.startswith(("xhr.", "fetch.")):
+            continue
+        pid = str(row.get("pid") or "unknown")
+        key = f"{pid}:{request_id}"
+        item = timelines.setdefault(
+            key,
+            {
+                "pid": row.get("pid"),
+                "request_id": request_id,
+                "transport": "xhr" if typ.startswith("xhr.") else "fetch",
+                "method": None,
+                "url": None,
+                "explicit_headers": {},
+                "events": [],
+                "final_channel": None,
+            },
+        )
+        method = row.get("method")
+        url = row.get("url") or row.get("request_url")
+        if method and not item["method"]:
+            item["method"] = str(method).upper()
+        if url and not item["url"]:
+            item["url"] = str(url)
+
+        if typ == "xhr.header":
+            name = str(row.get("detail_name") or "")
+            if name:
+                item["explicit_headers"][name] = {
+                    "value": str(row.get("detail_value") or ""),
+                    "provenance": "xhr.setRequestHeader",
+                }
+        for field_name, provenance in (
+            ("request_headers", "fetch.request.headers"),
+            ("headers", "logical_request.headers"),
+        ):
+            headers = row.get(field_name)
+            if not isinstance(headers, dict):
+                continue
+            for name, entry in headers.items():
+                item["explicit_headers"][str(name)] = {
+                    "value": header_value(entry),
+                    "provenance": provenance,
+                }
+
+        item["events"].append(
+            {
+                "type": typ,
+                "ts_us": row.get("ts_us"),
+                "segment_id": row.get("segment_id"),
+                "source_file": row.get("_source_file"),
+                "source_line": row.get("_source_line"),
+                "origin_call_id": row.get("origin_call_id"),
+            }
+        )
+
+    for item in timelines.values():
+        item["events"].sort(
+            key=lambda event: (
+                int(event.get("ts_us") or 0),
+                str(event.get("source_file") or ""),
+                int(event.get("source_line") or 0),
+            )
+        )
+
+    unmatched: list[dict[str, Any]] = []
+    for channel in final_channels:
+        url = str(channel.get("url") or "")
+        method = str(channel.get("method") or "").upper()
+        ts_us = int(channel.get("ts_us") or 0)
+        candidates: list[tuple[int, dict[str, Any]]] = []
+        for item in timelines.values():
+            if str(item.get("url") or "") != url:
+                continue
+            if method and str(item.get("method") or "").upper() not in {"", method}:
+                continue
+            event_times = [int(event.get("ts_us") or 0) for event in item["events"]]
+            if not event_times:
+                continue
+            prior = [value for value in event_times if not ts_us or value <= ts_us]
+            nearest = max(prior) if prior else min(event_times)
+            candidates.append((abs(ts_us - nearest), item))
+        candidates.sort(key=lambda pair: pair[0])
+        if not candidates:
+            unmatched.append(channel)
+            continue
+        distance, item = candidates[0]
+        item["final_channel"] = {
+            "channel_id": channel.get("channel_id"),
+            "stage": channel.get("stage") or "final_channel",
+            "header_provenance": channel.get("header_provenance") or "final_http_channel",
+            "headers": channel.get("headers") or {},
+            "headers_count": channel.get("headers_count"),
+            "headers_truncated": channel.get("headers_truncated"),
+            "ts_us": channel.get("ts_us"),
+            "source_file": channel.get("_source_file"),
+            "source_line": channel.get("_source_line"),
+            "join": {
+                "basis": "exact_url_method_nearest_time",
+                "candidate_count": len(candidates),
+                "distance_us": distance,
+                "exact_id": False,
+            },
+        }
+
+    ordered = sorted(
+        timelines.values(),
+        key=lambda item: min(
+            (int(event.get("ts_us") or 0) for event in item["events"]), default=0
+        ),
+    )
+    return {
+        "schema": "firefox_trace.request_timelines.v1",
+        "requests": ordered,
+        "unmatched_final_channels": [
+            {
+                "channel_id": row.get("channel_id"),
+                "method": row.get("method"),
+                "url": row.get("url"),
+                "ts_us": row.get("ts_us"),
+                "source_file": row.get("_source_file"),
+                "source_line": row.get("_source_line"),
+            }
+            for row in unmatched
+        ],
+        "notes": [
+            "explicit_headers are the JS-visible XHR/Fetch header operations.",
+            "final_channel headers are the parent HTTP channel snapshot after browser-managed additions.",
+            "A final_channel join with exact_id=false is correlation evidence, not an IPC identity proof.",
+        ],
+    }
+
+
 def enrich_script_resource_identity(rows: list[dict[str, Any]]) -> dict[str, int]:
     """Join downloaded script resources to runtime JS events by URL.
 
@@ -2556,6 +2706,13 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
         encoding="utf-8",
     )
 
+    request_timelines = build_request_timelines(all_rows)
+    (index_dir / "request-timelines.json").write_text(
+        json.dumps(request_timelines, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+
     js_by_sha: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     js_artifacts_by_path: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     js_call_enters: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -2766,6 +2923,7 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
         index_dir / "target-candidates.json",
         index_dir / "environment-contract.json",
         index_dir / "trace-health.json",
+        index_dir / "request-timelines.json",
     ):
         try:
             files[str(generated.relative_to(trace_dir))] = generated.stat().st_size
@@ -2802,6 +2960,7 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
             "request_fields": "categorized/request-fields.jsonl",
             "web_assets": "index/web-assets.json" if web_assets is not None else "",
             "target_candidates": "index/target-candidates.json",
+            "request_timelines": "index/request-timelines.json",
             "environment_contract": "index/environment-contract.json",
             "trace_health": "index/trace-health.json",
         },

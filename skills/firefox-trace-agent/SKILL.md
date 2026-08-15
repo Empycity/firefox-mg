@@ -142,7 +142,9 @@ export FIREFOX_TRACE_PYTHON=${FIREFOX_TRACE_PYTHON:-/opt/miniconda3/envs/firefox
    python3 tools/trace_finalize.py "$TRACE_DIR" --json
    ```
 
-3. Read `index/summary.json` and `index/causal-index.json`.
+3. Read `index/summary.json`, `index/request-timelines.json`, and `index/causal-index.json`.
+   Use request timelines to separate page-explicit XHR/Fetch headers from the final
+   parent-channel snapshot. Treat joins with `exact_id=false` as correlation only.
 4. Read `categorized/request-fields.jsonl`, then `categorized/network.jsonl`, then `categorized/js.jsonl`.
 5. Only after the request and candidate producer are understood, read scripts/state/dom/bom/wasm-vm as needed.
 
@@ -196,6 +198,13 @@ node tools/trace-align.js TRACE_DIR --request-id REQUEST_ID --field FIELD_NAME -
 ```
 
 The report checks origin/path, every non-target query field, raw and decoded target values, Base64/Base64URL bytes, first differing byte, and the exact `js.random`/`js.time` events bound to the request `origin_call_id`. Read `index/environment-contract.json` before an offline replay: `value_capture_complete=false` means scalar evidence is incomplete, while `object_contract_complete=false` means realm/prototype/member evidence is incomplete. In either case the trace identifies host dependencies but does not prove an exact offline host replay. `trace-align` reports `host_contract_incomplete` instead of a bare mismatch. `aligned` requires byte equality. A mismatch at byte 0 after injecting the exact dynamic window proves the candidate is using a different host contract or browser environment; do not claim that the inner SDK alone is reproduced.
+
+For DOM objects from another iframe/Xray realm, require an explicit
+`cross_compartment=true` marker and treat the object contract as bounded at that
+realm edge. Do not infer missing prototype/descriptor/value data by deep-reading
+the foreign object from the caller context. Capture those details in the owning
+realm and run `tests/trace-cross-realm-constructor.html` for any Gecko change to
+DOM contract, object snapshot, or Promise observation code.
 
 ## Validation Order
 

@@ -1,0 +1,2 @@
+curl-cffi==0.13.0
+Pillow==11.1.0

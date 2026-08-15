@@ -532,7 +532,7 @@ index 124a48bdf9..dd41378138 100644
    nsCOMPtr<nsIMarionette> marionette = do_GetService(NS_MARIONETTE_CONTRACTID);
    if (marionette) {
 diff --git a/dom/bindings/BindingUtils.cpp b/dom/bindings/BindingUtils.cpp
-index e3d43bfc7b..3ef596f40b 100644
+index e3d43bfc7b..8196790c26 100644
 --- a/dom/bindings/BindingUtils.cpp
 +++ b/dom/bindings/BindingUtils.cpp
 @@ -7,8 +7,14 @@
@@ -587,7 +587,7 @@ index e3d43bfc7b..3ef596f40b 100644
  #include "mozilla/dom/WebIDLGlobalNameHash.h"
  #include "mozilla/dom/WorkerPrivate.h"
  #include "mozilla/dom/WorkerScope.h"
-@@ -85,10 +98,1816 @@
+@@ -85,10 +98,1832 @@
  #include "ipc/IPCMessageUtilsSpecializations.h"
  #include "mozilla/dom/DocGroup.h"
  #include "nsXULElement.h"
@@ -1716,6 +1716,12 @@ index e3d43bfc7b..3ef596f40b 100644
 +
 +NS_IMPL_ISUPPORTS(FirefoxTraceDOMPromiseHandler, PromiseNativeHandler)
 +
++bool FirefoxTraceDOMObjectInCurrentCompartment(JSContext* aCx,
++                                               JSObject* aObject) {
++  return aObject &&
++         JS::GetCompartment(aObject) == js::GetContextCompartment(aCx);
++}
++
 +void FirefoxTraceAppendDescribedValue(JSContext* aCx, nsACString& aLine,
 +                                      JS::Handle<JS::Value> aValue,
 +                                      bool aIncludeObjectContract = true) {
@@ -1729,7 +1735,13 @@ index e3d43bfc7b..3ef596f40b 100644
 +  FirefoxTraceAppendJsonCString(aLine, preview.get());
 +  if (FirefoxTraceDOMContractEnabled() && aIncludeObjectContract &&
 +      aValue.isObject() &&
-+      FirefoxTraceDOMShouldWriteObjectContract(&aValue.toObject())) {
++      !FirefoxTraceDOMObjectInCurrentCompartment(aCx, &aValue.toObject())) {
++    aLine.AppendLiteral(",\"object_id\":\"");
++    aLine.AppendPrintf("obj_%p", &aValue.toObject());
++    aLine.AppendLiteral("\",\"cross_compartment\":true");
++  } else if (FirefoxTraceDOMContractEnabled() && aIncludeObjectContract &&
++             aValue.isObject() &&
++             FirefoxTraceDOMShouldWriteObjectContract(&aValue.toObject())) {
 +    JS::Rooted<JSObject*> object(aCx, &aValue.toObject());
 +    aLine.AppendLiteral(",\"object_contract\":");
 +    FirefoxTraceAppendObjectContract(aCx, aLine, object);
@@ -2094,6 +2106,7 @@ index e3d43bfc7b..3ef596f40b 100644
 +
 +  const bool recordReceiverContract =
 +      FirefoxTraceDOMContractEnabled() &&
++      FirefoxTraceDOMObjectInCurrentCompartment(aCx, aObj) &&
 +      FirefoxTraceDOMShouldWriteObjectContract(aObj);
 +  // The receiver and return value have independent identities.  In
 +  // particular, a long-lived Document can be deduplicated while a call such
@@ -2101,10 +2114,12 @@ index e3d43bfc7b..3ef596f40b 100644
 +  // prototype/descriptor contract is required for offline replay.
 +  const bool recordValueContract =
 +      FirefoxTraceDOMContractEnabled() && aValue.isObject() &&
++      FirefoxTraceDOMObjectInCurrentCompartment(aCx, &aValue.toObject()) &&
 +      FirefoxTraceDOMShouldWriteObjectContract(&aValue.toObject());
 +  JS::Rooted<JSObject*> promiseObject(aCx);
 +  bool isPromiseResult = false;
-+  if (aValue.isObject()) {
++  if (aValue.isObject() &&
++      FirefoxTraceDOMObjectInCurrentCompartment(aCx, &aValue.toObject())) {
 +    promiseObject = &aValue.toObject();
 +    isPromiseResult = JS::IsPromiseObject(promiseObject);
 +  }
@@ -2252,7 +2267,8 @@ index e3d43bfc7b..3ef596f40b 100644
 +    line.AppendLiteral(",\"value_object_contract\":");
 +    FirefoxTraceAppendObjectContract(aCx, line, resultObject);
 +  }
-+  if (aValue.isObject()) {
++  if (aValue.isObject() &&
++      FirefoxTraceDOMObjectInCurrentCompartment(aCx, &aValue.toObject())) {
 +    JS::Rooted<JSObject*> resultObject(aCx, &aValue.toObject());
 +    FirefoxTraceAppendObjectValueSnapshot(aCx, line, resultObject);
 +  }
@@ -3022,7 +3038,7 @@ index a0d36a3049..9661cd78cf 100644
    RefPtr<PerformanceEventTiming> eventTimingEntry;
    // Similar to PerformancePaintTiming, we don't need to
 diff --git a/dom/fetch/Fetch.cpp b/dom/fetch/Fetch.cpp
-index 52cf33bfc8..a4cc278d6c 100644
+index 52cf33bfc8..a4f41494b9 100644
 --- a/dom/fetch/Fetch.cpp
 +++ b/dom/fetch/Fetch.cpp
 @@ -6,19 +6,39 @@
@@ -3065,7 +3081,14 @@ index 52cf33bfc8..a4cc278d6c 100644
  #include "nsJSUtils.h"
  #include "nsNetUtil.h"
  #include "nsReadableUtils.h"
-@@ -61,8 +81,1974 @@
+@@ -55,14 +75,2023 @@
+ #include "InternalResponse.h"
+ 
+ #include "mozilla/dom/WorkerCommon.h"
++#include "mozilla/dom/WorkerPrivate.h"
+ #include "mozilla/dom/WorkerRef.h"
+ #include "mozilla/dom/WorkerRunnable.h"
+ #include "mozilla/dom/WorkerScope.h"
  
  namespace mozilla::dom {
  
@@ -4809,6 +4832,10 @@ index 52cf33bfc8..a4cc278d6c 100644
 +  aRequest.GetMethod(method);
 +
 +  nsAutoCString pageURL;
++  nsAutoCString workerId;
++  nsAutoCString workerType;
++  nsAutoCString workerScriptURL;
++  uint64_t workerWindowId = 0;
 +  BrowsingContext* browsingContext = nullptr;
 +  if (nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(aGlobal)) {
 +    if (Document* doc = window->GetExtantDoc()) {
@@ -4817,6 +4844,17 @@ index 52cf33bfc8..a4cc278d6c 100644
 +      }
 +    }
 +    browsingContext = window->GetBrowsingContext();
++  } else if (WorkerPrivate* worker = GetCurrentThreadWorkerPrivate()) {
++    workerId.AppendPrintf("worker_%p", worker);
++    workerType.Assign(worker->IsServiceWorker()   ? "service"
++                      : worker->IsSharedWorker() ? "shared"
++                                                 : "dedicated");
++    if (nsIURI* workerURI = worker->GetBaseURI()) {
++      Unused << workerURI->GetSpec(workerScriptURL);
++    } else {
++      CopyUTF16toUTF8(worker->ScriptURL(), workerScriptURL);
++    }
++    workerWindowId = worker->WindowID();
 +  }
 +
 +  nsAutoCString callerURL;
@@ -4824,7 +4862,10 @@ index 52cf33bfc8..a4cc278d6c 100644
 +  uint32_t callerColumn = 0;
 +  FirefoxTraceFetchGetCaller(aCx, callerURL, &callerLine, &callerColumn);
 +
-+  if (!FirefoxTraceShouldRecordFetchContext(pageURL, callerURL)) {
++  const nsACString& contextURL = !pageURL.IsEmpty()          ? pageURL
++                                : !workerScriptURL.IsEmpty() ? workerScriptURL
++                                                             : callerURL;
++  if (!FirefoxTraceShouldRecordFetchContext(contextURL, callerURL)) {
 +    return 0;
 +  }
 +
@@ -4859,6 +4900,30 @@ index 52cf33bfc8..a4cc278d6c 100644
 +  line.Append(aRequest.Keepalive() ? "true" : "false");
 +  line.AppendLiteral(",\"page_url\":");
 +  FirefoxTraceFetchAppendJsonString(line, pageURL);
++  line.AppendLiteral(",\"worker_id\":");
++  if (workerId.IsEmpty()) {
++    line.AppendLiteral("null");
++  } else {
++    FirefoxTraceFetchAppendJsonString(line, workerId);
++  }
++  line.AppendLiteral(",\"worker_type\":");
++  if (workerType.IsEmpty()) {
++    line.AppendLiteral("null");
++  } else {
++    FirefoxTraceFetchAppendJsonString(line, workerType);
++  }
++  line.AppendLiteral(",\"worker_script_url\":");
++  if (workerScriptURL.IsEmpty()) {
++    line.AppendLiteral("null");
++  } else {
++    FirefoxTraceFetchAppendJsonString(line, workerScriptURL);
++  }
++  line.AppendLiteral(",\"worker_window_id\":");
++  if (workerId.IsEmpty()) {
++    line.AppendLiteral("null");
++  } else {
++    line.AppendInt(workerWindowId);
++  }
 +  line.AppendLiteral(",\"browsing_context_id\":");
 +  if (browsingContext) {
 +    line.AppendInt(browsingContext->Id());
@@ -5040,7 +5105,7 @@ index 52cf33bfc8..a4cc278d6c 100644
  // Step 17.2.1.2 and 17.2.2 of
  // https://fetch.spec.whatwg.org/#concept-http-network-fetch
  // If stream is readable, then error stream with ...
-@@ -84,8 +2070,6 @@ void AbortStream(JSContext* aCx, ReadableStream* aReadableStream,
+@@ -84,8 +2113,6 @@ void AbortStream(JSContext* aCx, ReadableStream* aReadableStream,
    aReadableStream->ErrorNative(aCx, value, aRv);
  }
  
@@ -5049,7 +5114,7 @@ index 52cf33bfc8..a4cc278d6c 100644
  class AbortSignalMainThread final : public AbortSignalImpl {
   public:
    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-@@ -218,6 +2202,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -218,6 +2245,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
    RefPtr<FetchObserver> mFetchObserver;
    RefPtr<WeakWorkerRef> mWorkerRef;
    bool mIsShutdown;
@@ -5057,7 +5122,7 @@ index 52cf33bfc8..a4cc278d6c 100644
  
    Atomic<bool> mNeedOnDataAvailable;
  
-@@ -225,7 +2210,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -225,7 +2253,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
    // Returns null if worker is shutting down.
    static already_AddRefed<WorkerFetchResolver> Create(
        WorkerPrivate* aWorkerPrivate, Promise* aPromise,
@@ -5067,7 +5132,7 @@ index 52cf33bfc8..a4cc278d6c 100644
      MOZ_ASSERT(aWorkerPrivate);
      aWorkerPrivate->AssertIsOnWorkerThread();
      RefPtr<PromiseWorkerProxy> proxy =
-@@ -241,7 +2227,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -241,7 +2270,7 @@ class WorkerFetchResolver final : public FetchDriverObserver {
      }
  
      RefPtr<WorkerFetchResolver> r =
@@ -5076,7 +5141,7 @@ index 52cf33bfc8..a4cc278d6c 100644
  
      RefPtr<WeakWorkerRef> workerRef = WeakWorkerRef::Create(
          aWorkerPrivate, [r]() { r->Shutdown(r->mWorkerRef->GetPrivate()); });
-@@ -279,6 +2265,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -279,6 +2308,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
      return mPromiseProxy;
    }
  
@@ -5085,7 +5150,7 @@ index 52cf33bfc8..a4cc278d6c 100644
    Promise* WorkerPromise(WorkerPrivate* aWorkerPrivate) const {
      MOZ_ASSERT(aWorkerPrivate);
      aWorkerPrivate->AssertIsOnWorkerThread();
-@@ -329,11 +2317,13 @@ class WorkerFetchResolver final : public FetchDriverObserver {
+@@ -329,11 +2360,13 @@ class WorkerFetchResolver final : public FetchDriverObserver {
  
   private:
    WorkerFetchResolver(PromiseWorkerProxy* aProxy,
@@ -5100,7 +5165,7 @@ index 52cf33bfc8..a4cc278d6c 100644
          mNeedOnDataAvailable(!!aObserver) {
      MOZ_ASSERT(!NS_IsMainThread());
      MOZ_ASSERT(mPromiseProxy);
-@@ -357,17 +2347,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -357,17 +2390,20 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
    RefPtr<FetchObserver> mFetchObserver;
    RefPtr<AbortSignalImpl> mSignalImpl;
    const bool mMozErrors;
@@ -5123,7 +5188,7 @@ index 52cf33bfc8..a4cc278d6c 100644
  
    void OnResponseAvailableInternal(
        SafeRefPtr<InternalResponse> aResponse) override;
-@@ -376,6 +2369,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
+@@ -376,6 +2412,8 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
  
    void OnResponseEnd(FetchDriverObserver::EndReason aReason,
                       JS::Handle<JS::Value> aReasonDetails) override {
@@ -5132,7 +5197,7 @@ index 52cf33bfc8..a4cc278d6c 100644
      if (aReason == eAborted) {
        if (!aReasonDetails.isUndefined()) {
          mPromise->MaybeReject(aReasonDetails);
-@@ -452,7 +2447,9 @@ class MainThreadFetchRunnable : public Runnable {
+@@ -452,7 +2490,9 @@ class MainThreadFetchRunnable : public Runnable {
                                workerPrivate->MainThreadEventTarget(),
                                workerPrivate->CookieJarSettings(),
                                workerPrivate->GetPerformanceStorage(),
@@ -5143,7 +5208,7 @@ index 52cf33bfc8..a4cc278d6c 100644
        nsAutoCString spec;
        if (proxy->GetWorkerPrivate()->GetBaseURI()) {
          proxy->GetWorkerPrivate()->GetBaseURI()->GetAsciiSpec(spec);
-@@ -510,6 +2507,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -510,6 +2550,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
    }
  
    SafeRefPtr<InternalRequest> internalRequest = request->GetInternalRequest();
@@ -5151,7 +5216,7 @@ index 52cf33bfc8..a4cc278d6c 100644
  
    // Restore information of InterceptedHttpChannel if they are passed with the
    // Request. Since Request::Constructor would not copy these members.
-@@ -593,12 +2591,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -593,12 +2634,13 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
      }
  
      RefPtr<MainThreadFetchResolver> resolver = new MainThreadFetchResolver(
@@ -5167,7 +5232,7 @@ index 52cf33bfc8..a4cc278d6c 100644
      fetch->SetDocument(doc);
      resolver->SetLoadGroup(loadGroup);
      aRv = fetch->Fetch(signalImpl, resolver);
-@@ -703,6 +2702,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -703,6 +2745,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
  
      ipcArgs.hasCSPEventListener() = false;
      ipcArgs.isWorkerRequest() = false;
@@ -5175,7 +5240,7 @@ index 52cf33bfc8..a4cc278d6c 100644
  
      actor->DoFetchOp(ipcArgs);
  
-@@ -793,6 +2793,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -793,6 +2836,7 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
        ipcArgs.isOn3PCBExceptionList() = worker->IsOn3PCBExceptionList();
  
        ipcArgs.isWorkerRequest() = true;
@@ -5183,7 +5248,7 @@ index 52cf33bfc8..a4cc278d6c 100644
  
        actor->DoFetchOp(ipcArgs);
  
-@@ -808,7 +2809,8 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
+@@ -808,7 +2852,8 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
      // We do not check if keepalive flag is set for ChromeWorkers
      // See Bug 1898664
      RefPtr<WorkerFetchResolver> resolver =
@@ -5193,7 +5258,7 @@ index 52cf33bfc8..a4cc278d6c 100644
      if (!resolver) {
        NS_WARNING("Could not keep the worker alive.");
        aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
-@@ -856,6 +2858,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
+@@ -856,6 +2901,8 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
    NS_ASSERT_OWNINGTHREAD(MainThreadFetchResolver);
    AssertIsOnMainThread();
  
@@ -5202,7 +5267,7 @@ index 52cf33bfc8..a4cc278d6c 100644
    if (aResponse->Type() != ResponseType::Error) {
      nsCOMPtr<nsIGlobalObject> go = mPromise->GetParentObject();
      nsCOMPtr<nsPIDOMWindowInner> inner = do_QueryInterface(go);
-@@ -1074,6 +3078,8 @@ void WorkerFetchResolver::OnResponseAvailableInternal(
+@@ -1074,6 +3121,8 @@ void WorkerFetchResolver::OnResponseAvailableInternal(
      SafeRefPtr<InternalResponse> aResponse) {
    AssertIsOnMainThread();
  
@@ -5211,7 +5276,7 @@ index 52cf33bfc8..a4cc278d6c 100644
    MutexAutoLock lock(mPromiseProxy->Lock());
    if (mPromiseProxy->CleanedUp()) {
      return;
-@@ -1108,6 +3114,7 @@ void WorkerFetchResolver::OnDataAvailable() {
+@@ -1108,6 +3157,7 @@ void WorkerFetchResolver::OnDataAvailable() {
  void WorkerFetchResolver::OnResponseEnd(FetchDriverObserver::EndReason aReason,
                                          JS::Handle<JS::Value> aReasonDetails) {
    AssertIsOnMainThread();
@@ -9808,7 +9873,7 @@ index ea692b1f6e..0b3ab06830 100644
  }
  
 diff --git a/dom/xhr/XMLHttpRequestMainThread.cpp b/dom/xhr/XMLHttpRequestMainThread.cpp
-index 1a8e264644..100e4f41f6 100644
+index 1a8e264644..ff2836022d 100644
 --- a/dom/xhr/XMLHttpRequestMainThread.cpp
 +++ b/dom/xhr/XMLHttpRequestMainThread.cpp
 @@ -7,7 +7,17 @@
@@ -11101,7 +11166,7 @@ index 1a8e264644..100e4f41f6 100644
  // Maximum size that we'll grow an ArrayBuffer instead of doubling,
  // once doubling reaches this threshold
  const uint32_t XML_HTTP_REQUEST_ARRAYBUFFER_MAX_GROWTH = 32 * 1024 * 1024;
-@@ -1517,6 +2777,358 @@ bool XMLHttpRequestMainThread::InUploadPhase() const {
+@@ -1517,6 +2777,402 @@ bool XMLHttpRequestMainThread::InUploadPhase() const {
    return mState == XMLHttpRequest_Binding::OPENED;
  }
  
@@ -11135,7 +11200,11 @@ index 1a8e264644..100e4f41f6 100644
 +  uint32_t callerColumn = 0;
 +  FirefoxTraceGetCaller(cx, callerURL, &callerLine, &callerColumn);
 +
-+  if (!FirefoxTraceShouldRecordXHRContext(pageURL, callerURL)) {
++  const nsACString& contextURL =
++      !pageURL.IsEmpty()                        ? pageURL
++      : !mFirefoxTraceWorkerScriptURL.IsEmpty() ? mFirefoxTraceWorkerScriptURL
++                                                 : callerURL;
++  if (!FirefoxTraceShouldRecordXHRContext(contextURL, callerURL)) {
 +    return false;
 +  }
 +
@@ -11178,6 +11247,7 @@ index 1a8e264644..100e4f41f6 100644
 +  line.AppendInt(static_cast<uint32_t>(mState));
 +  line.AppendLiteral(",\"page_url\":");
 +  FirefoxTraceAppendJsonString(line, pageURL);
++  FirefoxTraceAppendXHRWorkerContext(line);
 +  BrowsingContext* browsingContext = nullptr;
 +  if (nsPIDOMWindowInner* owner = GetOwnerWindow()) {
 +    browsingContext = owner->GetBrowsingContext();
@@ -11241,6 +11311,43 @@ index 1a8e264644..100e4f41f6 100644
 +  return true;
 +}
 +
++void XMLHttpRequestMainThread::SetFirefoxTraceWorkerContext(
++    const nsACString& aWorkerId, const nsACString& aWorkerType,
++    const nsACString& aWorkerScriptURL, uint64_t aWorkerWindowId) {
++  mFirefoxTraceWorkerId.Assign(aWorkerId);
++  mFirefoxTraceWorkerType.Assign(aWorkerType);
++  mFirefoxTraceWorkerScriptURL.Assign(aWorkerScriptURL);
++  mFirefoxTraceWorkerWindowId = aWorkerWindowId;
++}
++
++void XMLHttpRequestMainThread::FirefoxTraceAppendXHRWorkerContext(
++    nsACString& aLine) const {
++  aLine.AppendLiteral(",\"worker_id\":");
++  if (mFirefoxTraceWorkerId.IsEmpty()) {
++    aLine.AppendLiteral("null");
++  } else {
++    FirefoxTraceAppendJsonString(aLine, mFirefoxTraceWorkerId);
++  }
++  aLine.AppendLiteral(",\"worker_type\":");
++  if (mFirefoxTraceWorkerType.IsEmpty()) {
++    aLine.AppendLiteral("null");
++  } else {
++    FirefoxTraceAppendJsonString(aLine, mFirefoxTraceWorkerType);
++  }
++  aLine.AppendLiteral(",\"worker_script_url\":");
++  if (mFirefoxTraceWorkerScriptURL.IsEmpty()) {
++    aLine.AppendLiteral("null");
++  } else {
++    FirefoxTraceAppendJsonString(aLine, mFirefoxTraceWorkerScriptURL);
++  }
++  aLine.AppendLiteral(",\"worker_window_id\":");
++  if (mFirefoxTraceWorkerId.IsEmpty()) {
++    aLine.AppendLiteral("null");
++  } else {
++    aLine.AppendInt(mFirefoxTraceWorkerWindowId);
++  }
++}
++
 +void XMLHttpRequestMainThread::FirefoxTraceXHRSend(
 +    const nsACString& aBodyKind, const nsACString& aBodyPreview) {
 +  if (!FirefoxTraceXHREnabled()) {
@@ -11268,6 +11375,7 @@ index 1a8e264644..100e4f41f6 100644
 +  line.AppendInt(static_cast<uint64_t>(mFirefoxTraceXHRId));
 +  line.AppendLiteral("\",\"body_kind\":");
 +  FirefoxTraceAppendJsonString(line, aBodyKind);
++  FirefoxTraceAppendXHRWorkerContext(line);
 +  if (FirefoxTraceXHRPreviewKindEnabled("body")) {
 +    line.AppendLiteral(",\"body_preview\":");
 +    nsAutoCString preview(aBodyPreview);
@@ -11404,6 +11512,7 @@ index 1a8e264644..100e4f41f6 100644
 +  line.AppendInt(static_cast<uint64_t>(mFirefoxTraceXHRId));
 +  line.AppendLiteral("\",\"status\":");
 +  line.AppendInt(httpStatus);
++  FirefoxTraceAppendXHRWorkerContext(line);
 +  FirefoxTraceAppendRequestURLField(line, "response_url", responseURL);
 +  line.AppendLiteral(",\"response_type\":");
 +  FirefoxTraceAppendJsonString(line, responseKind);
@@ -11460,7 +11569,7 @@ index 1a8e264644..100e4f41f6 100644
  // This case is hit when the async parameter is outright omitted, which
  // should set it to true (and the username and password to null).
  void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
-@@ -1664,6 +3276,13 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
+@@ -1664,6 +3320,13 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
    mAuthorRequestHeaders.Clear();
    ResetResponse();
  
@@ -11474,7 +11583,7 @@ index 1a8e264644..100e4f41f6 100644
    // Gecko-specific
    mFlagHadUploadListenersOnSend = false;
    mFlagAborted = false;
-@@ -1679,7 +3298,10 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
+@@ -1679,7 +3342,10 @@ void XMLHttpRequestMainThread::Open(const nsACString& aMethod,
    // Step 12
    if (mState != XMLHttpRequest_Binding::OPENED) {
      mState = XMLHttpRequest_Binding::OPENED;
@@ -11485,7 +11594,7 @@ index 1a8e264644..100e4f41f6 100644
    }
  }
  
-@@ -2033,6 +3655,7 @@ XMLHttpRequestMainThread::OnStartRequest(nsIRequest* request) {
+@@ -2033,6 +3699,7 @@ XMLHttpRequestMainThread::OnStartRequest(nsIRequest* request) {
    if (mErrorLoad == ErrorType::eOK) {
      ChangeState(XMLHttpRequest_Binding::HEADERS_RECEIVED);
    }
@@ -11493,7 +11602,7 @@ index 1a8e264644..100e4f41f6 100644
  
    ResetResponse();
  
-@@ -2540,6 +4163,11 @@ void XMLHttpRequestMainThread::ChangeStateToDoneInternal() {
+@@ -2540,6 +4207,11 @@ void XMLHttpRequestMainThread::ChangeStateToDoneInternal() {
  
    // Per spec, fire readystatechange=4/done before final error events.
    ChangeState(XMLHttpRequest_Binding::DONE, true);
@@ -11505,7 +11614,7 @@ index 1a8e264644..100e4f41f6 100644
  
    // Per spec, if we failed in the upload phase, fire a final error
    // and loadend events for the upload after readystatechange=4/done.
-@@ -3024,6 +4652,12 @@ void XMLHttpRequestMainThread::Send(
+@@ -3024,6 +4696,12 @@ void XMLHttpRequestMainThread::Send(
      return;
    }
  
@@ -11518,7 +11627,7 @@ index 1a8e264644..100e4f41f6 100644
    if (aData.IsNull()) {
      SendInternal(nullptr, false, aRv);
      return;
-@@ -3368,6 +5002,7 @@ void XMLHttpRequestMainThread::SetRequestHeader(const nsACString& aName,
+@@ -3368,6 +5046,7 @@ void XMLHttpRequestMainThread::SetRequestHeader(const nsACString& aName,
    } else {
      mAuthorRequestHeaders.MergeOrSet(aName, value);
    }
@@ -11527,7 +11636,7 @@ index 1a8e264644..100e4f41f6 100644
  
  void XMLHttpRequestMainThread::SetTimeout(uint32_t aTimeout, ErrorResult& aRv) {
 diff --git a/dom/xhr/XMLHttpRequestMainThread.h b/dom/xhr/XMLHttpRequestMainThread.h
-index ce1d41936c..f27ea9e664 100644
+index ce1d41936c..84a1e5f4eb 100644
 --- a/dom/xhr/XMLHttpRequestMainThread.h
 +++ b/dom/xhr/XMLHttpRequestMainThread.h
 @@ -8,6 +8,7 @@
@@ -11538,7 +11647,18 @@ index ce1d41936c..f27ea9e664 100644
  #include "nsISupportsUtils.h"
  #include "nsIURI.h"
  #include "mozilla/dom/Document.h"
-@@ -290,6 +291,13 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
+@@ -284,12 +285,25 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
+ 
+   virtual XMLHttpRequestUpload* GetUpload(ErrorResult& aRv) override;
+ 
++  void SetFirefoxTraceWorkerContext(const nsACString& aWorkerId,
++                                    const nsACString& aWorkerType,
++                                    const nsACString& aWorkerScriptURL,
++                                    uint64_t aWorkerWindowId);
++
+  private:
+   virtual ~XMLHttpRequestMainThread();
+ 
    nsresult MaybeSilentSendFailure(nsresult aRv);
    void SendInternal(const BodyExtractorBase* aBody,
                      bool aBodyIsDocumentOrString, ErrorResult& aRv);
@@ -11549,10 +11669,11 @@ index ce1d41936c..f27ea9e664 100644
 +  void FirefoxTraceXHRSend(const nsACString& aBodyKind,
 +                           const nsACString& aBodyPreview);
 +  void FirefoxTraceXHRDone(nsresult aStatus);
++  void FirefoxTraceAppendXHRWorkerContext(nsACString& aLine) const;
  
    bool IsCrossSiteCORSRequest() const;
    bool IsDeniedCrossSiteCORSRequest();
-@@ -736,6 +744,11 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
+@@ -736,6 +750,15 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
  
    RequestHeaders mAuthorRequestHeaders;
  
@@ -11560,9 +11681,38 @@ index ce1d41936c..f27ea9e664 100644
 +  bool mFirefoxTraceXHRDoneLogged = false;
 +  nsCString mFirefoxTraceXHRMethod;
 +  nsCString mFirefoxTraceXHRURL;
++  nsCString mFirefoxTraceWorkerId;
++  nsCString mFirefoxTraceWorkerType;
++  nsCString mFirefoxTraceWorkerScriptURL;
++  uint64_t mFirefoxTraceWorkerWindowId = 0;
 +
    // Helper object to manage our XPCOM scriptability bits
    nsXMLHttpRequestXPCOMifier* mXPCOMifier;
+ 
+diff --git a/dom/xhr/XMLHttpRequestWorker.cpp b/dom/xhr/XMLHttpRequestWorker.cpp
+index c56019fd0c..a46ee0d611 100644
+--- a/dom/xhr/XMLHttpRequestWorker.cpp
++++ b/dom/xhr/XMLHttpRequestWorker.cpp
+@@ -769,6 +769,20 @@ bool Proxy::Init(WorkerPrivate* aWorkerPrivate) {
+                   aWorkerPrivate->GetPerformanceStorage(),
+                   aWorkerPrivate->CSPEventListener());
+ 
++  nsAutoCString workerId;
++  workerId.AppendPrintf("worker_%p", aWorkerPrivate);
++  nsAutoCString workerType(aWorkerPrivate->IsServiceWorker()   ? "service"
++                             : aWorkerPrivate->IsSharedWorker() ? "shared"
++                                                                : "dedicated");
++  nsAutoCString workerScriptURL;
++  if (nsIURI* workerURI = aWorkerPrivate->GetBaseURI()) {
++    Unused << workerURI->GetSpec(workerScriptURL);
++  } else {
++    CopyUTF16toUTF8(aWorkerPrivate->ScriptURL(), workerScriptURL);
++  }
++  mXHR->SetFirefoxTraceWorkerContext(workerId, workerType, workerScriptURL,
++                                     aWorkerPrivate->WindowID());
++
+   mXHR->SetParameters(mMozAnon, mMozSystem);
+   mXHR->SetClientInfoAndController(mClientInfo, mController);
  
 diff --git a/js/src/jit/CacheIR.cpp b/js/src/jit/CacheIR.cpp
 index 3f7e478b36..9e315c77f1 100644
@@ -17429,7 +17579,7 @@ index a0ca1365c9..855cf4febe 100644
      aRemoveCookieCallback(purgeList[i]);
    }
 diff --git a/netwerk/protocol/http/HttpChannelParent.cpp b/netwerk/protocol/http/HttpChannelParent.cpp
-index e43fe41337..77c79e4631 100644
+index e43fe41337..ede99dc372 100644
 --- a/netwerk/protocol/http/HttpChannelParent.cpp
 +++ b/netwerk/protocol/http/HttpChannelParent.cpp
 @@ -8,6 +8,14 @@
@@ -17455,13 +17605,13 @@ index e43fe41337..77c79e4631 100644
  #include "nsQueryObject.h"
  #include "nsIMultiPartChannel.h"
  #include "nsIViewSourceChannel.h"
-@@ -103,6 +112,226 @@ using namespace mozilla::ipc;
+@@ -103,6 +112,249 @@ using namespace mozilla::ipc;
  
  namespace mozilla::net {
  
 +namespace {
 +
-+bool FirefoxTraceHttpRawEnabled() {
++bool FirefoxTraceHttpBaseEnabled() {
 +  const char* enabled = getenv("FIREFOX_TRACE_ENABLE");
 +  if (!enabled || !enabled[0] || strcmp(enabled, "0") == 0) return false;
 +  // HttpChannelParent runs in the parent process, so it does not receive the
@@ -17481,8 +17631,29 @@ index e43fe41337..77c79e4631 100644
 +        *previousState = '\0';
 +      }
 +      if (strstr(contents, "\"enabled\": false") ||
-+          strstr(contents, "\"enabled\":false") ||
-+          strstr(contents, "\"http_raw\": false") ||
++          strstr(contents, "\"enabled\":false")) {
++        return false;
++      }
++    }
++  }
++  return true;
++}
++
++bool FirefoxTraceHttpRawEnabled() {
++  if (!FirefoxTraceHttpBaseEnabled()) return false;
++  const char* controlPath = getenv("FIREFOX_TRACE_CONTROL_FILE");
++  if (!controlPath || !controlPath[0]) controlPath = getenv("TRACE_CONTROL_FILE");
++  if (controlPath && controlPath[0]) {
++    FILE* control = fopen(controlPath, "r");
++    if (control) {
++      char contents[8193];
++      size_t size = fread(contents, 1, sizeof(contents) - 1, control);
++      fclose(control);
++      contents[size] = '\0';
++      if (char* previousState = strstr(contents, "\"previous_state\"")) {
++        *previousState = '\0';
++      }
++      if (strstr(contents, "\"http_raw\": false") ||
 +          strstr(contents, "\"http_raw\":false")) {
 +        return false;
 +      }
@@ -17590,7 +17761,7 @@ index e43fe41337..77c79e4631 100644
 +void FirefoxTraceHttpWriteRequestHeaders(
 +    const nsHttpHeaderArray& aHeaders, const nsACString& aMethod,
 +    HttpBaseChannel* aChannel, dom::BrowserParent* aBrowserParent) {
-+  if (!aChannel || !FirefoxTraceHttpRawEnabled() ||
++  if (!aChannel || !FirefoxTraceHttpBaseEnabled() ||
 +      !FirefoxTraceHttpRequestHeadersEnabled()) {
 +    return;
 +  }
@@ -17611,6 +17782,8 @@ index e43fe41337..77c79e4631 100644
 +  line.AppendLiteral(
 +      "{\"schema\":\"firefox_trace.http.v1\",\"type\":\"http.request_headers\",\"ts_us\":");
 +  line.AppendInt(static_cast<int64_t>(PR_Now()));
++  line.AppendLiteral(
++      ",\"stage\":\"final_channel\",\"header_provenance\":\"final_http_channel\"");
 +  line.AppendLiteral(",\"channel_id\":");
 +  line.AppendInt(aChannel->ChannelId());
 +  line.AppendLiteral(",\"method\":");
@@ -17682,7 +17855,7 @@ index e43fe41337..77c79e4631 100644
  HttpChannelParent::HttpChannelParent(dom::BrowserParent* iframeEmbedding,
                                       nsILoadContext* aLoadContext,
                                       PBOverrideStatus aOverrideStatus)
-@@ -1301,6 +1530,12 @@ HttpChannelParent::OnStartRequest(nsIRequest* aRequest) {
+@@ -1301,6 +1553,12 @@ HttpChannelParent::OnStartRequest(nsIRequest* aRequest) {
    // !!! We need to lock headers and please don't forget to unlock them !!!
    requestHead->Enter();
  
@@ -17695,7 +17868,7 @@ index e43fe41337..77c79e4631 100644
    nsHttpHeaderArray cleanedUpRequestHeaders;
    bool cleanedUpRequest = false;
    if (requestHead->HasHeader(nsHttp::Cookie)) {
-@@ -1526,6 +1761,66 @@ HttpChannelParent::OnDataAvailable(nsIRequest* aRequest,
+@@ -1526,6 +1784,66 @@ HttpChannelParent::OnDataAvailable(nsIRequest* aRequest,
      return rv;
    }
  
@@ -17955,3 +18128,524 @@ index 70e6096316..d2ec8e489d 100644
          .raw_line("pub use self::root::*;")
          // Tell cargo to invalidate the built crate whenever any of the
          // included header files changed.
+diff --git a/xpcom/tests/unit/data/SmallApp.app/Contents/Info.plist b/xpcom/tests/unit/data/SmallApp.app/Contents/Info.plist
+deleted file mode 100644
+index 8388fa2a55..0000000000
+--- a/xpcom/tests/unit/data/SmallApp.app/Contents/Info.plist
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="UTF-8"?>
+-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+-<plist version="1.0">
+-<dict>
+-	<key>CFBundleDevelopmentRegion</key>
+-	<string>English</string>
+-	<key>CFBundleExecutable</key>
+-	<string>SmallApp</string>
+-	<key>CFBundleIdentifier</key>
+-	<string>com.yourcompany.SmallApp</string>
+-	<key>CFBundleInfoDictionaryVersion</key>
+-	<string>6.0</string>
+-	<key>CFBundleName</key>
+-	<string>SmallApp</string>
+-	<key>CFBundlePackageType</key>
+-	<string>APPL</string>
+-	<key>CFBundleSignature</key>
+-	<string>????</string>
+-	<key>CFBundleVersion</key>
+-	<string>1.0</string>
+-	<key>NSMainNibFile</key>
+-	<string>MainMenu</string>
+-	<key>NSPrincipalClass</key>
+-	<string>NSApplication</string>
+-</dict>
+-</plist>
+diff --git a/xpcom/tests/unit/data/SmallApp.app/Contents/MacOS/SmallApp b/xpcom/tests/unit/data/SmallApp.app/Contents/MacOS/SmallApp
+deleted file mode 100755
+index c821003d341b16cbeb27b627ed8a3fd8cb9959c3..0000000000000000000000000000000000000000
+GIT binary patch
+literal 0
+HcmV?d00001
+
+literal 37988
+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
+
+diff --git a/xpcom/tests/unit/data/SmallApp.app/Contents/PkgInfo b/xpcom/tests/unit/data/SmallApp.app/Contents/PkgInfo
+deleted file mode 100644
+index bd04210fb4..0000000000
+--- a/xpcom/tests/unit/data/SmallApp.app/Contents/PkgInfo
++++ /dev/null
+@@ -1 +0,0 @@
+-APPL????
+\ No newline at end of file
+diff --git a/xpcom/tests/unit/data/SmallApp.app/Contents/Resources/English.lproj/InfoPlist.strings b/xpcom/tests/unit/data/SmallApp.app/Contents/Resources/English.lproj/InfoPlist.strings
+deleted file mode 100644
+index 5e45963c382ba690b781b953a00585212b898ac5..0000000000000000000000000000000000000000
+GIT binary patch
+literal 0
+HcmV?d00001
+
+literal 92
+zcmW-XQ3`+{5C!MkQ~2$No+IcIkqMDxWCV8j>LCj|yTg2Mz+o9F%uHlf9u}h9EuK`F
+a!Y*1dX%G66ZqL#C$|bw0ZoP5@jOGW1ArT7z
+
+diff --git a/xpcom/tests/unit/data/SmallApp.app/Contents/Resources/English.lproj/MainMenu.nib/designable.nib b/xpcom/tests/unit/data/SmallApp.app/Contents/Resources/English.lproj/MainMenu.nib/designable.nib
+deleted file mode 100644
+index 59f8803c5d..0000000000
+--- a/xpcom/tests/unit/data/SmallApp.app/Contents/Resources/English.lproj/MainMenu.nib/designable.nib
++++ /dev/null
+@@ -1,343 +0,0 @@
+-<?xml version="1.0" encoding="UTF-8"?>
+-<archive type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="7.02">
+-	<data>
+-		<int key="IBDocument.SystemTarget">0</int>
+-		<string key="IBDocument.SystemVersion">9E17</string>
+-		<string key="IBDocument.InterfaceBuilderVersion">644</string>
+-		<string key="IBDocument.AppKitVersion">949.33</string>
+-		<string key="IBDocument.HIToolboxVersion">352.00</string>
+-		<object class="NSMutableArray" key="IBDocument.EditedObjectIDs">
+-			<bool key="EncodedWithXMLCoder">YES</bool>
+-			<integer value="29"/>
+-		</object>
+-		<object class="NSArray" key="IBDocument.PluginDependencies">
+-			<bool key="EncodedWithXMLCoder">YES</bool>
+-			<string>com.apple.InterfaceBuilderKit</string>
+-			<string>com.apple.InterfaceBuilder.CocoaPlugin</string>
+-		</object>
+-		<object class="NSMutableArray" key="IBDocument.RootObjects" id="1048">
+-			<bool key="EncodedWithXMLCoder">YES</bool>
+-			<object class="NSCustomObject" id="1021">
+-				<string key="NSClassName">NSApplication</string>
+-			</object>
+-			<object class="NSCustomObject" id="1014">
+-				<string key="NSClassName">FirstResponder</string>
+-			</object>
+-			<object class="NSCustomObject" id="1050">
+-				<string key="NSClassName">NSApplication</string>
+-			</object>
+-			<object class="NSMenu" id="649796088">
+-				<string key="NSTitle">AMainMenu</string>
+-				<object class="NSMutableArray" key="NSMenuItems">
+-					<bool key="EncodedWithXMLCoder">YES</bool>
+-					<object class="NSMenuItem" id="694149608">
+-						<reference key="NSMenu" ref="649796088"/>
+-						<string key="NSTitle">NewApplication</string>
+-						<string key="NSKeyEquiv"/>
+-						<int key="NSKeyEquivModMask">1048576</int>
+-						<int key="NSMnemonicLoc">2147483647</int>
+-						<object class="NSCustomResource" key="NSOnImage" id="35465992">
+-							<string key="NSClassName">NSImage</string>
+-							<string key="NSResourceName">NSMenuCheckmark</string>
+-						</object>
+-						<object class="NSCustomResource" key="NSMixedImage" id="591987212">
+-							<string key="NSClassName">NSImage</string>
+-							<string key="NSResourceName">NSMenuMixedState</string>
+-						</object>
+-						<string key="NSAction">submenuAction:</string>
+-						<object class="NSMenu" key="NSSubmenu" id="110575045">
+-							<string key="NSTitle">NewApplication</string>
+-							<object class="NSMutableArray" key="NSMenuItems">
+-								<bool key="EncodedWithXMLCoder">YES</bool>
+-								<object class="NSMenuItem" id="632727374">
+-									<reference key="NSMenu" ref="110575045"/>
+-									<string key="NSTitle">Quit NewApplication</string>
+-									<string key="NSKeyEquiv">q</string>
+-									<int key="NSKeyEquivModMask">1048576</int>
+-									<int key="NSMnemonicLoc">2147483647</int>
+-									<reference key="NSOnImage" ref="35465992"/>
+-									<reference key="NSMixedImage" ref="591987212"/>
+-								</object>
+-							</object>
+-							<string key="NSName">_NSAppleMenu</string>
+-						</object>
+-					</object>
+-					<object class="NSMenuItem" id="379814623">
+-						<reference key="NSMenu" ref="649796088"/>
+-						<string key="NSTitle">File</string>
+-						<string key="NSKeyEquiv"/>
+-						<int key="NSKeyEquivModMask">1048576</int>
+-						<int key="NSMnemonicLoc">2147483647</int>
+-						<reference key="NSOnImage" ref="35465992"/>
+-						<reference key="NSMixedImage" ref="591987212"/>
+-					</object>
+-					<object class="NSMenuItem" id="952259628">
+-						<reference key="NSMenu" ref="649796088"/>
+-						<string key="NSTitle">Edit</string>
+-						<string key="NSKeyEquiv"/>
+-						<int key="NSKeyEquivModMask">1048576</int>
+-						<int key="NSMnemonicLoc">2147483647</int>
+-						<reference key="NSOnImage" ref="35465992"/>
+-						<reference key="NSMixedImage" ref="591987212"/>
+-					</object>
+-					<object class="NSMenuItem" id="626404410">
+-						<reference key="NSMenu" ref="649796088"/>
+-						<string key="NSTitle">Format</string>
+-						<string key="NSKeyEquiv"/>
+-						<int key="NSKeyEquivModMask">1048576</int>
+-						<int key="NSMnemonicLoc">2147483647</int>
+-						<reference key="NSOnImage" ref="35465992"/>
+-						<reference key="NSMixedImage" ref="591987212"/>
+-					</object>
+-					<object class="NSMenuItem" id="586577488">
+-						<reference key="NSMenu" ref="649796088"/>
+-						<string key="NSTitle">View</string>
+-						<string key="NSKeyEquiv"/>
+-						<int key="NSKeyEquivModMask">1048576</int>
+-						<int key="NSMnemonicLoc">2147483647</int>
+-						<reference key="NSOnImage" ref="35465992"/>
+-						<reference key="NSMixedImage" ref="591987212"/>
+-					</object>
+-					<object class="NSMenuItem" id="713487014">
+-						<reference key="NSMenu" ref="649796088"/>
+-						<string key="NSTitle">Window</string>
+-						<string key="NSKeyEquiv"/>
+-						<int key="NSKeyEquivModMask">1048576</int>
+-						<int key="NSMnemonicLoc">2147483647</int>
+-						<reference key="NSOnImage" ref="35465992"/>
+-						<reference key="NSMixedImage" ref="591987212"/>
+-					</object>
+-					<object class="NSMenuItem" id="391199113">
+-						<reference key="NSMenu" ref="649796088"/>
+-						<string key="NSTitle">Help</string>
+-						<string key="NSKeyEquiv"/>
+-						<int key="NSKeyEquivModMask">1048576</int>
+-						<int key="NSMnemonicLoc">2147483647</int>
+-						<reference key="NSOnImage" ref="35465992"/>
+-						<reference key="NSMixedImage" ref="591987212"/>
+-					</object>
+-				</object>
+-				<string key="NSName">_NSMainMenu</string>
+-			</object>
+-		</object>
+-		<object class="IBObjectContainer" key="IBDocument.Objects">
+-			<object class="NSMutableArray" key="connectionRecords">
+-				<bool key="EncodedWithXMLCoder">YES</bool>
+-				<object class="IBConnectionRecord">
+-					<object class="IBActionConnection" key="connection">
+-						<string key="label">terminate:</string>
+-						<reference key="source" ref="1014"/>
+-						<reference key="destination" ref="632727374"/>
+-					</object>
+-					<int key="connectionID">369</int>
+-				</object>
+-			</object>
+-			<object class="IBMutableOrderedSet" key="objectRecords">
+-				<object class="NSArray" key="orderedObjects">
+-					<bool key="EncodedWithXMLCoder">YES</bool>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">0</int>
+-						<object class="NSArray" key="object" id="1049">
+-							<bool key="EncodedWithXMLCoder">YES</bool>
+-						</object>
+-						<reference key="children" ref="1048"/>
+-						<nil key="parent"/>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">-2</int>
+-						<reference key="object" ref="1021"/>
+-						<reference key="parent" ref="1049"/>
+-						<string type="base64-UTF8" key="objectName">RmlsZSdzIE93bmVyA</string>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">-1</int>
+-						<reference key="object" ref="1014"/>
+-						<reference key="parent" ref="1049"/>
+-						<string key="objectName">First Responder</string>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">-3</int>
+-						<reference key="object" ref="1050"/>
+-						<reference key="parent" ref="1049"/>
+-						<string key="objectName">Application</string>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">29</int>
+-						<reference key="object" ref="649796088"/>
+-						<object class="NSMutableArray" key="children">
+-							<bool key="EncodedWithXMLCoder">YES</bool>
+-							<reference ref="713487014"/>
+-							<reference ref="694149608"/>
+-							<reference ref="391199113"/>
+-							<reference ref="952259628"/>
+-							<reference ref="379814623"/>
+-							<reference ref="586577488"/>
+-							<reference ref="626404410"/>
+-						</object>
+-						<reference key="parent" ref="1049"/>
+-						<string key="objectName">MainMenu</string>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">19</int>
+-						<reference key="object" ref="713487014"/>
+-						<object class="NSMutableArray" key="children">
+-							<bool key="EncodedWithXMLCoder">YES</bool>
+-						</object>
+-						<reference key="parent" ref="649796088"/>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">56</int>
+-						<reference key="object" ref="694149608"/>
+-						<object class="NSMutableArray" key="children">
+-							<bool key="EncodedWithXMLCoder">YES</bool>
+-							<reference ref="110575045"/>
+-						</object>
+-						<reference key="parent" ref="649796088"/>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">103</int>
+-						<reference key="object" ref="391199113"/>
+-						<object class="NSMutableArray" key="children">
+-							<bool key="EncodedWithXMLCoder">YES</bool>
+-						</object>
+-						<reference key="parent" ref="649796088"/>
+-						<string key="objectName">1</string>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">217</int>
+-						<reference key="object" ref="952259628"/>
+-						<object class="NSMutableArray" key="children">
+-							<bool key="EncodedWithXMLCoder">YES</bool>
+-						</object>
+-						<reference key="parent" ref="649796088"/>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">83</int>
+-						<reference key="object" ref="379814623"/>
+-						<object class="NSMutableArray" key="children">
+-							<bool key="EncodedWithXMLCoder">YES</bool>
+-						</object>
+-						<reference key="parent" ref="649796088"/>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">57</int>
+-						<reference key="object" ref="110575045"/>
+-						<object class="NSMutableArray" key="children">
+-							<bool key="EncodedWithXMLCoder">YES</bool>
+-							<reference ref="632727374"/>
+-						</object>
+-						<reference key="parent" ref="694149608"/>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">136</int>
+-						<reference key="object" ref="632727374"/>
+-						<reference key="parent" ref="110575045"/>
+-						<string key="objectName">1111</string>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">295</int>
+-						<reference key="object" ref="586577488"/>
+-						<object class="NSMutableArray" key="children">
+-							<bool key="EncodedWithXMLCoder">YES</bool>
+-						</object>
+-						<reference key="parent" ref="649796088"/>
+-					</object>
+-					<object class="IBObjectRecord">
+-						<int key="objectID">299</int>
+-						<reference key="object" ref="626404410"/>
+-						<object class="NSMutableArray" key="children">
+-							<bool key="EncodedWithXMLCoder">YES</bool>
+-						</object>
+-						<reference key="parent" ref="649796088"/>
+-					</object>
+-				</object>
+-			</object>
+-			<object class="NSMutableDictionary" key="flattenedProperties">
+-				<bool key="EncodedWithXMLCoder">YES</bool>
+-				<object class="NSMutableArray" key="dict.sortedKeys">
+-					<bool key="EncodedWithXMLCoder">YES</bool>
+-					<string>-1.IBPluginDependency</string>
+-					<string>-2.IBPluginDependency</string>
+-					<string>-3.IBPluginDependency</string>
+-					<string>103.IBPluginDependency</string>
+-					<string>103.ImportedFromIB2</string>
+-					<string>136.IBPluginDependency</string>
+-					<string>136.ImportedFromIB2</string>
+-					<string>19.IBPluginDependency</string>
+-					<string>19.ImportedFromIB2</string>
+-					<string>217.IBPluginDependency</string>
+-					<string>217.ImportedFromIB2</string>
+-					<string>29.IBEditorWindowLastContentRect</string>
+-					<string>29.IBPluginDependency</string>
+-					<string>29.ImportedFromIB2</string>
+-					<string>29.WindowOrigin</string>
+-					<string>29.editorWindowContentRectSynchronizationRect</string>
+-					<string>295.IBPluginDependency</string>
+-					<string>299.IBPluginDependency</string>
+-					<string>56.IBPluginDependency</string>
+-					<string>56.ImportedFromIB2</string>
+-					<string>57.IBEditorWindowLastContentRect</string>
+-					<string>57.IBPluginDependency</string>
+-					<string>57.ImportedFromIB2</string>
+-					<string>57.editorWindowContentRectSynchronizationRect</string>
+-					<string>83.IBPluginDependency</string>
+-					<string>83.ImportedFromIB2</string>
+-				</object>
+-				<object class="NSMutableArray" key="dict.values">
+-					<bool key="EncodedWithXMLCoder">YES</bool>
+-					<string>com.apple.InterfaceBuilder.CocoaPlugin</string>
+-					<string>com.apple.InterfaceBuilderKit</string>
+-					<string>com.apple.InterfaceBuilderKit</string>
+-					<string>com.apple.InterfaceBuilder.CocoaPlugin</string>
+-					<integer value="1" id="9"/>
+-					<string>com.apple.InterfaceBuilder.CocoaPlugin</string>
+-					<reference ref="9"/>
+-					<string>com.apple.InterfaceBuilder.CocoaPlugin</string>
+-					<reference ref="9"/>
+-					<string>com.apple.InterfaceBuilder.CocoaPlugin</string>
+-					<reference ref="9"/>
+-					<string>{{0, 975}, {478, 20}}</string>
+-					<string>com.apple.InterfaceBuilder.CocoaPlugin</string>
+-					<reference ref="9"/>
+-					<string>{74, 862}</string>
+-					<string>{{6, 978}, {478, 20}}</string>
+-					<string>com.apple.InterfaceBuilder.CocoaPlugin</string>
+-					<string>com.apple.InterfaceBuilder.CocoaPlugin</string>
+-					<string>com.apple.InterfaceBuilder.CocoaPlugin</string>
+-					<reference ref="9"/>
+-					<string>{{12, 952}, {218, 23}}</string>
+-					<string>com.apple.InterfaceBuilder.CocoaPlugin</string>
+-					<reference ref="9"/>
+-					<string>{{23, 794}, {245, 183}}</string>
+-					<string>com.apple.InterfaceBuilder.CocoaPlugin</string>
+-					<reference ref="9"/>
+-				</object>
+-			</object>
+-			<object class="NSMutableDictionary" key="unlocalizedProperties">
+-				<bool key="EncodedWithXMLCoder">YES</bool>
+-				<object class="NSArray" key="dict.sortedKeys">
+-					<bool key="EncodedWithXMLCoder">YES</bool>
+-				</object>
+-				<object class="NSMutableArray" key="dict.values">
+-					<bool key="EncodedWithXMLCoder">YES</bool>
+-				</object>
+-			</object>
+-			<nil key="activeLocalization"/>
+-			<object class="NSMutableDictionary" key="localizations">
+-				<bool key="EncodedWithXMLCoder">YES</bool>
+-				<object class="NSArray" key="dict.sortedKeys">
+-					<bool key="EncodedWithXMLCoder">YES</bool>
+-				</object>
+-				<object class="NSMutableArray" key="dict.values">
+-					<bool key="EncodedWithXMLCoder">YES</bool>
+-				</object>
+-			</object>
+-			<nil key="sourceID"/>
+-			<int key="maxID">374</int>
+-		</object>
+-		<object class="IBClassDescriber" key="IBDocument.Classes"/>
+-		<int key="IBDocument.localizationMode">0</int>
+-		<string key="IBDocument.LastKnownRelativeProjectPath">../SmallApp.xcodeproj</string>
+-		<int key="IBDocument.defaultPropertyAccessControl">3</int>
+-	</data>
+-</archive>
+diff --git a/xpcom/tests/unit/data/SmallApp.app/Contents/Resources/English.lproj/MainMenu.nib/keyedobjects.nib b/xpcom/tests/unit/data/SmallApp.app/Contents/Resources/English.lproj/MainMenu.nib/keyedobjects.nib
+deleted file mode 100644
+index bb27d4a5d624c1084b3fc48c2e8a3db66fa945a6..0000000000000000000000000000000000000000
+GIT binary patch
+literal 0
+HcmV?d00001
+
+literal 3356
+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
+

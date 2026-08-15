@@ -187,6 +187,50 @@ class TraceFinalizeTest(unittest.TestCase):
         self.assertEqual(rows[1]["script_hash_source"], "script.resource.raw_sha256")
         self.assertEqual(rows[1]["script_artifact_path"], "scripts/" + "a" * 64 + ".js")
 
+    def test_request_timeline_separates_explicit_and_final_headers(self):
+        rows = [
+            {
+                "type": "xhr.open", "pid": 7, "request_id": "xhr_1",
+                "method": "POST", "url": "https://fixture.test/create", "ts_us": 100,
+                "_source_file": "firefox-xhr-7.jsonl", "_source_line": 1,
+            },
+            {
+                "type": "xhr.header", "pid": 7, "request_id": "xhr_1",
+                "detail_name": "x-secsdk-csrf-token", "detail_value": "TOKEN",
+                "ts_us": 110, "_source_file": "firefox-xhr-7.jsonl", "_source_line": 2,
+            },
+            {
+                "type": "xhr.send", "pid": 7, "request_id": "xhr_1",
+                "ts_us": 120, "_source_file": "firefox-xhr-7.jsonl", "_source_line": 3,
+            },
+            {
+                "type": "http.request_headers", "channel_id": 99,
+                "method": "POST", "url": "https://fixture.test/create", "ts_us": 130,
+                "stage": "final_channel", "header_provenance": "final_http_channel",
+                "headers": {
+                    "x-secsdk-csrf-token": {"value": "TOKEN"},
+                    "Cookie": {"value": "sid=SESSION"},
+                },
+                "headers_count": 2, "headers_truncated": False,
+                "_source_file": "firefox-http-raw-1.jsonl", "_source_line": 1,
+            },
+        ]
+
+        result = trace_finalize.build_request_timelines(rows)
+
+        self.assertEqual(len(result["requests"]), 1)
+        request = result["requests"][0]
+        self.assertEqual(
+            request["explicit_headers"]["x-secsdk-csrf-token"]["provenance"],
+            "xhr.setRequestHeader",
+        )
+        self.assertEqual(request["final_channel"]["channel_id"], 99)
+        self.assertEqual(
+            request["final_channel"]["header_provenance"], "final_http_channel"
+        )
+        self.assertFalse(request["final_channel"]["join"]["exact_id"])
+        self.assertEqual(request["final_channel"]["join"]["candidate_count"], 1)
+
     def test_trace_health_marks_limits_without_claiming_runtime_change(self):
         health = trace_finalize.build_trace_health(
             {"env": {"TRACE_DOM": "1", "TRACE_DOM_LIMIT_EVENTS": "2"}},

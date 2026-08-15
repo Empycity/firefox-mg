@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Firefox Trace cross-realm constructor fixture</title>
+<body>
+<pre id="result">pending</pre>
+<script>
+const frame = document.createElement("iframe");
+frame.srcdoc = "<!doctype html><body>child</body>";
+frame.addEventListener("load", () => {
+  const callback = () => {};
+  const observer = new frame.contentWindow.IntersectionObserver(callback);
+  observer.observe(frame.contentDocument.body);
+  observer.disconnect();
+  document.getElementById("result").textContent = "ok";
+  document.documentElement.dataset.traceCrossRealm = "ok";
+});
+document.body.appendChild(frame);
+</script>

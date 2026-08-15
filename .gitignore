@@ -21,6 +21,9 @@
 /examples/**/.run-stats.json
 /examples/douyin/creator-runtime-contract.json
 /examples/douyin/creator-live-contract.json
+/examples/douyin/cookie.txt
+/examples/douyin/.analysis/
+/examples/douyin/security-runtime.json
 
 # Local agent/editor/cache state.
 /.codex/

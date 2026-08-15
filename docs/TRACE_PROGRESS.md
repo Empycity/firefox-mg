@@ -6,6 +6,24 @@
 > 原始证据，便于追溯实现变更；新站点的脚本、字段、hash、长度和 trace 路径必须写入
 > `examples/<case>/`，不得从本归档复制到通用文档或默认配置。
 
+## 2026-08-10：多阶段请求链验证后的通用改进项
+
+- `[已验证]` 本地 VM 动态 query 签名、Python HTTP transport、响应下发临时凭据、
+  响应下发素材标识和最小显式 header 可以组成完整的多阶段请求闭环。
+- `[已验证]` 首个鉴权请求、素材校验请求和最终提交请求各自生成 fresh 动态字段，
+  不同请求之间不复用。XHR open 时已存在的 query 字段不能错误归因于 send body。
+- `[待实现]` finalize 输出一等 request phase timeline，直接呈现 open/body/send/
+  response 的阶段和生成时机。
+- `[待实现]` finalize 输出结构化 response field -> later URL/body/header leaf 的 exact
+  SHA-256 propagation edges，并保留完整候选集合。
+- `[待实现]` replay vector 区分页面显式头、CookieService/session 层和最终 HTTP
+  channel 层，支持最小请求合同分析。
+- `[待实现]` Cookie 分析增加完整 profile-domain inventory；当前 document 的 Cookie
+  read 只作为 API 视图。
+- `[强约束]` 上述能力作为离线增量索引实现。raw JSONL、full artifact、causal id、
+  source location 和所有 exact candidates 必须保留。性能优化只允许 batch、压缩、
+  content-address 和去重引用，不允许采样或丢弃 full-chain 证据。
+
 ## 2026-08-10：请求字段到 JS producer 的通用闭环
 
 - `trace_finalize.py` 在 `index/causal-index.json` 输出紧凑
@@ -2460,3 +2478,48 @@ obj-aarch64-apple-darwin25.6.0/dist/bin/firefox
 - 已完成：paused 后通过 `trace-control.sh config --module js=0` 热切换已闭环。2026-07-28
   headless smoke 中，config revision 2 和 start revision 3 均收到匹配 ACK；首个目标 XHR 的
   三个事件均带 `control_version=3` 与当前 `config_hash`，并且没有生成 JS trace。
+
+## 2026-08-10：Worker Fetch/XHR 网络上下文完整性
+
+- 根因：Worker XHR 通过主线程代理执行时，早期 `open/header/send/body` 阶段可能同时
+  缺少 `page_url` 和当前 JS caller，被 content filter 丢弃；完成阶段 caller 偶然存在，
+  因而形成只有 `xhr.response` 的孤立 request_id。Worker Fetch 存在同类入口过滤风险。
+- 修复：Worker 创建 XHR 代理时持久化 `worker_id`、`worker_type`、
+  `worker_script_url`、`worker_window_id`；Fetch 入口直接从 `WorkerPrivate` 取得同组上下文。
+  缺少 page/caller 时以 Worker 脚本 URL 作为内容上下文。原始事件、body artifact 与
+  `request_id` 关联规则保持不变。
+- 通用回归夹具：`tests/trace-worker-network.html`、
+  `tests/trace-worker-network.js`。
+- 有头本地验收：
+  - Worker Fetch：`call/request/response/body_chunk/body_artifact/done`，HTTP 200；
+  - Worker XHR：`open/header/send/body/response`，HTTP 200；
+  - XHR 各阶段四个 Worker 字段完全一致；
+  - `trace.degraded=0`；
+  - Gecko 增量构建通过。
+
+## 2026-08-11：DOM 跨 compartment 崩溃修复
+
+- crash reason：`Compartment mismatch`，符号栈落在 `JS_GetPrototype ->
+  FirefoxTraceAppendObjectContract -> FirefoxTraceDOMBinding`。
+- 触发条件：constructor 位于 iframe/Xray realm，而对象参数属于调用方 realm；DOM
+  contract 使用当前 `JSContext` 深读该参数。
+- 修复：在参数合同、receiver/return 合同、对象值快照和 Promise observation 前统一
+  校验 `JS::GetCompartment(object) == js::GetContextCompartment(cx)`。不一致时只写
+  `object_id`、preview 和 `cross_compartment=true`。
+- 回归夹具：`tests/trace-cross-realm-constructor.html`。有头 smoke 页面完成且未崩溃；
+  后续发布回归还应在 args preview/contract 开启时断言 marker 存在。
+- 存储结论：本轮现场 DOM raw 与 categorized 副本占据主要空间。优化方向是 finalize
+  内容寻址/索引引用去重，不关闭原始采集或删除证据字段。
+
+## 2026-08-11：最终 HTTP 请求头独立采集与阶段时间线
+
+- 根因：`HttpChannelParent` 的 `http.request_headers` 误用了 HTTP raw body 总开关；
+  `TRACE_HTTP_RAW=0` 时，即使请求头采集已开，最终 channel headers 仍不落盘。
+- 修复：拆分 Trace base enable 与 HTTP raw enable。最终 headers 由
+  `TRACE_FETCH_REQUEST_HEADERS` 独立控制，raw chunk 仍由 `TRACE_HTTP_RAW` 控制。
+- 事件新增 `stage=final_channel`、`header_provenance=final_http_channel`。
+- finalizer 新增 `index/request-timelines.json`：保留逻辑请求阶段、页面显式头和最终
+  channel 头。跨进程 ID 未贯通前，URL+method+时间关联显式标记为启发式。
+- 回归：Gecko 增量构建成功；本地 XHR/Fetch smoke 在 `TRACE_HTTP_RAW=0` 下记录 4 条
+  `http.request_headers`、0 条 `http.raw`，两个 POST 均关联到逻辑 request_id。
+- Python 回归：finalizer/analyzer/skill 同步测试 21 项通过。
