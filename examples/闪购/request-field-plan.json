@@ -1,0 +1,62 @@
+{
+  "endpoint": "https://app-api.shop.ele.me/xtop/xtop.napos.keeper.login.loginByUsername/2.0",
+  "method": "POST",
+  "fields": {
+    "body": [
+      "__raw__",
+      "metas.shopId",
+      "metas.ksid",
+      "metas.AsuraId",
+      "metas.fire_ua",
+      "metas.fire_umid",
+      "metas.appName",
+      "params.username",
+      "params.password",
+      "params.loginedSessionIds",
+      "params.extraInfo",
+      "params.extraInfo.encrypted",
+      "params.extraInfo.encryptUserName",
+      "params.extraInfo.identifierVersion"
+    ],
+    "headers": [
+      "bx-ua",
+      "bx-umidtoken",
+      "x-eleme-requestid",
+      "x-shard",
+      "content-type",
+      "origin",
+      "referer"
+    ],
+    "cookies": [],
+    "query": []
+  },
+  "classification": {
+    "likely_dynamic": [
+      "bx-ua",
+      "bx-umidtoken",
+      "x-eleme-requestid",
+      "metas.AsuraId",
+      "metas.fire_ua",
+      "metas.fire_umid",
+      "params.username",
+      "params.password"
+    ],
+    "likely_static_or_context": [
+      "content-type",
+      "origin",
+      "referer",
+      "x-shard",
+      "metas.appName",
+      "params.extraInfo.encrypted",
+      "params.extraInfo.encryptUserName",
+      "params.extraInfo.identifierVersion"
+    ],
+    "confirm_in_trace": [
+      "producer JS function",
+      "script SHA-256",
+      "serialization order",
+      "cookie/storage dependencies",
+      "time/random/nonce inputs"
+    ]
+  }
+}
