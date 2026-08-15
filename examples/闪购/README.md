@@ -18,3 +18,20 @@
 Cookie 采集保持关闭。时间、随机值、UMID 和 UA 风控串由本轮页面实时生成，不复用首轮的字段值。
 
 第二轮已完成字段 SHA-256 与 JS 返回值的精确对齐，详见 `round2-analysis.md`。当前证据已足够进入脚本拆分和本地运行时实现。
+
+## 参数实现进度
+
+### 1. `params.username` / `params.password`
+
+`login_crypto.js` 复刻登录 chunk 的 RSA PKCS#1 v1.5 加密边界。公钥使用当前 `getLoginConfig` 响应中的 `result.publicKey`，不将响应密文固定到代码。
+
+```bash
+node examples/闪购/login_crypto_cli.js \
+  '{"publicKey":"PUBLIC_KEY_BASE64","username":"USERNAME","password":"PASSWORD"}'
+```
+
+运行回归：
+
+```bash
+node examples/闪购/test_login_crypto.js
+```
