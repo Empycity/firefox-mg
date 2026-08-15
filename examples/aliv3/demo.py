@@ -21,6 +21,7 @@ import threading
 
 BASE_DIR = Path(__file__).resolve().parent
 feilin_lock = threading.Lock()
+recognizer_lock = threading.Lock()
 recognizer = Recognizer()
 staticPath_key = {
             "3.23.0/sg.050.8d97ad83a8636f23": "6dayfg2n4o2z0je4",
@@ -203,6 +204,7 @@ class Yuekeyun:
         self.sess = requests.Session(impersonate='chrome131')
         self.sess.headers.update(self.headers)
         self.feilinText = ''
+        self.image_path = BASE_DIR / f'.captcha-{uuid.uuid4().hex}.png'
 
         if proxies:
             self.sess.proxies = proxies
@@ -250,10 +252,14 @@ class Yuekeyun:
                 print(f"执行 JS 失败: {e}")
                 return None
 
-    @staticmethod
-    def slide_verify():
-        box, confidence = recognizer.identify_gap(source=str(BASE_DIR / 'Image.png'),
-                                                    verbose=False)
+    def slide_verify(self):
+        with recognizer_lock:
+            box, confidence = recognizer.identify_gap(source=str(self.image_path),
+                                                      verbose=False)
+        try:
+            self.image_path.unlink()
+        except FileNotFoundError:
+            pass
         mouse_x = box[0]
         return int(mouse_x)
 
@@ -419,10 +425,21 @@ class Yuekeyun:
         }
         # logger.success(f'设备配置信息：{devices}')
         self.devices = devices
-        self.feilinText = self.sess.get(
-            url='https://g.alicdn.com/captcha-frontend/FeiLin/' + deviceConfigInfo[3] + '.js').text
-        with open(BASE_DIR / 'feilin.js', 'w', encoding='utf-8') as f:
-            f.write(self.feilinText)
+        feilin_path = BASE_DIR / 'feilin.js'
+        expected_sha = deviceConfigInfo[3].rsplit('.', 1)[-1]
+        cached = False
+        if feilin_path.exists():
+            cached = hashlib.sha256(feilin_path.read_bytes()).hexdigest() == expected_sha
+        if not cached:
+            with feilin_lock:
+                if not feilin_path.exists() or hashlib.sha256(feilin_path.read_bytes()).hexdigest() != expected_sha:
+                    response = self.sess.get(
+                        url='https://g.alicdn.com/captcha-frontend/FeiLin/' + deviceConfigInfo[3] + '.js')
+                    response.raise_for_status()
+                    temp_path = feilin_path.with_suffix('.js.tmp')
+                    temp_path.write_text(response.text, encoding='utf-8')
+                    temp_path.replace(feilin_path)
+        self.feilinText = feilin_path.read_text(encoding='utf-8')
 
     def aliyuncs_CaptchaType_CertifyId(self):
 
@@ -465,7 +482,7 @@ class Yuekeyun:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf254186b) XWEB/11275"
             }
             Image_  = requests.get(Image,headers = headers).content
-            with open(BASE_DIR / 'Image.png','wb') as f:
+            with open(self.image_path,'wb') as f:
                 f.write(Image_)
             # PuzzleImage_ = requests.get(PuzzleImage,headers = headers).content
 
