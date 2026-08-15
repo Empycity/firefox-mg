@@ -291,11 +291,11 @@ Object.defineProperty(window, "frames", {
     }
 })
 
-innerWidth = 1536
-innerHeight = 715
-outerWidth = 1536
-outerHeight = 824
-devicePixelRatio = 1.25;
+innerWidth = 891
+innerHeight = 1280
+outerWidth = 975
+outerHeight = 1280
+devicePixelRatio = 1.5;
 screenLeft = 0;
 screenX = 0;
 screenTop = 0;
@@ -1175,14 +1175,14 @@ Promise2 = {
 
 createTagProto('Bluetooth');
 createTagProto('Navigator');
-Navigator.prototype.hardwareConcurrency = 8;
-Navigator.prototype.userAgent = 'Mozilla/5.0 (Windows NT 10.0; JiSu) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.3.1.7 Safari/537.36';
-Navigator.prototype.appVersion = '5.0 (Windows NT 10.0; JiSu) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.3.1.7 Safari/537.36'
+Navigator.prototype.hardwareConcurrency = 11;
+Navigator.prototype.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0';
+Navigator.prototype.appVersion = '5.0 (Macintosh)'
 Navigator.prototype.appName = 'Netscape';
 Navigator.prototype.appCodeName = 'Mozilla';
-Navigator.prototype.vendor = 'Google Inc.';
-Navigator.prototype.maxTouchPoints = 10;
-Navigator.prototype.platform = 'Win32';
+Navigator.prototype.vendor = '';
+Navigator.prototype.maxTouchPoints = 0;
+Navigator.prototype.platform = 'MacIntel';
 Navigator.prototype.adAuctionComponents = function adAuctionComponents() {
     AsObj.print('adAuctionComponents:::', arguments)
 }
@@ -1332,42 +1332,7 @@ Navigator.prototype.getGamepads = function getGamepads() {
 safeFunction(Navigator.prototype.getGamepads)
 
 Navigator.prototype.deprecatedRunAdAuctionEnforcesKAnonymity = false
-Navigator.prototype.userAgentData = watch({
-    brands:[
-        {
-            "brand": "Chromium",
-            "version": "143"
-        },
-        {
-            "brand": "Not A(Brand",
-            "version": "24"
-        }
-    ],
-    mobile: false,
-    platform: "Windows",
-    getHighEntropyValues: function getHighEntropyValues() {
-        AsObj.print('getHighEntropyValues:::', arguments)
-        return new Promise((resolve, reject) => {    
-            const offer = {
-                brands: [
-                    {
-                        "brand": "Chromium",
-                        "version": "118"
-                    },
-                    {
-                        "brand": "Not A(Brand",
-                        "version": "24"
-                    }
-                ],
-                mobile: false,
-                platform: "Windows",
-                bitness: '64',
-                uaFullVersion:"118.3.1.7"
-            };
-            resolve(offer);
-        });
-    }
-},'userAgentData')
+Navigator.prototype.userAgentData = undefined;
 
 navigator = {};
 navigator.__proto__ = Navigator.prototype;
@@ -1558,16 +1523,16 @@ orientation = {
 };
 orientation.__proto__ = ScreenOrientation.prototype;
 Screen.prototype = Object.assign(Screen.prototype, {
-    availHeight: 824,
+    availHeight: 1728,
     availLeft: 0,
     availTop: 0,
-    availWidth: 1536,
+    availWidth: 1084,
     colorDepth: 24,
-    height: 864,
-    isExtended: true,
+    height: 1728,
+    isExtended: false,
     onchange: null,
     pixelDepth: 24,
-    width: 1536,
+    width: 1117,
     orientation: orientation
 })
 screen = {};
@@ -1577,19 +1542,7 @@ createTagProto('History');
 history = {};
 history.__proto__ = History.prototype;
 
-chrome = {
-    app: {
-        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
-        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
-        getDetails:function getDetails(){},
-        getIsInstalled:function getIsInstalled(){},
-        installState:function installState(){},
-        isInstalled: false,
-        runningState: function runningState(){}
-    },
-    csi: function csi() { },
-    loadTimes: function loadTimes() { },
-}
+chrome = undefined;
 
 createTagProto('Storage');
 local = {
@@ -1855,92 +1808,82 @@ for(let prop of ['debug','error','info','log','trace','warn']){
 }
 
 
-// 环境数组固定
+// Firefox trace baseline. Stable capability fields live in this object;
+// per-run values are assigned below before the object is exposed to FeiLin.
+const args = process_.argv.slice(2);
+deviceConfig = JSON.parse(args[0]);
 window._ORDVD_huanj = {
-    "dghfh565": "W.10051",
-    "asdfasdf": 1.5,
+    "dghfh565": "W.10054",
+    "asdfasdf": "1.5",
     "sdfgsdf": 11,
     "zxcvzxcv": "Apple",
-    "asdfccv": "Blink",
+    "asdfccv": "Gecko",
     "sdfg433": "MacIntel",
-    "sdfgsf4": "Chrome",
-    "sdfgfds4": "143.0.0.0",
-    "asdfd6": 504,
+    "sdfgsf4": "Firefox",
+    "sdfgfds4": "142.0",
+    "asdfd6": 3,
     "cvxgfh6": [
         "application/pdf",
         "text/pdf"
     ],
     "nvbcn65": false,
-    "hdgfh65": 1,
-    "fhgjjghdf": "Google Inc. (NVIDIA)",
-    "xcvdfgfd": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3090 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "hdgfh65": 2,
+    "fsdaf545": "Apple M1, or similar",
+    "cvxbvc645": "Mozilla",
     "xcvbbc65": "",
     "fghf657": "",
     "ghhjf656": 0,
     "xdgfd6545": 0,
     "Whfgjhgj76": 0,
-    "gdfhvcb6": "4aab48215282d777b332c0cde89c0757",
+    "gdfhvcb6": "c7714802b27c8c2aa0cf82e0385668af",
     "fhgjgfhd675": 24,
-    "v78d98s": "",
-    "vbmnbn67": 32,
-    "vbjghj7": "0*0*0*0",
-    "vbnmbn3": 24,
-    "dfxvsdf4": 24,
+    "v78d98s": "AwEEAQZZBwA=",
+    "vbmnbn67": "",
+    "vbjghj7": "30*0*0*0",
+    "vbnmbn3": 30,
+    "dfxvsdf4": 30,
     "asdfadsf34": "srgb",
     "cvbncv6": false,
     "fghgf6": false,
     "jhgkjgh": false,
     "cvfbbv2": 0,
     "fghjcv3": 0,
-    "vbnmvbn4": "1cae30a6bbeffa52f8d2a1b1e4a462e9",
+    "vbnmvbn4": "94433880daa9f55b02a5836769d31ee2",
     "fghjfgh5": "",
-    "a87sg9": 37,
-    "dfghfg64": [
-        [
-            "audioinput",
-            ""
-        ],
-        [
-            "videoinput",
-            ""
-        ],
-        [
-            "audiooutput",
-            ""
-        ]
-    ],
+    "a87sg9": 12,
+    "dfghfg64": "",
     "lk4n6ll": "Mac OS",
-    "zvcxv234": "35",
-    "fdsaf4415": 1,
-    "hgdfhgf437": true,
-    "fghjghs": "zh-CN",
+    "zvcxv234": "10.15",
+    "asdfas434df": 1,
+    "bvcxb": false,
+    "fghjghs": "en-US+en-US+en",
     "fghjfghe": "Asia/Shanghai",
-    "ifghjgfhjp": "118.250.88.111",
-    "nghjdfgsh": "",
+    "ifghjgfhjp": "183.192.132.175",
+    "nghjdfgsh": "20-1709|23-3126|30-3|40-55|41-2978|70-3007",
     "csdfgdfd": true,
     "tyjhtyge": true,
     "jcvhve": true,
-    "dfghcbn": "1920*1080",
+    "dfghcbn": "1117*1728",
     "ihgnghyt": true,
     "asdfd4545": 0,
     "jghfjfhg453": false,
     "dfsgdf87": false,
-    "dfghfgdh6": "",
-    "gfdhfg67": "https://www.chinaexpressair.com/api/order/createOrder",
+    "dfghfgdh6": "bf76663f179529d11abd760393f0cfadd759a55bde2634bf9c",
+    "gfdhfg67": "https://resource.51xf.cn/H5/captcha.html",
     "sdfgd435": "",
-    "fghjhg763": "963*1080",
-    "ghjkghj5678": "1890*1080",
-    "fghjnb254": "1890*1080",
-    "gfhjfgh567": 87,
-    "kghjjh657": "963*1080",
+    "fghjhg763": "891*1280",
+    "ghjkghj5678": "975*1280",
+    "fghjnb254": "1084*1728",
+    "gfhjfgh567": 74,
+    "kghjjh657": "891*1280",
     "wertwer67": true,
     "fgdhfg65": "",
     "wertwer": false,
-    "wertdxfgs": "143.0.0.0",
-    "sdfghtrh": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+    "wertdxfgs": "142.0",
+    "sdfghtrh": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0",
     "sdfgfdghjf": "unspecified",
     "hdfghgf": false,
-    "gfdsfd675": "saf-captcha-waf",
+    "gfdsfd675": "saf-captcha",
     "gdfggc": 0,
     "gfdb5456": [
         "PDF Viewer",
@@ -1950,66 +1893,68 @@ window._ORDVD_huanj = {
         "WebKit built-in PDF"
     ],
     "asf65445": -480,
-    "gfdc6456": "cmCrM2GEGKpTpwRmo1ZNTqijGDJJq6l5QDLvr6D1",
-    "hgvh4435": 1776305077241,
-    "gdffd98u9": "GzFSMq0vEFHnAT6ArtDfbTDPgkBImfWJS3r200G7yt",
-    "cxvcx324": 1776305077553,
+    "gfdc6456": "yTeXLp5Hj1xxG4xACv85ZZlC2TJtkZDqFVPOk6wy",
+    "hgvh4435": 1786763043739,
+    "gdffd98u9": "uGgdcjR3L53iDLFZRQtSDN0Te1fvWIOoRbKwxqrmQL",
+    "cxvcx324": 1786763047156,
     "fvcb343": "desktop",
     "xcvbrt454": false,
     "vcxb45": "",
-    "bytrre54": "081ddc29ec4dc28c732510add7d64f3c",
-    "rewtq2354": "eb563d6bb692d16104dc976d170c8c3e",
-    "xcvbwre": "5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+    "bytrre54": "9d4568c009d203ab10e33ea9953a0264",
+    "rewtq2354": "99914b932bd37a50b983c5e7c90ae93b",
+    "xcvbwre": "5.0 (Macintosh)",
     "cxvczv21eqw": "Mozilla",
-    "adfac23": "64",
-    "zcxv232r4": "143.0.7499.41",
+    "adfac23": "",
+    "zcxv232r4": "",
     "gdfh6574": "",
     "gdfgs23145": 1,
     "h9w87s9": 1,
-    "v8w7102": "1776305079895",
-    "bgnb89435": "MCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzEjMCMxMTExMTExMDExMTExMTExMTExMTExMTExMQ==",
-    "cvxhgftw312": 1,
-    "vcvbtryr43": 1,
+    "v8w7102": "1786763041986",
+    "bgnb89435": "MCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMxIzEjMCMwMTExMTEwMDExMTExMTExMTExMTExMTExMQ==",
+    "cvxhgftw312": 0,
+    "vcvbtryr43": 0,
     "hgdf53425": true,
-    "dfasf345": 1,
+    "dfasf345": 0,
     "dafs3455d": 1,
     "gfdg3424": 1,
-    "fxcv342": 1,
-    "xc12": 1,
-    "qwergfd32": 1,
-    "dfg645": 1,
-    "vc234": 1,
-    "vv4c234": 1,
-    "fd324": 1,
-    "cxv324g": 1,
-    "nhtret": 1,
-    "vbgfx342": 1,
-    "dr5435": 1,
-    "vcx4321": 1,
-    "q9qs8g7": 1,
+    "fxcv342": 0,
+    "xc12": 0,
+    "qwergfd32": 0,
+    "dfg645": 0,
+    "vc234": 0,
+    "vv4c234": 0,
+    "fd324": 0,
+    "cxv324g": 0,
+    "nhtret": 0,
+    "vbgfx342": 0,
+    "dr5435": 0,
+    "vcx4321": 0,
+    "q9qs8g7": 0,
     "asdjf789": 1,
-    "gs8d67g9": 0,
-    "as78f5": [
-        "Google Chrome",
-        "Chromium",
-        "Not.A/Brand"
-    ],
-    "e09baa": "0|0|0|0|0|0|1|1|0|1|1|0|1|1|0|1|1|0|1|1|0|1|1|0|1|1|0|1|1|0|1|1|0",
+    "gs8d67g9": -1,
+    "as78f5": [],
+    "e09baa": "0|0|0|0|0|0|1|1|0|0|0|0|0|0|0|1|1|0|1|1|0|1|1|0|0|0|0|1|1|0|1|1|0",
     "dsfdsf423": 0,
     "abce425": [
         0,
         "a"
     ],
-    "sdfsafa234": false,
+    "sdfsafa234": "",
     "dfsfsdsds123": "",
     "dsfafvccds234": true,
-    "rtrsdfsw123": "",
-    "jhddgfs234": [[]],
+    "rtrsdfsw123": "https://g.alicdn.com/captcha-frontend/FeiLin/1.5.1/feilin136.6631b6f8fc5b29744802e183e58e08d501aca2ce1d1c12798f41e16dc50e5f2a.js",
+    "jhddgfs234": [
+        [
+            "https://g.alicdn.com/captcha-frontend/FeiLin/1.5.1/feilin136.6631b6f8fc5b29744802e183e58e08d501aca2ce1d1c12798f41e16dc50e5f2a.js",
+            188,
+            0
+        ]
+    ],
     "jdhfsgfsdu874": false,
     "ohodshfds23": false,
     "kooxjjzxch1": true,
     "dsjfsdifosd23": false,
-    "ofdfshdfsjd454": false,
+    "ofdfshdfsjd454": "",
     "odfhsdhfsdfsdj2": false,
     "kdhfdshfgsdhf": [
         true,
@@ -2019,8 +1964,61 @@ window._ORDVD_huanj = {
         true
     ],
     "odnfndshsfhdsb3": false,
-    "GatherCost": 220
+    "xjxshsadhda467": "",
+    "saahxizxh32": [
+        0,
+        0
+    ],
+    "oidsngsx321xx": 1,
+    "aodhxnjsahs84ndj1": "",
+    "bdshuxzasa9801dsd": "",
+    "dhxzdahhas32dsds": "",
+    "sdjfhdsjh23ds": "https",
+    "xzcvcxmn231ds": false,
+    "qweqweqwe1231": "c:",
+    "kxjvbasd12dvs": "",
+    "poiqwermnb231": [
+        7723.94,
+        7723.94,
+        7740.54
+    ],
+    "zxncbv823jkds": 0,
+    "lksdfhj2312dsa": [
+        "6e8136ffb71fd50be234f9401dcfa389",
+        122,
+        110
+    ],
+    "mnbvxzas8231ds": [
+        "1ee71e7302affc7b4d64a3e3e19dc8fd",
+        240,
+        60
+    ],
+    "poiqwehjdsa2312": 1,
+    "GatherCost": 2882
 };
+
+// Values that changed across the two Firefox traces stay per-run.
+const nodeCrypto = require_('crypto');
+const randomText = length => nodeCrypto.randomBytes(length * 2).toString('base64url').slice(0, length);
+const nowMs = Date.now();
+const initMs = Number(deviceConfig.timestamp);
+const scriptUrl = `https://g.alicdn.com/captcha-frontend/FeiLin/${deviceConfig.version}.js`;
+window._ORDVD_huanj.v78d98s = nodeCrypto.randomBytes(8).toString('base64');
+window._ORDVD_huanj.ifghjgfhjp = deviceConfig.ip;
+window._ORDVD_huanj.nghjdfgsh = '';
+window._ORDVD_huanj.dfghfgdh6 = nodeCrypto.randomBytes(25).toString('hex');
+window._ORDVD_huanj.gfhjfgh567 = Math.floor(Math.random() * 100);
+window._ORDVD_huanj.gfdc6456 = randomText(40);
+window._ORDVD_huanj.hgvh4435 = nowMs;
+window._ORDVD_huanj.gdffd98u9 = randomText(42);
+window._ORDVD_huanj.cxvcx324 = nowMs;
+window._ORDVD_huanj.vcxb45 = deviceConfig.certifyId || '';
+window._ORDVD_huanj.v8w7102 = String(deviceConfig.timestamp);
+window._ORDVD_huanj.rtrsdfsw123 = scriptUrl;
+window._ORDVD_huanj.jhddgfs234 = [[scriptUrl, 180 + Math.floor(Math.random() * 20), 0]];
+window._ORDVD_huanj.poiqwermnb231 = [performance.now(), performance.now(), performance.now()];
+window._ORDVD_huanj.GatherCost = 0;
+
 _ORDVD_huanj_copy = _ORDVD_huanj;
 for (let key in _ORDVD_huanj) {
     let value = _ORDVD_huanj[key];
@@ -2064,9 +2062,26 @@ Array.prototype.join = function(separator = ', ') {
     if (joinedString.indexOf('0|1|1|0|1|1|0"#0') != -1) {
         result = JSON.parse(__ORDVD)
         // result['dfghfgdh6'] = dfghfgdh6;
-        zhiw_ = joinedString.replaceAll('"',"");
-        // zhiw_ = window.dfghfgdh6 + joinedString.replaceAll('"', "")+'|||'+result['dghfh565'];
-        AsObj.print_(zhiw_)
+        // The final token projection is not the raw 143-field object. Keep
+        // the stable Firefox projection and fill fields that changed between
+        // the two browser traces from this run.
+        const zhiwParts = "W.10054#####MacIntel#Firefox#142.0#############24#DYNAMIC_SEED###########94433880daa9f55b02a5836769d31ee2##12##Mac OS#10.15#####DYNAMIC_IP#DYNAMIC_LOGS#true###1117*1728##0##################saf-captcha#0###DYNAMIC_R1#DYNAMIC_T1#DYNAMIC_R2#DYNAMIC_T2#desktop#false#DYNAMIC_CERTIFY#9d4568c009d203ab10e33ea9953a0264#########DYNAMIC_DEVICE_TS#MCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMxIzEjMCMwMTExMTEwMDExMTExMTExMTExMTExMTExMQ==#0#0#true##################-1################################".split('#');
+        const elapsed = Math.max(1, Date.now() - nowMs);
+        const stage = n => Math.max(1, Math.floor(elapsed * n));
+        zhiwParts[21] = result['v78d98s'];
+        zhiwParts[42] = deviceConfig.ip;
+        zhiwParts[43] = `20-${stage(.22)}|23-${stage(.76)}|30-2|40-${stage(.02)}|41-${stage(.73)}|70-${stage(.74)}|71-${stage(.9)}|80-${stage(.9)}|81-${stage(.93)}|93-${stage(2.4)}|94-${stage(2.45)}`;
+        zhiwParts[71] = result['gfdc6456'];
+        zhiwParts[72] = String(result['hgvh4435']);
+        zhiwParts[73] = result['gdffd98u9'];
+        zhiwParts[74] = String(nowMs + elapsed);
+        zhiwParts[77] = deviceConfig.certifyId || result['vcxb45'] || '';
+        zhiwParts[87] = String(deviceConfig.timestamp);
+        zhiw_ = zhiwParts.join('#');
+        AsObj.print_('__FEILIN_RESULT__' + JSON.stringify({
+            zhiw: zhiw_,
+            gatherCost: elapsed
+        }))
         process_.exit(0);
     }
     return `${joinedString}`;
@@ -2078,7 +2093,7 @@ screen = watch(screen, 'screen');
 location = watch(location, 'location');
 document.all = watch(document.all, 'document.all');
 navigator = watch(navigator, 'navigator');
-chrome = watch(chrome, 'chrome');
+// Firefox: window.chrome is absent.
 localStorage = watch(localStorage, 'localStorage');
 sessionStorage = watch(sessionStorage, 'sessionStorage');
 indexedDB = watch(indexedDB, 'indexedDB');
@@ -2092,8 +2107,6 @@ Location.prototype = watch(Location.prototype, 'Location.prototype');
 Screen.prototype = watch(Screen.prototype, 'Screen.prototype');
 History.prototype = watch(History.prototype, 'History.prototype');
 
-const args = process_.argv.slice(2);
-deviceConfig = JSON.parse(args[0]);
 // deviceConfig = {
 //     "key": "d3ffff8e782a4f38",
 //     "switch": 1,

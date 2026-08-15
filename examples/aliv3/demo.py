@@ -181,7 +181,10 @@ class Yuekeyun:
     StaticPath = None
     sId = '1bn1l0rb'
     pfx = '1oa2ns'
-    update_W = 'W.10051'
+    # FeiLin 1.5.1 current browser contract (trace 2026-08-15).
+    # This is a protocol/environment version field; the cryptographic
+    # and track encoding algorithms remain unchanged.
+    update_W = 'W.10054'
     headers = {
         'Accept': '*/*',
         'Accept-Language': 'zh-CN,zh;q=0.9',
@@ -204,14 +207,21 @@ class Yuekeyun:
 
     def run_feilin(self):
         node_script_path = r"v2_env.js"
-        command = ["node", node_script_path, json.dumps(self.devices, separators=(',', ':'))]
-        
+        feilin_context = {**self.devices, "certifyId": self.certifyId or ""}
+        command = ["node", node_script_path, json.dumps(feilin_context, separators=(',', ':'))]
+
         # 强制加锁：同一时刻只允许一个线程执行 subprocess
         with feilin_lock:
             try:
                 # 加上 timeout 防止某个进程卡死导致全部线程死锁
-                result = subprocess.check_output(command, text=True, encoding='utf-8', timeout=10)
-                return result.strip()
+                result = subprocess.check_output(command, text=True, encoding='utf-8', timeout=10).strip()
+                marker = '__FEILIN_RESULT__'
+                if marker in result:
+                    collected = json.loads(result.rsplit(marker, 1)[1])
+                    self.gather_cost = str(collected['gatherCost'])
+                    self.feilin_data = collected['zhiw']
+                    return self.feilin_data
+                return result
             except subprocess.TimeoutExpired:
                 print("执行 JS 超时")
                 return None
@@ -273,7 +283,7 @@ class Yuekeyun:
                 m = m + 1 & len(s) - 1
             arr.append(c)
         return base64.standard_b64encode(bytes(arr)).decode()
-    
+
     @staticmethod
     def get_track_sign(msg, _pad):
         il = len(msg)
@@ -334,7 +344,7 @@ class Yuekeyun:
         text = text + pad * chr(pad)
         encrypted_text = cipher.encrypt(text.encode('utf-8'))
         return base64.b64encode(encrypted_text).decode('utf-8')
-    
+
     def getTimeNum(self):
         utc_now = datetime.utcnow().replace(tzinfo=timezone.utc)
         year = str(utc_now.year)
@@ -344,7 +354,7 @@ class Yuekeyun:
         minute = '0' + str(utc_now.minute) if utc_now.minute < 10 else str(utc_now.minute)
         second = '0' + str(utc_now.second) if utc_now.second < 10 else str(utc_now.second)
         return year + '-' + month + '-' + day + 'T' + hour + ':' + minute + ':' + second + 'Z'
-    
+
     def get_Signature(self,data,key):
         key = key + '&'
         datas = {key:quote(data[key]).replace('/','%2F') for key in sorted(data)}
@@ -366,7 +376,7 @@ class Yuekeyun:
             # 'Signature': '0kzezAFGHY8HLq5/3rNFZr2oecQ=',
         }
         data['Signature'] = self.get_Signature(data,key='fpOKzILEajkqgSpr9VvU98FwAgIRcX')
-        
+
         response = self.sess.post('https://cloudauth-device-dualstack.cn-shanghai.aliyuncs.com/', data=data)
 
         # logger.success(f'初始化接口：{response.json()}')
@@ -443,10 +453,15 @@ class Yuekeyun:
             # logger.success(f'轨迹：{self.distance}')
 
     def aliyuncs_verify(self):
-        _zhiw = f'{self.update_W}#####Win32#Chrome#146.0.0.0#############104#aWNraDxrQGg=#8##########a7e30d1dd64dec621ebc01fe99648755##8##Windows#10#####{self.devices["ip"]}#10-0|11-244|20-250|23-2548|30-2555|40-2571|41-4300|70-4303|71-4404|80-4404|81-4412|93-7636|94-7652#true###864*1536##0##################saf-captcha#0###QnUN0DvGUnP6h1hcjedREpc93Xsh9nQuYZdbGoxj#{self.devices["timestamp"]}#acjuqslEpPUn7bf66v8iy255IL7ksOWaou7ZXJnmtf#{self.devices["timestamp"]}#desktop#false#2760776817755601135986437ecd6f#9d4568c009d203ab10e33ea9953a0264#########{self.devices["timestamp"]}#MCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzAjMCMwIzEjMSMxMTExMTExMDExMTExMTExMTExMTExMTExMQ==#1#1#true###################################'
-        arg0 = self.aesEncrypt(_zhiw+'',self.devices['key'],'0123456789ABCDEF')
-        arg1 = hashlib.md5('#'.join(["WEB",self.devices['sessionId'],arg0,"39","daye,raolewoba!"]).encode()).hexdigest()
-        deviceToken = base64.b64encode('#'.join(["WEB",self.devices['sessionId'],arg0,"39",arg1]).encode()).decode()
+        # Reuse the first-round collection so the final token contains the
+        # same browser, OS, screen and feature set sent by Log2.
+        _zhiw = getattr(self, 'feilin_data', None) or self.run_feilin()
+        arg0 = self.aesEncrypt(_zhiw, self.devices['key'], '0123456789ABCDEF')
+        device_token_revision = getattr(self, 'gather_cost', None)
+        if device_token_revision is None:
+            raise RuntimeError('FeiLin collection did not export GatherCost')
+        arg1 = hashlib.md5('#'.join(["WEB",self.devices['sessionId'],arg0,device_token_revision,"daye,raolewoba!"]).encode()).hexdigest()
+        deviceToken = base64.b64encode('#'.join(["WEB",self.devices['sessionId'],arg0,device_token_revision,arg1]).encode()).decode()
 
         guiji = self.distance
         guiji["arg"] = "null"
@@ -481,7 +496,7 @@ class Yuekeyun:
         # else:
         #     logger.error(f'阿里VerifyCaptchaV3接口验证失败：{response.json()}')
 
-    
+
     def aliyuncs_log2(self):
         feilin_datas = self.run_feilin()
         arg0 = self.devices['sessionId']
@@ -492,7 +507,7 @@ class Yuekeyun:
         arg4 = ''
         arg5 = self.aesEncrypt(str(int(time.time() * 1000)),self.devices['key'],'0123456789ABCDEF')
         _zhiw = base64.b64encode(str(f'{arg0}#{arg1}#{arg2}#{arg3}#{arg4}#{arg5}').encode()).decode('utf-8')
-        
+
         strEncrypt = self.aesEncrypt(f'{self.update_W}#saf-captcha#{self.sId}',self.devices['key'],'0123456789ABCDEF')
         DataStr = f'{self.devices["sessionId"].split("-")[0]}#W#{strEncrypt}#W20220202#CLOUD#421#501#{_zhiw}'
         Data = self.aesEncrypt(DataStr,'a549a55c60a39aa0','0123456789ABCDEF')
