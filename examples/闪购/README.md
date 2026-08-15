@@ -76,7 +76,7 @@ node examples/闪购/test_uab_fields.js
 ```js
 const { createLoginSecurityFields } = require("./asura_id");
 
-const { asuraId, fireUa, fireUmid, bxUmidToken } =
+const { asuraId, fireUa, fireUmid, bxUmidToken, bxUa } =
   await createLoginSecurityFields();
 ```
 
@@ -101,3 +101,19 @@ node examples/闪购/test_bx_umidtoken.js
 
 Node 会直接加载 `/w/wu.json` 的原始回调脚本，与 WebUMID/FireEye 共享当前内存
 `localStorage`，运行时不启动或连接浏览器。
+
+### 6. Header `bx-ua`
+
+Trace 中该字段走 `securityHeader -> FireEye.getFYToken()`，由 FireEye 1.231.13
+在当前 AWSC 会话内生成 `231!...`。本地环境中的 Canvas PNG、WebGL 扩展、
+typed vector、GPU 字符串和 shader precision 均来自 Firefox Trace 的实际返回，
+不使用空数组或零向量占位。
+
+```bash
+node examples/闪购/bx_ua_cli.js
+node examples/闪购/test_bx_ua.js
+```
+
+`bx-ua`、`bx-umidtoken` 与 body 字段应通过一次
+`createLoginSecurityFields()` 调用取得，避免拆成多次会话。最终 Node 运行时不启动或
+连接浏览器，且只使用 Node 内置模块，兼容 Node 22.14 的 macOS 和 Windows。

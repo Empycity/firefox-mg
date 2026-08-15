@@ -28,9 +28,12 @@ async function main() {
   assert.strictEqual(fields.fireUmid, TEST_TOKEN);
   assert.strictEqual(fields.bxUmidToken, TEST_UID_TOKEN);
   assert.notStrictEqual(fields.bxUmidToken, fields.fireUmid);
+  assert(fields.bxUa.startsWith("231!"));
+  assert(fields.bxUa.length > 1000);
   console.log(
     `login security field tests passed: ${fields.asuraId.length}/` +
-    `${fields.fireUa.length}/${fields.fireUmid.length}/${fields.bxUmidToken.length}`
+    `${fields.fireUa.length}/${fields.fireUmid.length}/${fields.bxUmidToken.length}/` +
+    `${fields.bxUa.length}`
   );
 }
 

@@ -162,17 +162,115 @@ function makeCanvas(dimensions, canvasDataUrl) {
     fillRect: nativeFunction("fillRect", () => undefined),
     fillText: nativeFunction("fillText", () => undefined),
   };
+  const supportedExtensions = [
+    "ANGLE_instanced_arrays",
+    "EXT_blend_minmax",
+    "EXT_color_buffer_half_float",
+    "EXT_depth_clamp",
+    "EXT_float_blend",
+    "EXT_frag_depth",
+    "EXT_shader_texture_lod",
+    "EXT_sRGB",
+    "EXT_texture_compression_rgtc",
+    "EXT_texture_filter_anisotropic",
+    "OES_element_index_uint",
+    "OES_fbo_render_mipmap",
+    "OES_standard_derivatives",
+    "OES_texture_float",
+    "OES_texture_float_linear",
+    "OES_texture_half_float",
+    "OES_texture_half_float_linear",
+    "OES_vertex_array_object",
+    "WEBGL_color_buffer_float",
+    "WEBGL_compressed_texture_s3tc",
+    "WEBGL_compressed_texture_s3tc_srgb",
+    "WEBGL_debug_renderer_info",
+    "WEBGL_debug_shaders",
+    "WEBGL_depth_texture",
+    "WEBGL_draw_buffers",
+    "WEBGL_lose_context",
+    "WEBGL_provoking_vertex",
+  ];
+  const parameterValues = new Map([
+    [3379, 8192],
+    [3386, new Int32Array([16384, 16384])],
+    [33901, new Float32Array([1, 64])],
+    [33902, new Float32Array([1, 1])],
+    [34024, 8192],
+    [34047, 16],
+    [34076, 8192],
+    [3410, 8],
+    [3411, 8],
+    [3412, 8],
+    [3413, 8],
+    [3414, 24],
+    [3415, 0],
+    [34921, 16],
+    [34930, 16],
+    [35660, 16],
+    [35661, 80],
+    [35724, "WebGL GLSL ES 1.0"],
+    [36347, 1024],
+    [36348, 32],
+    [36349, 1024],
+    [7936, "Mozilla"],
+    [7937, "Apple M1, or similar"],
+    [7938, "WebGL 1.0"],
+  ]);
   const webgl = {
-    getSupportedExtensions: nativeFunction("getSupportedExtensions", () => []),
-    getExtension: nativeFunction("getExtension", (name) =>
-      name === "WEBGL_debug_renderer_info"
-        ? { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 }
-        : null
+    getSupportedExtensions: nativeFunction("getSupportedExtensions", () => supportedExtensions.slice()),
+    createBuffer: nativeFunction("createBuffer", () => ({})),
+    bindBuffer: nativeFunction("bindBuffer", () => undefined),
+    bufferData: nativeFunction("bufferData", () => undefined),
+    createProgram: nativeFunction("createProgram", () => ({})),
+    createShader: nativeFunction("createShader", (type) => ({ type })),
+    shaderSource: nativeFunction("shaderSource", () => undefined),
+    compileShader: nativeFunction("compileShader", () => undefined),
+    attachShader: nativeFunction("attachShader", () => undefined),
+    linkProgram: nativeFunction("linkProgram", () => undefined),
+    useProgram: nativeFunction("useProgram", () => undefined),
+    getAttribLocation: nativeFunction("getAttribLocation", () => 0),
+    getUniformLocation: nativeFunction("getUniformLocation", () => ({})),
+    enableVertexAttribArray: nativeFunction("enableVertexAttribArray", () => undefined),
+    vertexAttribPointer: nativeFunction("vertexAttribPointer", () => undefined),
+    uniform2f: nativeFunction("uniform2f", () => undefined),
+    drawArrays: nativeFunction("drawArrays", () => undefined),
+    clearColor: nativeFunction("clearColor", () => undefined),
+    enable: nativeFunction("enable", () => undefined),
+    depthFunc: nativeFunction("depthFunc", () => undefined),
+    clear: nativeFunction("clear", () => undefined),
+    getContextAttributes: nativeFunction("getContextAttributes", () => ({
+      alpha: true,
+      antialias: true,
+      depth: true,
+      failIfMajorPerformanceCaveat: false,
+      powerPreference: "default",
+      premultipliedAlpha: true,
+      preserveDrawingBuffer: false,
+      stencil: false,
+    })),
+    getShaderPrecisionFormat: nativeFunction("getShaderPrecisionFormat", (_shaderType, precisionType) =>
+      precisionType >= 36339 && precisionType <= 36341
+        ? { rangeMin: 24, rangeMax: 24, precision: 0 }
+        : { rangeMin: 127, rangeMax: 127, precision: 23 }
     ),
+    getExtension: nativeFunction("getExtension", (name) => {
+      if (name === "WEBGL_debug_renderer_info") {
+        return { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
+      }
+      if (name === "EXT_texture_filter_anisotropic") {
+        return { MAX_TEXTURE_MAX_ANISOTROPY_EXT: 34047, TEXTURE_MAX_ANISOTROPY_EXT: 34046 };
+      }
+      if (name === "WEBGL_lose_context") {
+        return { loseContext: nativeFunction("loseContext", () => undefined) };
+      }
+      return null;
+    }),
     getParameter: nativeFunction("getParameter", (parameter) => {
       if (parameter === 37445) return "Apple";
       if (parameter === 37446) return "Apple M1, or similar";
-      return null;
+      const value = parameterValues.get(parameter);
+      return ArrayBuffer.isView(value) ? new value.constructor(value) : value ?? null;
     }),
   };
   canvas.getContext = nativeFunction("getContext", (type) => {
@@ -423,6 +521,15 @@ function createAsuraEnvironment(options = {}) {
     createElement(tagName) {
       if (String(tagName).toLowerCase() === "canvas") return makeCanvas(dimensions, canvasDataUrl);
       const element = new ElementFixture(tagName, dimensions);
+      if (String(tagName).toLowerCase() === "audio") {
+        element.canPlayType = nativeFunction("canPlayType", (type) => {
+          const mediaType = String(type).toLowerCase();
+          if (/^audio\/(?:mpeg|aac|flac)$/.test(mediaType)) return "maybe";
+          if (/^audio\/(?:ogg|wav|webm)(?:;|$)/.test(mediaType)) return "probably";
+          if (/^video\/(?:mp4|webm)(?:;|$)/.test(mediaType)) return "probably";
+          return "";
+        });
+      }
       element.ownerDocument = document;
       return element;
     },
@@ -550,6 +657,24 @@ function createAsuraEnvironment(options = {}) {
         source: window,
         target: window,
       }));
+    },
+    matchMedia(query) {
+      const listeners = new Set();
+      const media = String(query);
+      return {
+        matches: media === "(display-mode: browser)",
+        media,
+        onchange: null,
+        addEventListener(type, listener) {
+          if (type === "change") listeners.add(listener);
+        },
+        removeEventListener(type, listener) {
+          if (type === "change") listeners.delete(listener);
+        },
+        addListener(listener) { listeners.add(listener); },
+        removeListener(listener) { listeners.delete(listener); },
+        dispatchEvent() { return true; },
+      };
     },
     console,
     atob: (value) => Buffer.from(value, "base64").toString("binary"),

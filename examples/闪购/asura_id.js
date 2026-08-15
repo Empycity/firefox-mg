@@ -22,22 +22,26 @@ function runScript(context, filename) {
   vm.runInContext(source, context, { filename, timeout: 10000 });
 }
 
-function callGetUA(context, module) {
+function callWithFirefoxDescriptorGuard(context, callback) {
   vm.runInContext(`{
-    globalThis.__asuraOriginalGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+    globalThis.__originalGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
     Object.getOwnPropertyDescriptor = function(target, property) {
       if (target == null && property === "head") return undefined;
-      return globalThis.__asuraOriginalGetOwnPropertyDescriptor(target, property);
+      return globalThis.__originalGetOwnPropertyDescriptor(target, property);
     };
   }`, context);
   try {
-    return module.getUA();
+    return callback();
   } finally {
     vm.runInContext(`{
-      Object.getOwnPropertyDescriptor = globalThis.__asuraOriginalGetOwnPropertyDescriptor;
-      delete globalThis.__asuraOriginalGetOwnPropertyDescriptor;
+      Object.getOwnPropertyDescriptor = globalThis.__originalGetOwnPropertyDescriptor;
+      delete globalThis.__originalGetOwnPropertyDescriptor;
     }`, context);
   }
+}
+
+function callGetUA(context, module) {
+  return callWithFirefoxDescriptorGuard(context, () => module.getUA());
 }
 
 function findDynamicScript(sandbox, pattern, description) {
@@ -148,7 +152,22 @@ async function createFields(options = {}, includeUmid = false) {
       `FireEye returned an invalid bxUmidToken value (lswucn=${storedToken || "empty"})`
     );
   }
-  return { asuraId, fireUa, fireUmid, bxUmidToken };
+  const bxUa = fireEye && callWithFirefoxDescriptorGuard(
+    context,
+    () => fireEye.getFYToken()
+  );
+  if (typeof bxUa !== "string" || !bxUa.startsWith("231!") || bxUa.length < 1000) {
+    const fireEyeReport = Object.keys(sandbox)
+      .filter((key) => key.startsWith("_uab_img_"))
+      .map((key) => sandbox[key]?.src)
+      .filter(Boolean)
+      .at(-1);
+    throw new Error(
+      `FireEye returned an invalid bxUa value (type=${typeof bxUa}, length=${bxUa?.length || 0}, ` +
+      `prefix=${typeof bxUa === "string" ? bxUa.slice(0, 24) : ""}, report=${fireEyeReport || "none"})`
+    );
+  }
+  return { asuraId, fireUa, fireUmid, bxUmidToken, bxUa };
 }
 
 async function createUabFields(options = {}) {
@@ -175,11 +194,16 @@ async function createBxUmidToken(options = {}) {
   return (await createLoginSecurityFields(options)).bxUmidToken;
 }
 
+async function createBxUa(options = {}) {
+  return (await createLoginSecurityFields(options)).bxUa;
+}
+
 module.exports = {
   createAsuraId,
   createFireUa,
   createFireUmid,
   createBxUmidToken,
+  createBxUa,
   createUabFields,
   createLoginSecurityFields,
 };
