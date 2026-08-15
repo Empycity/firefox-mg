@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import json
 import os
 import secrets
@@ -121,10 +122,25 @@ def random_credentials():
     return username, password
 
 
+def parse_args():
+    argv = []
+    for value in sys.argv[1:]:
+        if value.startswith("user="):
+            value = "-user=" + value[5:]
+        elif value.startswith("pwd="):
+            value = "-pwd=" + value[4:]
+        argv.append(value)
+    parser = argparse.ArgumentParser(description="Run the Shangou login replay")
+    parser.add_argument("-user", "--user", dest="username", help="login username")
+    parser.add_argument("-pwd", "--pwd", dest="password", help="login password")
+    return parser.parse_args(argv)
+
+
 def main():
+    args = parse_args()
     node, node_version = find_node()
-    username = os.environ.get("SHANGOU_USERNAME")
-    password = os.environ.get("SHANGOU_PASSWORD")
+    username = args.username or os.environ.get("SHANGOU_USERNAME")
+    password = args.password or os.environ.get("SHANGOU_PASSWORD")
     if not username or not password:
         username, password = random_credentials()
 

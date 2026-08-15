@@ -145,6 +145,12 @@ python examples/闪购/demo.py
 传入指定值。`NODE_BINARY` 可用于指定 Node 22.14.0 可执行文件。
 `SHANGOU_IMPERSONATE` 默认是当前 `curl_cffi 0.9.0` 支持的 `firefox133`。
 
+账号密码也可直接通过命令行传入，命令行优先于环境变量：
+
+```bash
+python examples/闪购/demo.py -user=USERNAME -pwd=PASSWORD
+```
+
 本地生成值不要求和某一轮浏览器输出等长。已验收的本地运行中，`140#`
 约为 1250-1330 字符、最终 `231!` 约为 1810-1860 字符，仍能得到正常业务响应；
 浏览器值更长主要来自页面累计的资源和交互记录。有效性以接口进入
