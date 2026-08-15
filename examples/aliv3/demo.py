@@ -260,6 +260,8 @@ class Yuekeyun:
             self.image_path.unlink()
         except FileNotFoundError:
             pass
+        if not box:
+            raise ValueError('captcha recognizer returned no gap')
         mouse_x = box[0]
         return int(mouse_x)
 
