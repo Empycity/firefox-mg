@@ -212,12 +212,15 @@ def build_device_data(keys: CaptchaKeys, scene_id: str, prefix: str) -> str:
 
 
 # ============================================================
-# 每日层 A：v78d98s（feilin008 版，2026-09-05）
-#   sid[-8:] -> XOR"582abb1e" -> printable 移位((code+"c8228469"[i%8]-64)%95+32) -> b64
-#   feilin 轮换时替换本段（算法点/常量见 纯算/阿里v2_技术文档.md 当日小节）
+# 每日层 A：v78d98s（feilin009 版，2026-09-07）
+#   sid[-8:] -> 逐位移位 ((code + K2[i]-128) % 95 + 32)，K2=[134,84,87,83,87,90,89,81]
+#   009 相比 008：XOR 层退化为全零（k1=0），仅剩移位；输入窗口仍是 sid[-8:]。
+#   验证：Node 沙箱 481 探针全映射 + round3 Firefox trace（c67f6760 -> KiouWS0xLyE=）。
+#   feilin 轮换时替换 K2（算法点见 feilin_runtime/probe_v78_009.py 探针方法）
 # ============================================================
-_V78_XOR_KEY = "582abb1e"
-_V78_SHIFT_KEY = "c8228469"
+_V78_XOR_KEY_008 = "582abb1e"      # 008 版历史常量，仅回滚参考
+_V78_SHIFT_KEY_008 = "c8228469"
+_V78_K2_009 = (134, 84, 87, 83, 87, 90, 89, 81)  # 009 移位常量 (= shift[i]+64)
 
 
 def _v78_js_mod(a, n):
@@ -244,10 +247,21 @@ def _v78_move_key(s, key):
     return "".join(out)
 
 
+def _v78_shift_009(s, k2=_V78_K2_009):
+    out = []
+    for i, ch in enumerate(s):
+        code = ord(ch)
+        if 32 <= code <= 126:
+            out.append(chr(_v78_js_mod(code + k2[i % len(k2)] - 128, 95) + 32))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def v78d98s(session_id):
     s = str(session_id or "")[-8:]
-    mid = _v78_xor_utf8(s, _V78_XOR_KEY)
-    return base64.b64encode(_v78_move_key(mid, _V78_SHIFT_KEY).encode("latin-1")).decode("ascii")
+    mid = _v78_shift_009(s)
+    return base64.b64encode(mid.encode("latin-1")).decode("ascii")
 
 
 # ============================================================

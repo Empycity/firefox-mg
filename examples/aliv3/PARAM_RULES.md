@@ -243,3 +243,13 @@ round2 trace 逐字符一致。feilin 换版 → 沙箱自动出新算法结果�
 每日层与其输入必须同源。最终方案：补环境版整板采用沙箱自算的 rawJoined
 （feilin 自己算的每日层与输入天然自洽），换版零人工。纯算版为离线兜底
 （换版后需重提公式，或直接切补环境版）。
+
+### feilin009 每日层 A/B 反推进展（2026-09-07）
+- **v78d98s 已解决**：输入仍是 `sid[-8:]`，009 无 XOR 层，纯移位
+  K2=[134,84,87,83,87,90,89,81]，`((code+K2[i]-128)%95)+32` → b64。
+  双端验证（Node 沙箱 481 探针 + round3 Firefox trace）通过，
+  `xf_captcha.py v78d98s()` 已更新。此前"32 位 rand 格式映射失效"是 b64
+  解码误判，结构从未变过。详见 `feilin_runtime/FEILIN009_REVERSAL.md`。
+- **dfghfgdh6**：md5 输入串已全部捕获（hook `__ALIYUN_CRYPT.MD5`，
+  `FEILIN_DFG_TRACE=1`）；FF 侧 8/10 段归因（含空位哨兵 "00000"），
+  剩 seg0/seg2 两段的（源,变换）待解，仅影响冻结兜底的纯算版。

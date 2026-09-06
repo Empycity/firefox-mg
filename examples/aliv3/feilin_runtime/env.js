@@ -2120,6 +2120,7 @@ Array.prototype.join = function(separator = ', ') {
         AsObj.print_('__FEILIN_RESULT__' + JSON.stringify({
             zhiw: zhiw_,
             gatherCost: elapsed,
+            dfg6: typeof window.dfghfgdh6 === 'string' ? window.dfghfgdh6 : '',
             rawResult: result,
             rawJoined: joinedString
         }))
@@ -2190,6 +2191,31 @@ Ee = {
 }
 ecx = function (t, r) {
     debugger
+}
+
+// Opt-in: wrap crypto-js hashes to log md5 inputs/outputs (dfghfgdh6 attribution).
+// Survives feilin's prototype anti-hook because it patches an object property.
+if (process_.env.FEILIN_DFG_TRACE) {
+    const dfgLog = [];
+    const crypt = window.__ALIYUN_CRYPT;
+    ['MD5', 'SHA1', 'SHA256', 'SHA512', 'SHA3', 'SHA224', 'SHA384', 'RIPEMD160'].forEach(function (name) {
+        const orig = crypt[name];
+        if (!orig) return;
+        crypt[name] = function (msg, cfg) {
+            const r = orig.call(this, msg, cfg);
+            try {
+                let inp = msg;
+                if (msg && msg.toString && msg.words) inp = msg.toString(crypt.enc.Hex) + ' (wordarray)';
+                else inp = String(msg);
+                dfgLog.push([name, inp.slice(0, 200), r.toString()]);
+            } catch (e) {}
+            return r;
+        };
+    });
+    process_.on('exit', function () {
+        require_('fs').writeFileSync(process_.env.FEILIN_DFG_TRACE,
+            dfgLog.map(function (r) { return r.join('\t'); }).join('\n'));
+    });
 }
 
 require_(process_.env.FEILIN_SCRIPT_PATH || './feilin.js');
