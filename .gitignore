@@ -31,9 +31,16 @@
 .DS_Store
 **/.DS_Store
 __pycache__/
+examples/aliv2/dynamic_client/runtime/
 *.pyc
 
 # Logs and temp files.
 *.log
 *.tmp
 *.swp
+
+# Trace run outputs stay local; only case code/docs/configs are committed.
+examples/**/traces/
+examples/**/trace-logs/
+examples/5s/runtime-data/
+examples/douyin/log/

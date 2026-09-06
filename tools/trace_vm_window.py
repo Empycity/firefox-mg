@@ -9,7 +9,12 @@ import json
 import pathlib
 from typing import Any, Iterable
 
-from trace_finalize import VM_WINDOW_HEADER, VM_WINDOW_RECORD, inspect_vm_window_artifact
+from trace_finalize import (
+    VM_WINDOW_HEADER,
+    VM_WINDOW_RECORD_V1,
+    VM_WINDOW_RECORD_V2,
+    inspect_vm_window_artifact,
+)
 
 
 VALUE_TYPES = {
@@ -43,9 +48,10 @@ def records(path: pathlib.Path):
     with path.open("rb") as stream:
         raw_header = stream.read(VM_WINDOW_HEADER.size)
         header = VM_WINDOW_HEADER.unpack(raw_header)
+        record_struct = VM_WINDOW_RECORD_V2 if header[1] == 2 else VM_WINDOW_RECORD_V1
         count = header[8]
         for _ in range(count):
-            yield VM_WINDOW_RECORD.unpack(stream.read(VM_WINDOW_RECORD.size))
+            yield header[1], record_struct.unpack(stream.read(record_struct.size))
 
 
 def analyze_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> dict[str, Any]:
@@ -67,23 +73,26 @@ def analyze_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> dict[str, 
     previous_pc: int | None = None
     primitive_slots = 0
     total_slots = 0
-    for record in records(path):
-        (
-            _seq,
-            _ts_us,
-            origin_call_id,
-            pc,
-            _stack_value0,
-            _stack_value1,
-            op,
-            _bytecode_length,
-            stack_depth,
-            operand_length,
-            operand_bytes,
-            stack_type0,
-            stack_type1,
-            stack_flags,
-        ) = record
+    script_ids: collections.Counter[int] = collections.Counter()
+    for version, record in records(path):
+        if version == 2:
+            (
+                _seq, _ts_us, origin_call_id, pc, script_identity,
+                _stack_value0, _stack_value1,
+                op, _bytecode_length, stack_depth, _script_line,
+                _script_column, _script_bytecode_length, operand_length,
+                operand_bytes, stack_type0, stack_type1, stack_flags,
+            ) = record
+            stack_value_types = (stack_type0, stack_type1)
+            script_ids[script_identity] += 1
+        else:
+            (
+                _seq, _ts_us, origin_call_id, pc, _stack_value0,
+                _stack_value1, op, _bytecode_length, stack_depth,
+                operand_length, operand_bytes, stack_type0, stack_type1,
+                stack_flags,
+            ) = record
+            stack_value_types = (stack_type0, stack_type1)
         pc_counts[pc] += 1
         op_counts[op] += 1
         if previous_pc is not None:
@@ -93,8 +102,8 @@ def analyze_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> dict[str, 
             origin_calls[origin_call_id] += 1
         if operand_length and pc not in operand_samples:
             operand_samples[pc] = operand_bytes[:operand_length].hex()
-        for index, value_type in enumerate((stack_type0, stack_type1)):
-            if index >= min(stack_depth, 2):
+        for index, value_type in enumerate(stack_value_types):
+            if index >= min(stack_depth, len(stack_value_types)):
                 continue
             total_slots += 1
             stack_types[VALUE_TYPES.get(value_type, f"type_{value_type}")] += 1
@@ -124,6 +133,10 @@ def analyze_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> dict[str, 
         "origin_call_ids": [
             {"origin_call_id": f"call_{call_id}", "records": hits}
             for call_id, hits in origin_calls.most_common(16)
+        ],
+        "script_identities": [
+            {"identity": f"0x{identity:x}", "records": hits}
+            for identity, hits in script_ids.most_common()
         ],
     }
     return result

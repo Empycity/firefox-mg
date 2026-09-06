@@ -13,6 +13,12 @@ TARGET_XUL="$RUNTIME_APP/Contents/MacOS/XUL"
 [[ -d "$RUNTIME_APP" ]] || { print -u2 "Missing runtime app: $RUNTIME_APP"; exit 2; }
 
 cp "$SOURCE_XUL" "$TARGET_XUL"
+cmp -s "$SOURCE_XUL" "$TARGET_XUL" || {
+  print -u2 "Installed XUL differs before signing: $TARGET_XUL"
+  exit 3
+}
+SOURCE_SHA256="$(shasum -a 256 "$SOURCE_XUL" | awk '{print $1}')"
+print "Verified pre-sign XUL SHA-256: $SOURCE_SHA256"
 
 # obj/dist app bundles contain absolute symlinks back into the source/build
 # tree. Materialize file links so the packaged runtime remains relocatable and

@@ -22,6 +22,58 @@ SERVER_SPEC.loader.exec_module(trace_console_server)
 
 
 class TraceFinalizeTest(unittest.TestCase):
+    def test_worker_message_timeline_joins_dom_call_and_four_phases(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            trace_dir = pathlib.Path(raw_dir)
+            (trace_dir / "manifest.json").write_text("{}", encoding="utf-8")
+            rows = [
+                {
+                    "type": "dom.message",
+                    "ts_us": 10,
+                    "pid": 7,
+                    "transport": "Worker",
+                    "direction": "parent_to_worker",
+                    "phase": phase,
+                    "message_id": "msg_7_1",
+                    "task_id": "task_7_1",
+                    "parent_task_id": None,
+                    "origin_call_id": "call_9",
+                }
+                for phase in ("send", "clone", "enqueue", "dispatch")
+            ]
+            rows.append(
+                {
+                    "type": "dom.call",
+                    "ts_us": 11,
+                    "pid": 7,
+                    "interface": "Worker",
+                    "member": "postMessage",
+                    "message_id": "msg_7_1",
+                    "origin_call_id": "call_9",
+                }
+            )
+            (trace_dir / "firefox-dom-7.jsonl").write_text(
+                "\n".join(trace_finalize.json.dumps(row) for row in rows) + "\n",
+                encoding="utf-8",
+            )
+
+            trace_finalize.finalize(trace_dir, download_assets=False)
+
+            worker_rows = list(
+                trace_finalize.json.loads(line)
+                for line in (trace_dir / "categorized/worker.jsonl").read_text().splitlines()
+            )
+            timeline = trace_finalize.json.loads(
+                (trace_dir / "index/message-timelines.json").read_text()
+            )
+            causal = trace_finalize.json.loads(
+                (trace_dir / "index/causal-index.json").read_text()
+            )
+            self.assertEqual(len(worker_rows), 4)
+            self.assertTrue(timeline["messages"][0]["complete"])
+            self.assertEqual(timeline["messages"][0]["dom_call_count"], 1)
+            self.assertEqual(causal["message_timelines"]["complete_count"], 1)
+
     def test_jsonl_reader_preserves_unicode_line_separator_in_string(self):
         with tempfile.TemporaryDirectory() as raw_dir:
             trace_dir = pathlib.Path(raw_dir)
@@ -120,6 +172,27 @@ class TraceFinalizeTest(unittest.TestCase):
             self.assertTrue(result["valid"])
             self.assertEqual(result["first_seq"], 7)
             self.assertEqual(result["record_count"], 1)
+
+    def test_vm_window_v2_artifact_validation(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            trace_dir = pathlib.Path(raw_dir)
+            record = trace_finalize.VM_WINDOW_RECORD_V2.pack(
+                9, 200, 4, 1915, 0x1234,
+                0x2000, 0x3000,
+                36, 2, 4, 1, 80, 2200,
+                1, b"x" + b"\0" * 15,
+                7, 6, 0b11,
+            )
+            header = trace_finalize.VM_WINDOW_HEADER.pack(
+                b"FTVMW2\0\0", 2, len(record), 9, 9, 9, 0, 16, 1, 201
+            )
+            (trace_dir / "window-v2.bin").write_bytes(header + record)
+            result = trace_finalize.inspect_vm_window_artifact(
+                trace_dir, {"artifact_path": "window-v2.bin"}
+            )
+            self.assertTrue(result["valid"])
+            self.assertEqual(result["format"], "ftvmw2-le")
+            self.assertEqual(result["record_size"], 104)
 
     def test_promise_ledger_pairs_settlement(self):
         rows = [
@@ -420,6 +493,21 @@ class TraceFinalizeTest(unittest.TestCase):
         self.assertEqual(env["TRACE_VM_STEP"], "0")
         self.assertEqual(env["TRACE_JS_MODE"], "boundary")
         self.assertEqual(env["TRACE_JS_BOUNDARY_BUFFER"], "1")
+        self.assertEqual(env["TRACE_JS_CAPTURE_VALUES"], "1")
+        self.assertEqual(env["TRACE_JS_AUTO_CAPTURE_VALUES"], "1")
+        self.assertEqual(env["TRACE_JS_FULL_SPOOL"], "1")
+        self.assertEqual(env["TRACE_IPC_MAX_EVENTS_PER_SECOND"], "0")
+        self.assertEqual(env["TRACE_IPC_MAX_BYTES_PER_SECOND"], "0")
+
+    def test_vm_window_source_keeps_ring_across_jscript_changes(self):
+        source = (ROOT / "gecko-dev/js/src/vm/Interpreter.cpp").read_text(
+            encoding="utf-8"
+        )
+        ensure_body = source.split("bool FirefoxTraceEnsureVMWindow", 1)[1].split(
+            "void FirefoxTraceAppendVMWindowRecord", 1
+        )[0]
+        self.assertNotIn("strcmp(sFirefoxTraceVMWindowScriptURL", ensure_body)
+        self.assertIn("One target execution commonly crosses many function JSScripts", ensure_body)
 
     def test_vm_window_rejects_verbose_opcode_combination(self):
         with self.assertRaisesRegex(ValueError, "必须分阶段运行"):

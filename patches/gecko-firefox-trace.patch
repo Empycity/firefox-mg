@@ -532,7 +532,7 @@ index 124a48bdf9..dd41378138 100644
    nsCOMPtr<nsIMarionette> marionette = do_GetService(NS_MARIONETTE_CONTRACTID);
    if (marionette) {
 diff --git a/dom/bindings/BindingUtils.cpp b/dom/bindings/BindingUtils.cpp
-index e3d43bfc7b..8196790c26 100644
+index e3d43bfc7b..ba8337b370 100644
 --- a/dom/bindings/BindingUtils.cpp
 +++ b/dom/bindings/BindingUtils.cpp
 @@ -7,8 +7,14 @@
@@ -587,7 +587,7 @@ index e3d43bfc7b..8196790c26 100644
  #include "mozilla/dom/WebIDLGlobalNameHash.h"
  #include "mozilla/dom/WorkerPrivate.h"
  #include "mozilla/dom/WorkerScope.h"
-@@ -85,10 +98,1832 @@
+@@ -85,10 +98,1954 @@
  #include "ipc/IPCMessageUtilsSpecializations.h"
  #include "mozilla/dom/DocGroup.h"
  #include "nsXULElement.h"
@@ -627,6 +627,9 @@ index e3d43bfc7b..8196790c26 100644
 +static std::atomic<uint64_t> sFirefoxTraceDOMValueStoreSequence{0};
 +static std::atomic<uint64_t> sFirefoxTraceDOMPromiseObservationCount{0};
 +static std::atomic<uint64_t> sFirefoxTraceDOMEventSequence{0};
++static std::atomic<uint64_t> sFirefoxTraceMessageSequence{0};
++static thread_local uint64_t sFirefoxTraceCurrentMessageTaskId = 0;
++static thread_local uint64_t sFirefoxTraceLastDOMMessageId = 0;
 +
 +// Object/value enrichment below deliberately reads a small allowlist of
 +// native DOM properties (for example TextMetrics.width).  Those reads enter
@@ -2095,7 +2098,9 @@ index e3d43bfc7b..8196790c26 100644
 +
 +  nsAutoCString pageURL;
 +  FirefoxTraceGetCurrentPageURL(aCx, pageURL);
-+  if (!FirefoxTraceShouldRecordDOMURL(pageURL)) {
++  if (!FirefoxTraceShouldRecordDOMURL(pageURL) &&
++      !(strcmp(aMemberName, "postMessage") == 0 &&
++        sFirefoxTraceLastDOMMessageId)) {
 +    return;
 +  }
 +
@@ -2237,6 +2242,15 @@ index e3d43bfc7b..8196790c26 100644
 +  } else {
 +    line.AppendLiteral("null");
 +  }
++  if (strcmp(aMemberName, "postMessage") == 0 &&
++      sFirefoxTraceLastDOMMessageId) {
++    line.AppendLiteral(",\"message_id\":\"msg_");
++    line.AppendInt(static_cast<int64_t>(getpid()));
++    line.Append('_');
++    line.AppendInt(sFirefoxTraceLastDOMMessageId);
++    line.Append('"');
++    sFirefoxTraceLastDOMMessageId = 0;
++  }
 +  if (isPromiseResult) {
 +    line.AppendLiteral(",\"promise_id\":");
 +    FirefoxTraceAppendPromiseId(line, promiseObject);
@@ -2357,6 +2371,114 @@ index e3d43bfc7b..8196790c26 100644
 +
 +}  // namespace
 +
++uint64_t FirefoxTraceCreateMessageId() {
++  return sFirefoxTraceMessageSequence.fetch_add(1, std::memory_order_relaxed) +
++         1;
++}
++
++bool FirefoxTraceMessageContextAllowed(JSContext* aCx) {
++  if (!FirefoxTraceDOMEnabled()) {
++    return false;
++  }
++  nsAutoCString pageURL;
++  FirefoxTraceGetCurrentPageURL(aCx, pageURL);
++  return FirefoxTraceShouldRecordDOMURL(pageURL);
++}
++
++uint64_t FirefoxTraceCurrentMessageTaskId() {
++  return sFirefoxTraceCurrentMessageTaskId;
++}
++
++uint64_t FirefoxTraceCurrentMessageOriginCallId() {
++  return FirefoxTraceCurrentJSCallId();
++}
++
++void FirefoxTraceRememberMessageForDOMCall(uint64_t aMessageId) {
++  sFirefoxTraceLastDOMMessageId = aMessageId;
++}
++
++void FirefoxTraceSetCurrentMessageTaskId(uint64_t aTaskId) {
++  sFirefoxTraceCurrentMessageTaskId = aTaskId;
++}
++
++void FirefoxTraceRecordMessage(JSContext* aCx, const char* aTransport,
++                               const char* aDirection, const char* aPhase,
++                               bool aContextAllowed,
++                               uint64_t aMessageId, uint64_t aParentTaskId,
++                               uint64_t aOriginCallId,
++                               JS::Handle<JS::Value> aPayload,
++                               const void* aSender, const void* aReceiver) {
++  if (!aContextAllowed || !FirefoxTraceDOMEnabled()) {
++    return;
++  }
++
++  nsAutoCString pageURL;
++  FirefoxTraceGetCurrentPageURL(aCx, pageURL);
++
++  nsAutoCString line;
++  line.AppendLiteral("{\"schema\":\"firefox_trace.event.v1\",\"type\":\"dom.message\",\"ts_us\":");
++  line.AppendInt(static_cast<int64_t>(PR_Now()));
++  line.AppendLiteral(",\"pid\":");
++  line.AppendInt(static_cast<int64_t>(getpid()));
++  line.AppendLiteral(",\"tid\":\"");
++  line.AppendPrintf("%p", PR_GetCurrentThread());
++  line.AppendLiteral("\",\"transport\":");
++  FirefoxTraceAppendJsonCString(line, aTransport);
++  line.AppendLiteral(",\"direction\":");
++  FirefoxTraceAppendJsonCString(line, aDirection);
++  line.AppendLiteral(",\"phase\":");
++  FirefoxTraceAppendJsonCString(line, aPhase);
++  line.AppendLiteral(",\"message_id\":\"msg_");
++  line.AppendInt(static_cast<int64_t>(getpid()));
++  line.Append('_');
++  line.AppendInt(aMessageId);
++  line.AppendLiteral("\",\"task_id\":\"task_");
++  line.AppendInt(static_cast<int64_t>(getpid()));
++  line.Append('_');
++  line.AppendInt(aMessageId);
++  line.Append('"');
++  line.AppendLiteral(",\"parent_task_id\":");
++  if (aParentTaskId) {
++    line.AppendLiteral("\"task_");
++    line.AppendInt(static_cast<int64_t>(getpid()));
++    line.Append('_');
++    line.AppendInt(aParentTaskId);
++    line.Append('"');
++  } else {
++    line.AppendLiteral("null");
++  }
++  line.AppendLiteral(",\"origin_call_id\":");
++  if (aOriginCallId) {
++    line.AppendLiteral("\"call_");
++    line.AppendInt(aOriginCallId);
++    line.Append('"');
++  } else {
++    line.AppendLiteral("null");
++  }
++  line.AppendLiteral(",\"sender_object_id\":");
++  if (aSender) {
++    line.AppendLiteral("\"native_");
++    line.AppendPrintf("%p", aSender);
++    line.Append('"');
++  } else {
++    line.AppendLiteral("null");
++  }
++  line.AppendLiteral(",\"receiver_object_id\":");
++  if (aReceiver) {
++    line.AppendLiteral("\"native_");
++    line.AppendPrintf("%p", aReceiver);
++    line.Append('"');
++  } else {
++    line.AppendLiteral("null");
++  }
++  line.AppendLiteral(",\"payload\":");
++  FirefoxTraceAppendDescribedValue(aCx, line, aPayload, false);
++  line.AppendLiteral(",\"page_url\":");
++  FirefoxTraceAppendJsonCString(line, pageURL.get());
++  line.Append('}');
++  FirefoxTraceWriteDOMEventLine(line);
++}
++
 +void FirefoxTraceDOMBinding(JSContext* aCx, JS::Handle<JSObject*> aObj,
 +                            const char* aOperation,
 +                            const char* aInterfaceName,
@@ -2421,7 +2543,7 @@ index e3d43bfc7b..8196790c26 100644
  #define HTML_TAG(_tag, _classname, _interfacename)                \
    namespace HTML##_interfacename##Element_Binding {               \
 diff --git a/dom/bindings/BindingUtils.h b/dom/bindings/BindingUtils.h
-index 77a2ce8002..7e6e9e9952 100644
+index 77a2ce8002..7a887b4697 100644
 --- a/dom/bindings/BindingUtils.h
 +++ b/dom/bindings/BindingUtils.h
 @@ -10,6 +10,7 @@
@@ -2432,7 +2554,7 @@ index 77a2ce8002..7e6e9e9952 100644
  #include "js/CharacterEncoding.h"
  #include "js/Conversions.h"
  #include "js/experimental/BindingAllocs.h"
-@@ -152,6 +153,23 @@ inline nsISupports* UnwrapDOMObjectToISupports(JSObject* aObject) {
+@@ -152,6 +153,39 @@ inline nsISupports* UnwrapDOMObjectToISupports(JSObject* aObject) {
  
  inline bool IsDOMObject(JSObject* obj) { return IsDOMClass(JS::GetClass(obj)); }
  
@@ -2452,6 +2574,22 @@ index 77a2ce8002..7e6e9e9952 100644
 +                            JS::Handle<JS::Value> aValue,
 +                            uint32_t aArgc, const JS::CallArgs* aCallArgs,
 +                            JS::Handle<JS::Value> aSetterArg);
++
++// Cross-task message causality. Message runnables retain these IDs while the
++// structured-cloned payload moves between globals and threads.
++uint64_t FirefoxTraceCreateMessageId();
++bool FirefoxTraceMessageContextAllowed(JSContext* aCx);
++uint64_t FirefoxTraceCurrentMessageTaskId();
++uint64_t FirefoxTraceCurrentMessageOriginCallId();
++void FirefoxTraceRememberMessageForDOMCall(uint64_t aMessageId);
++void FirefoxTraceSetCurrentMessageTaskId(uint64_t aTaskId);
++void FirefoxTraceRecordMessage(JSContext* aCx, const char* aTransport,
++                               const char* aDirection, const char* aPhase,
++                               bool aContextAllowed,
++                               uint64_t aMessageId, uint64_t aParentTaskId,
++                               uint64_t aOriginCallId,
++                               JS::Handle<JS::Value> aPayload,
++                               const void* aSender, const void* aReceiver);
 +
  // There are two valid ways to use UNWRAP_OBJECT: Either obj needs to
  // be a MutableHandle<JSObject*>, or value needs to be a strong-reference
@@ -9872,6 +10010,240 @@ index ea692b1f6e..0b3ab06830 100644
    UpdateMustKeepAlive();
  }
  
+diff --git a/dom/workers/MessageEventRunnable.cpp b/dom/workers/MessageEventRunnable.cpp
+index 33efc966b4..92bf784282 100644
+--- a/dom/workers/MessageEventRunnable.cpp
++++ b/dom/workers/MessageEventRunnable.cpp
+@@ -8,16 +8,25 @@
+ 
+ #include "mozilla/dom/MessageEvent.h"
+ #include "mozilla/dom/MessageEventBinding.h"
++#include "mozilla/dom/BindingUtils.h"
+ #include "mozilla/dom/RootedDictionary.h"
+ #include "nsQueryObject.h"
+ #include "WorkerScope.h"
+ 
+ namespace mozilla::dom {
+ 
+-MessageEventRunnable::MessageEventRunnable(WorkerPrivate* aWorkerPrivate)
++MessageEventRunnable::MessageEventRunnable(WorkerPrivate* aWorkerPrivate,
++                                           uint64_t aMessageId,
++                                           uint64_t aParentTaskId,
++                                           uint64_t aOriginCallId,
++                                           bool aTraceContext)
+     : WorkerDebuggeeRunnable("MessageEventRunnable"),
+       StructuredCloneHolder(CloningSupported, TransferringSupported,
+-                            StructuredCloneScope::SameProcess) {}
++                            StructuredCloneScope::SameProcess),
++      mMessageId(aMessageId),
++      mParentTaskId(aParentTaskId),
++      mOriginCallId(aOriginCallId),
++      mTraceContext(aTraceContext) {}
+ 
+ bool MessageEventRunnable::DispatchDOMEvent(JSContext* aCx,
+                                             WorkerPrivate* aWorkerPrivate,
+@@ -76,7 +85,14 @@ bool MessageEventRunnable::DispatchDOMEvent(JSContext* aCx,
+ 
+   event->SetTrusted(true);
+ 
++  FirefoxTraceRecordMessage(aCx, "Worker", "parent_to_worker", "dispatch",
++                            mTraceContext, mMessageId, mParentTaskId,
++                            mOriginCallId,
++                            messageData, aWorkerPrivate, aTarget);
++  const uint64_t previousTask = FirefoxTraceCurrentMessageTaskId();
++  FirefoxTraceSetCurrentMessageTaskId(mTraceContext ? mMessageId : 0);
+   aTarget->DispatchEvent(*event);
++  FirefoxTraceSetCurrentMessageTaskId(previousTask);
+ 
+   return true;
+ }
+@@ -110,10 +126,15 @@ void MessageEventRunnable::DispatchError(JSContext* aCx,
+ }
+ 
+ MessageEventToParentRunnable::MessageEventToParentRunnable(
+-    WorkerPrivate* aWorkerPrivate)
++    WorkerPrivate* aWorkerPrivate, uint64_t aMessageId,
++    uint64_t aParentTaskId, uint64_t aOriginCallId, bool aTraceContext)
+     : WorkerParentDebuggeeRunnable("MessageEventToParentRunnable"),
+       StructuredCloneHolder(CloningSupported, TransferringSupported,
+-                            StructuredCloneScope::SameProcess) {}
++                            StructuredCloneScope::SameProcess),
++      mMessageId(aMessageId),
++      mParentTaskId(aParentTaskId),
++      mOriginCallId(aOriginCallId),
++      mTraceContext(aTraceContext) {}
+ 
+ bool MessageEventToParentRunnable::DispatchDOMEvent(
+     JSContext* aCx, WorkerPrivate* aWorkerPrivate,
+@@ -171,7 +192,14 @@ bool MessageEventToParentRunnable::DispatchDOMEvent(
+ 
+   event->SetTrusted(true);
+ 
++  FirefoxTraceRecordMessage(aCx, "Worker", "worker_to_parent", "dispatch",
++                            mTraceContext, mMessageId, mParentTaskId,
++                            mOriginCallId,
++                            messageData, aWorkerPrivate, aTarget);
++  const uint64_t previousTask = FirefoxTraceCurrentMessageTaskId();
++  FirefoxTraceSetCurrentMessageTaskId(mTraceContext ? mMessageId : 0);
+   aTarget->DispatchEvent(*event);
++  FirefoxTraceSetCurrentMessageTaskId(previousTask);
+ 
+   return true;
+ }
+diff --git a/dom/workers/MessageEventRunnable.h b/dom/workers/MessageEventRunnable.h
+index 45bce9949f..7ed7569354 100644
+--- a/dom/workers/MessageEventRunnable.h
++++ b/dom/workers/MessageEventRunnable.h
+@@ -20,7 +20,9 @@ namespace dom {
+ class MessageEventRunnable final : public WorkerDebuggeeRunnable,
+                                    public StructuredCloneHolder {
+  public:
+-  explicit MessageEventRunnable(WorkerPrivate* aWorkerPrivate);
++  MessageEventRunnable(WorkerPrivate* aWorkerPrivate, uint64_t aMessageId,
++                       uint64_t aParentTaskId, uint64_t aOriginCallId,
++                       bool aTraceContext);
+ 
+   bool DispatchDOMEvent(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
+                         DOMEventTargetHelper* aTarget, bool aIsMainThread);
+@@ -29,12 +31,20 @@ class MessageEventRunnable final : public WorkerDebuggeeRunnable,
+   bool WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override;
+ 
+   void DispatchError(JSContext* aCx, DOMEventTargetHelper* aTarget);
++
++  const uint64_t mMessageId;
++  const uint64_t mParentTaskId;
++  const uint64_t mOriginCallId;
++  const bool mTraceContext;
+ };
+ 
+ class MessageEventToParentRunnable final : public WorkerParentDebuggeeRunnable,
+                                            public StructuredCloneHolder {
+  public:
+-  explicit MessageEventToParentRunnable(WorkerPrivate* aWorkerPrivate);
++  MessageEventToParentRunnable(WorkerPrivate* aWorkerPrivate,
++                               uint64_t aMessageId,
++                               uint64_t aParentTaskId,
++                               uint64_t aOriginCallId, bool aTraceContext);
+ 
+   bool DispatchDOMEvent(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
+                         DOMEventTargetHelper* aTarget, bool aIsMainThread);
+@@ -43,6 +53,11 @@ class MessageEventToParentRunnable final : public WorkerParentDebuggeeRunnable,
+   bool WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override;
+ 
+   void DispatchError(JSContext* aCx, DOMEventTargetHelper* aTarget);
++
++  const uint64_t mMessageId;
++  const uint64_t mParentTaskId;
++  const uint64_t mOriginCallId;
++  const bool mTraceContext;
+ };
+ 
+ }  // namespace dom
+diff --git a/dom/workers/Worker.cpp b/dom/workers/Worker.cpp
+index 604bb87559..cdf5f83ccb 100644
+--- a/dom/workers/Worker.cpp
++++ b/dom/workers/Worker.cpp
+@@ -17,6 +17,7 @@
+ #include "EventWithOptionsRunnable.h"
+ #include "js/RootingAPI.h"
+ #include "mozilla/dom/BindingDeclarations.h"
++#include "mozilla/dom/BindingUtils.h"
+ #include "nsISupports.h"
+ #include "nsDebug.h"
+ #include "mozilla/dom/WorkerStatus.h"
+@@ -157,8 +158,15 @@ void Worker::PostMessage(JSContext* aCx, JS::Handle<JS::Value> aMessage,
+       "Worker.postMessage", nameOrScriptURL.get(),
+       JS::ProfilingCategoryPair::DOM, flags);
+ 
+-  RefPtr<MessageEventRunnable> runnable =
+-      new MessageEventRunnable(mWorkerPrivate);
++  const uint64_t messageId = FirefoxTraceCreateMessageId();
++  const uint64_t parentTaskId = FirefoxTraceCurrentMessageTaskId();
++  const uint64_t originCallId = FirefoxTraceCurrentMessageOriginCallId();
++  const bool traceContext = FirefoxTraceMessageContextAllowed(aCx);
++  RefPtr<MessageEventRunnable> runnable = new MessageEventRunnable(
++      mWorkerPrivate, messageId, parentTaskId, originCallId, traceContext);
++  FirefoxTraceRecordMessage(aCx, "Worker", "parent_to_worker", "send",
++                            traceContext, messageId, parentTaskId, originCallId,
++                            aMessage, this, mWorkerPrivate);
+ 
+   JS::CloneDataPolicy clonePolicy;
+   // DedicatedWorkers are always part of the same agent cluster.
+@@ -186,10 +194,21 @@ void Worker::PostMessage(JSContext* aCx, JS::Handle<JS::Value> aMessage,
+     return;
+   }
+ 
++  FirefoxTraceRecordMessage(aCx, "Worker", "parent_to_worker", "clone",
++                            traceContext, messageId, parentTaskId, originCallId,
++                            aMessage, this, mWorkerPrivate);
++
+   // The worker could have closed between the time we entered this function and
+   // checked ParentStatusProtected and now, which could cause the dispatch to
+   // fail.
+-  Unused << NS_WARN_IF(!runnable->Dispatch(mWorkerPrivate));
++  if (!NS_WARN_IF(!runnable->Dispatch(mWorkerPrivate))) {
++    FirefoxTraceRecordMessage(aCx, "Worker", "parent_to_worker", "enqueue",
++                              traceContext, messageId, parentTaskId,
++                              originCallId, aMessage, this, mWorkerPrivate);
++    if (traceContext) {
++      FirefoxTraceRememberMessageForDOMCall(messageId);
++    }
++  }
+ }
+ 
+ void Worker::PostMessage(JSContext* aCx, JS::Handle<JS::Value> aMessage,
+diff --git a/dom/workers/WorkerPrivate.cpp b/dom/workers/WorkerPrivate.cpp
+index 9e4a03aa9e..d7e3af6e6d 100644
+--- a/dom/workers/WorkerPrivate.cpp
++++ b/dom/workers/WorkerPrivate.cpp
+@@ -17,6 +17,7 @@
+ #include "js/MemoryMetrics.h"
+ #include "js/SourceText.h"
+ #include "MessageEventRunnable.h"
++#include "mozilla/dom/BindingUtils.h"
+ #include "mozilla/AntiTrackingUtils.h"
+ #include "mozilla/BasePrincipal.h"
+ #include "mozilla/CycleCollectedJSContext.h"
+@@ -5680,8 +5681,17 @@ void WorkerPrivate::PostMessageToParent(
+     return;
+   }
+ 
++  const uint64_t messageId = FirefoxTraceCreateMessageId();
++  const uint64_t parentTaskId = FirefoxTraceCurrentMessageTaskId();
++  const uint64_t originCallId = FirefoxTraceCurrentMessageOriginCallId();
++  const bool traceContext =
++      parentTaskId != 0 || FirefoxTraceMessageContextAllowed(aCx);
+   RefPtr<MessageEventToParentRunnable> runnable =
+-      new MessageEventToParentRunnable(this);
++      new MessageEventToParentRunnable(this, messageId, parentTaskId,
++                                       originCallId, traceContext);
++  FirefoxTraceRecordMessage(aCx, "Worker", "worker_to_parent", "send",
++                            traceContext, messageId, parentTaskId, originCallId,
++                            aMessage, this, ParentEventTargetRef());
+ 
+   JS::CloneDataPolicy clonePolicy;
+ 
+@@ -5698,8 +5708,20 @@ void WorkerPrivate::PostMessageToParent(
+     return;
+   }
+ 
++  FirefoxTraceRecordMessage(aCx, "Worker", "worker_to_parent", "clone",
++                            traceContext, messageId, parentTaskId, originCallId,
++                            aMessage, this, ParentEventTargetRef());
++
+   if (!runnable->Dispatch(this)) {
+     aRv = NS_ERROR_FAILURE;
++  } else {
++    FirefoxTraceRecordMessage(aCx, "Worker", "worker_to_parent", "enqueue",
++                              traceContext, messageId, parentTaskId,
++                              originCallId, aMessage, this,
++                              ParentEventTargetRef());
++    if (traceContext) {
++      FirefoxTraceRememberMessageForDOMCall(messageId);
++    }
+   }
+ }
+ 
 diff --git a/dom/xhr/XMLHttpRequestMainThread.cpp b/dom/xhr/XMLHttpRequestMainThread.cpp
 index 1a8e264644..ff2836022d 100644
 --- a/dom/xhr/XMLHttpRequestMainThread.cpp
@@ -11792,10 +12164,10 @@ index 7fe5f3a8cc..d3f022c9a2 100644
    return true;
  }
 diff --git a/js/src/vm/Interpreter.cpp b/js/src/vm/Interpreter.cpp
-index 81a10dba41..8a76a4b6d1 100644
+index 81a10dba41..e2ccf2d3a1 100644
 --- a/js/src/vm/Interpreter.cpp
 +++ b/js/src/vm/Interpreter.cpp
-@@ -17,73 +17,4519 @@
+@@ -17,73 +17,4522 @@
  #include "mozilla/Sprintf.h"
  #include "mozilla/TimeStamp.h"
  
@@ -11865,6 +12237,7 @@ index 81a10dba41..8a76a4b6d1 100644
 +#endif
 +#include "builtin/Boolean-inl.h"
 +#include "debugger/DebugAPI-inl.h"
++#include "gc/StableCellHasher-inl.h"
 +#include "vm/ArgumentsObject-inl.h"
 +#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
 +#  include "vm/DisposableRecord-inl.h"
@@ -14170,14 +14543,8 @@ index 81a10dba41..8a76a4b6d1 100644
 +  uint32_t line = aScript ? aScript->lineno() : 0;
 +  uint32_t column = aScript ? aScript->column().oneOriginValue() : 0;
 +  size_t length = aScript ? aScript->length() : 0;
-+  if (sFirefoxTraceVMWindowScriptURL[0] &&
-+      (strcmp(sFirefoxTraceVMWindowScriptURL, scriptURL) != 0 ||
-+       sFirefoxTraceVMWindowScriptLine != line ||
-+       sFirefoxTraceVMWindowScriptColumn != column ||
-+       sFirefoxTraceVMWindowScriptLength != length)) {
-+    sFirefoxTraceVMWindowWritten = 0;
-+    sFirefoxTraceVMWindowOverwritten = 0;
-+  }
++  // One target execution commonly crosses many function JSScripts. Keep one
++  // continuous ring and attach the current script identity to every record.
 +  strncpy(sFirefoxTraceVMWindowScriptURL, scriptURL,
 +          sizeof(sFirefoxTraceVMWindowScriptURL) - 1);
 +  sFirefoxTraceVMWindowScriptURL[sizeof(sFirefoxTraceVMWindowScriptURL) - 1] =
@@ -15933,6 +16300,14 @@ index 81a10dba41..8a76a4b6d1 100644
 +      fputs("\"type\":\"bigint\",\"preview\":\"BigInt\"", file);
 +    } else if (value.isObject()) {
 +      JS::RootedObject obj(cx_, &value.toObject());
++      uint64_t objectId = 0;
++      if (js::gc::GetOrCreateUniqueId(obj, &objectId)) {
++        fprintf(file, "\"js_object_id\":\"jsobj_%d_%llu\",", getpid(),
++                static_cast<unsigned long long>(objectId));
++      } else {
++        JS_ClearPendingException(cx_);
++        fputs("\"js_object_id_status\":\"unavailable\",", file);
++      }
 +      if (writeArrayBufferViewPreview(file, obj) ||
 +          writeArrayBufferPreview(file, obj)) {
 +        // BufferSource previews are complete enough here and avoid invoking
@@ -16374,7 +16749,7 @@ index 81a10dba41..8a76a4b6d1 100644
  
  template <bool Eq>
  static MOZ_ALWAYS_INLINE bool LooseEqualityOp(JSContext* cx,
-@@ -433,6 +4879,8 @@ bool js::RunScript(JSContext* cx, RunState& state) {
+@@ -433,6 +4882,8 @@ bool js::RunScript(JSContext* cx, RunState& state) {
      return false;
    }
  
@@ -16383,7 +16758,7 @@ index 81a10dba41..8a76a4b6d1 100644
    GeckoProfilerEntryMarker marker(cx, state.script());
  
    // If the isExecuting flag was not set, then enable it.
-@@ -458,21 +4906,23 @@ bool js::RunScript(JSContext* cx, RunState& state) {
+@@ -458,21 +4909,23 @@ bool js::RunScript(JSContext* cx, RunState& state) {
      }
    });
  
@@ -16416,7 +16791,7 @@ index 81a10dba41..8a76a4b6d1 100644
  }
  #ifdef _MSC_VER
  #  pragma optimize("", on)
-@@ -564,23 +5014,26 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
+@@ -564,23 +5017,26 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
      return ReportIsNotFunction(cx, args.calleev(), skipForCallee, construct);
    }
  
@@ -16446,7 +16821,7 @@ index 81a10dba41..8a76a4b6d1 100644
    }
  
    /* Invoke native functions. */
-@@ -594,19 +5047,19 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
+@@ -594,19 +5050,19 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
          native = jitInfo->ignoresReturnValueMethod;
        }
      }
@@ -16469,7 +16844,7 @@ index 81a10dba41..8a76a4b6d1 100644
    }
  
    /* Run function until JSOp::RetRval, JSOp::Return or error. */
-@@ -616,20 +5069,20 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
+@@ -616,20 +5072,20 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
    // ensure this object has the correct realm.
    AutoRealm ar(cx, state.script());
    if (construct && !MaybeCreateThisForConstructor(cx, args)) {
@@ -16493,7 +16868,7 @@ index 81a10dba41..8a76a4b6d1 100644
  }
  
  // Returns true if the callee needs an outerized |this| object. Outerization
-@@ -1817,6 +6270,15 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -1817,6 +6273,15 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
  #define ADVANCE_AND_DISPATCH(N)                  \
    JS_BEGIN_MACRO                                 \
      REGS.pc += (N);                              \
@@ -16509,7 +16884,7 @@ index 81a10dba41..8a76a4b6d1 100644
      SANITY_CHECKS();                             \
      DISPATCH_TO(*REGS.pc | activation.opMask()); \
    JS_END_MACRO
-@@ -1928,6 +6390,13 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -1928,6 +6393,13 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
    RootedScript script(cx);
    SET_SCRIPT(REGS.fp()->script());
  
@@ -16523,7 +16898,7 @@ index 81a10dba41..8a76a4b6d1 100644
    /*
     * Pool of rooters for use in this interpreter frame. References to these
     * are used for local variables within interpreter cases. This avoids
-@@ -2025,11 +6494,12 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -2025,11 +6497,12 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
      COUNT_COVERAGE();
      END_CASE(JumpTarget)
  
@@ -16538,7 +16913,7 @@ index 81a10dba41..8a76a4b6d1 100644
          script->incWarmUpCounter();
  
          jit::MethodStatus status =
-@@ -3320,20 +7790,55 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -3320,20 +7793,55 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
            goto error;
          }
  

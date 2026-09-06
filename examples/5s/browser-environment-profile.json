@@ -1,0 +1,58 @@
+{
+  "schema": "firefox_trace.browser_environment_profile.v1",
+  "source": "Firefox 142 project runtime and retained browser probes",
+  "device": {
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0",
+    "appVersion": "5.0 (Macintosh)",
+    "platform": "MacIntel",
+    "vendor": "",
+    "product": "Gecko",
+    "productSub": "20100101",
+    "language": "en-US",
+    "languages": ["en-US", "en"],
+    "hardwareConcurrency": 12,
+    "maxTouchPoints": 0,
+    "devicePixelRatio": 2
+  },
+  "screen": {
+    "width": 1440,
+    "height": 900,
+    "availWidth": 1440,
+    "availHeight": 875,
+    "colorDepth": 24,
+    "pixelDepth": 24,
+    "orientation": {"type": "landscape-primary", "angle": 0}
+  },
+  "window": {
+    "innerWidth": 1280,
+    "innerHeight": 891,
+    "outerWidth": 1280,
+    "outerHeight": 900,
+    "screenX": 4,
+    "screenY": 33
+  },
+  "frame": {
+    "innerWidth": 300,
+    "innerHeight": 65,
+    "outerWidth": 1280,
+    "outerHeight": 975,
+    "screenX": 4,
+    "screenY": 33
+  },
+  "storage": {
+    "quota": 10737418240,
+    "usage": 0
+  },
+  "canvas2d": {
+    "knownTextMetrics": {
+      "16px Arial\u0000Cloudflare 5s": {
+        "width": 94.30000305175781,
+        "actualBoundingBoxAscent": 11.6484375,
+        "actualBoundingBoxDescent": 0.1953125,
+        "actualBoundingBoxLeft": 0.203125,
+        "actualBoundingBoxRight": 94.6828125
+      }
+    },
+    "blankImageDataIsZero": true
+  }
+}

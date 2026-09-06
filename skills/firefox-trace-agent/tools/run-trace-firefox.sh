@@ -316,8 +316,7 @@ apply_trace_preset() {
     "target-return")
       set_default TRACE_PROFILE target
       set_default FIREFOX_TRACE_JS 1
-      set_default TRACE_JS_MODE target
-      set_default TRACE_TARGET_MATCH all
+      set_default TRACE_JS_MODE boundary
       set_default TRACE_JS_EARLY_SCRIPT_FILTER 1
       set_default TRACE_JS_PRUNE_NON_TARGET_FUNCTIONS 1
       set_default TRACE_JS_CAPTURE_VALUES 1
@@ -355,8 +354,7 @@ apply_trace_preset() {
     "target-values")
       set_default TRACE_PROFILE target
       set_default FIREFOX_TRACE_JS 1
-      set_default TRACE_JS_MODE target
-      set_default TRACE_TARGET_MATCH all
+      set_default TRACE_JS_MODE boundary
       set_default TRACE_JS_EARLY_SCRIPT_FILTER 1
       set_default TRACE_JS_PRUNE_NON_TARGET_FUNCTIONS 1
       set_default TRACE_JS_CAPTURE_VALUES 1
@@ -434,13 +432,13 @@ apply_trace_preset() {
       set_default TRACE_VM_WINDOW_RECORDS 65536
       set_default TRACE_OPCODE 0
       set_default TRACE_VM_STEP 0
-      set_default TRACE_JS_CAPTURE_VALUES 0
-      set_default TRACE_JS_AUTO_CAPTURE_VALUES 0
+      set_default TRACE_JS_CAPTURE_VALUES 1
+      set_default TRACE_JS_AUTO_CAPTURE_VALUES 1
       set_default TRACE_JS_BOUNDARY_BUFFER 1
-      set_default TRACE_JS_FULL_SPOOL 0
+      set_default TRACE_JS_FULL_SPOOL 1
       set_default FIREFOX_TRACE_JS_LIMIT_EVENTS 0
-      set_default TRACE_IPC_MAX_EVENTS_PER_SECOND 6000
-      set_default TRACE_IPC_MAX_BYTES_PER_SECOND 4194304
+      set_default TRACE_IPC_MAX_EVENTS_PER_SECOND 0
+      set_default TRACE_IPC_MAX_BYTES_PER_SECOND 0
       ;;
     "opcode-window")
       set_default TRACE_PROFILE vm

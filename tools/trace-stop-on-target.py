@@ -28,6 +28,7 @@ ARTIFACT_KEYS = (
     "response_body_store_path",
     "artifact_path",
 )
+URL_KEYS = ("url", "host_url", "channel_url", "final_url")
 
 
 def parse_args() -> argparse.Namespace:
@@ -108,6 +109,24 @@ def artifact_ready(trace_dir: pathlib.Path, event: dict[str, Any], field_key: st
     return all((trace_dir / path).is_file() for path in paths)
 
 
+def event_urls(event: dict[str, Any]) -> list[str]:
+    return [str(event.get(key)) for key in URL_KEYS if event.get(key)]
+
+
+def url_matches(event: dict[str, Any], url_contains: str) -> bool:
+    return not url_contains or any(url_contains in url for url in event_urls(event))
+
+
+def top_level_cookie_match(event: dict[str, Any], wanted: set[str]) -> str | None:
+    if not wanted or not str(event.get("type") or "").startswith("cookie."):
+        return None
+    actual = str(event.get("key") or "")
+    if actual.lower() not in wanted:
+        return None
+    value = event.get("value_preview")
+    return actual if value is not None and str(value) != "" else None
+
+
 def find_target(
     trace_dir: pathlib.Path,
     event: dict[str, Any],
@@ -115,7 +134,7 @@ def find_target(
     source_file: str,
     url_contains: str = "",
 ) -> dict[str, Any] | None:
-    if url_contains and url_contains not in str(event.get("url") or ""):
+    if not url_matches(event, url_contains):
         return None
     for field_key in FIELD_KEYS:
         values = event.get(field_key)
@@ -133,6 +152,17 @@ def find_target(
                     "url": event.get("url"),
                     "source_file": source_file,
                 }
+    cookie = top_level_cookie_match(event, targets["cookie_fields"])
+    if cookie is not None:
+        urls = event_urls(event)
+        return {
+            "field": cookie,
+            "field_location": "cookie",
+            "event_type": str(event.get("type") or "unknown"),
+            "request_id": event.get("request_id") or event.get("channel_id"),
+            "url": urls[0] if urls else None,
+            "source_file": source_file,
+        }
     return None
 
 
@@ -146,7 +176,25 @@ def may_contain_target(event: dict[str, Any], targets: dict[str, set[str]]) -> b
         names = {str(name).lower() for name in values}
         if names & targets[field_key]:
             return True
+    if top_level_cookie_match(event, targets["cookie_fields"]) is not None:
+        return True
     return False
+
+
+def segment_matches(event: dict[str, Any], active_segment: str) -> bool:
+    """Accept legacy untagged events only for the initial trace segment.
+
+    Cookie/network producers created before segment tagging can emit a null
+    segment_id.  Rejecting those events makes the watchdog miss a real target
+    in seg_001.  Later resumed segments remain strict so an old untagged event
+    cannot stop a new segment.
+    """
+    if not active_segment:
+        return True
+    event_segment = str(event.get("segment_id") or "")
+    if event_segment:
+        return event_segment == active_segment
+    return active_segment in {"seg_001", "seg_1", "1"}
 
 
 class JsonlTail:
@@ -216,6 +264,7 @@ def wait_for_ack(trace_dir: pathlib.Path, control: dict[str, Any], timeout: floa
 
 def stop_and_finalize(args: argparse.Namespace, reason: str, detail: dict[str, Any], started: float) -> int:
     before = trace_size(args.trace_dir)
+    stop_elapsed = time.monotonic() - started
     stop = subprocess.run(
         [str(args.control_script), str(args.trace_dir), "stop", reason],
         text=True,
@@ -234,6 +283,7 @@ def stop_and_finalize(args: argparse.Namespace, reason: str, detail: dict[str, A
         "reason": reason,
         **detail,
         "bytes_at_stop": before,
+        "stop_elapsed_seconds": round(stop_elapsed, 3),
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "stop_sent": stop.returncode == 0,
         "stop_acknowledged": acknowledged,
@@ -272,7 +322,7 @@ def main() -> int:
         pending.extend(
             (source_file, event)
             for source_file, event in new_events
-            if (not active_segment or event.get("segment_id") == active_segment)
+            if segment_matches(event, active_segment)
             and may_contain_target(event, targets)
         )
         still_pending: list[tuple[str, dict[str, Any]]] = []
@@ -287,7 +337,7 @@ def main() -> int:
             if match:
                 return stop_and_finalize(args, "target-found", match, started)
             if (
-                (not args.url_contains or args.url_contains in str(event.get("url") or ""))
+                url_matches(event, args.url_contains)
                 and may_contain_target(event, targets)
             ):
                 still_pending.append((source_file, event))

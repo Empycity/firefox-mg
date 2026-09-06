@@ -427,8 +427,7 @@ def vm_env_from_payload(vm: object) -> dict[str, str]:
         env.update(
             {
                 "TRACE_PROFILE": "vm",
-                "TRACE_JS_MODE": "target",
-                "TRACE_TARGET_MATCH": "all",
+                "TRACE_JS_MODE": "boundary",
                 "TRACE_JS_CAPTURE_VALUES": "0",
                 "TRACE_JS_AUTO_CAPTURE_VALUES": "0",
                 "TRACE_JS_BOUNDARY_BUFFER": "0",
@@ -439,16 +438,18 @@ def vm_env_from_payload(vm: object) -> dict[str, str]:
             env["TRACE_SCRIPT_CONTAINS"] = script_contains
 
     if vm_window:
-        # Keep the low-frequency request/call skeleton while the selected
-        # script writes compact VM records. No per-op JSON is enabled here.
+        # Keep complete boundary/value evidence next to the compact opcode
+        # ring. This is required to resolve VM identities back to JS values.
         env.update(
             {
                 "TRACE_JS_MODE": "boundary",
-                "TRACE_JS_CAPTURE_VALUES": "0",
-                "TRACE_JS_AUTO_CAPTURE_VALUES": "0",
+                "TRACE_JS_CAPTURE_VALUES": "1",
+                "TRACE_JS_AUTO_CAPTURE_VALUES": "1",
                 "TRACE_JS_BOUNDARY_BUFFER": "1",
-                "TRACE_JS_FULL_SPOOL": "0",
+                "TRACE_JS_FULL_SPOOL": "1",
                 "FIREFOX_TRACE_JS_LIMIT_EVENTS": "0",
+                "TRACE_IPC_MAX_EVENTS_PER_SECOND": "0",
+                "TRACE_IPC_MAX_BYTES_PER_SECOND": "0",
             }
         )
 

@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Firefox Trace Worker Message Causality</title>
+<pre id="status">starting</pre>
+<script>
+const status = document.getElementById("status");
+const workerSource = `
+  self.onmessage = (event) => {
+    if (event.data.kind === "main-start") {
+      self.postMessage({ kind: "worker-ready", token: event.data.token });
+      return;
+    }
+    if (event.data.kind === "main-ack") {
+      self.postMessage({ kind: "worker-done", token: event.data.token });
+    }
+  };
+`;
+const workerURL = URL.createObjectURL(
+  new Blob([workerSource], { type: "text/javascript" })
+);
+const worker = new Worker(workerURL);
+const token = "trace-message-causality";
+
+worker.onmessage = async (event) => {
+  if (event.data.kind === "worker-ready") {
+    worker.postMessage({ kind: "main-ack", token });
+    return;
+  }
+  if (event.data.kind === "worker-done") {
+    status.textContent = JSON.stringify(event.data);
+    worker.terminate();
+    URL.revokeObjectURL(workerURL);
+    await fetch("/done?trace_message=done");
+  }
+};
+
+worker.postMessage({ kind: "main-start", token });
+</script>

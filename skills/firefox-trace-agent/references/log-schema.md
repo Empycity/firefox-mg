@@ -27,6 +27,7 @@ TRACE_DIR/
 | `web-assets/` | Finalizer best-effort page and JS downloads. |
 | `index/summary.json` | Counts, target fields, degraded count, generated files, match count. |
 | `index/causal-index.json` | Target field forms, compact `producer_match`/`producer_chain`, complete producer candidates, same-origin context. |
+| `index/message-timelines.json` | Worker message phases grouped by `message_id`, task ancestry, WebIDL send-call joins and per-message completeness. |
 | `index/target-candidates.json` | Automatically ranked request-associated scripts, script match token, exact script identity, opcode PC range and dispatcher candidate for the next segment. |
 | `index/trace-health.json` | Loss markers plus runtime ACK and configured-target observation gates. |
 
@@ -88,6 +89,22 @@ script_hash_source
 
 A producer claim is strong when the request field SHA-256 equals a JS value SHA-256 and the request context matches by `origin_call_id` or explicit call/request linkage.
 
+Object-valued JS `this`/args/return previews and recursively captured child
+values include `js_object_id`. Equal IDs within one PID prove the same
+SpiderMonkey object even across moving GC; `js_object_id_status=unavailable`
+marks the rare allocation failure. This ID is separate from DOM/BOM
+`object_id` and must not be joined across those namespaces by string shape.
+
+Dedicated Worker messaging emits `type=dom.message` with one stable
+`message_id` across `phase=send|clone|enqueue|dispatch`. `task_id` identifies
+the dispatched message task, `parent_task_id` links a `postMessage` performed
+inside a message listener to that listener's task, and `origin_call_id` retains
+the sender-side JS call. The matching `Worker.postMessage` or
+`DedicatedWorkerGlobalScope.postMessage` `dom.call` carries the same
+`message_id`. A timeline is complete only when all four phases exist in order;
+an enqueued message that has not dispatched when collection stops remains an
+explicit incomplete timeline.
+
 `causal-index.json` selects `producer_match` from exact JS returns in the same
 process and segment before the request, preferring the candidate with the
 deepest retained parent chain. `producer_chain` is the compact lineage;
@@ -99,12 +116,13 @@ deepest retained parent chain. `producer_chain` is the compact lineage;
 only the fields supported by the current evidence. Dispatcher PC is applied
 automatically only for a high-confidence heuristic result.
 
-`js.vm_window` points to `firefox-vm-window-*.bin`. Format `ftvmw1-le` has a
-64-byte header followed by fixed 80-byte records containing seq/time/call/PC,
+`js.vm_window` points to `firefox-vm-window-*.bin`. Current format `ftvmw1-le`
+has a 64-byte header followed by fixed 80-byte records containing seq/time/call/PC,
 SpiderMonkey op and operand bytes, stack depth, and exact top-two primitive
 payloads when present. Run `tools/trace_vm_window.py TRACE_DIR`; do not expand
 the whole artifact into categorized JSONL. Sandboxed content sends the complete
-binary to the parent in one IPC message; the parent writes one accepted window
+binary to the parent in one IPC message; function-level `JSScript` changes do
+not reset the ring. The parent writes one accepted window
 per segment before the metadata event is observed.
 
 For a run with explicit query/body/header/cookie targets, health is incomplete

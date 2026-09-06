@@ -107,6 +107,7 @@ tools/install-trace-runtime.sh
 categorized/
 index/summary.json
 index/causal-index.json
+index/message-timelines.json
 web-assets/
 ```
 
@@ -171,6 +172,11 @@ preview / size / sha256 / value_store_path / stored / truncated
 这样既保真，又避免单行 JSONL 过大导致 UI 和 Agent 读取困难。`*_MAX_BYTES=0` 在本工具里表示 trace 层不按大小丢弃该 artifact。
 
 对象环境不使用递归 JSON 展开。Agent 显式启用 DOM contract overlay 后，`full-chain` 会为实际触达对象记录稳定 `object_id`、realm、原型 class 链、成员 descriptor、构造/调用与返回对象引用，汇总在 `index/environment-contract.json` 的 `objects` 和 `members`。默认 DOM/BOM signal 不自动开启该对象合同。iframe 的原生 `load` 派发顺序会进入 `lifecycle_events`，并通过同一 `object_id` 与监听注册、节点插入关联。该过程只读取引擎元数据，不执行 getter；完整性由 `object_contract_complete` 明确标示。对象来自其他 iframe/Xray realm 时，当前 context 只记录 identity、preview 和 `cross_compartment=true`；原型、descriptor、Promise 和属性快照必须在对象所属 realm 采集。
+
+JS call 的 `this`、args、return 以及递归属性/数组元素如果是普通对象，会记录
+`js_object_id=jsobj_<pid>_<SpiderMonkey unique id>`。该 ID 使用 GC 可迁移的 cell
+identity，同一对象经过 nursery 或 compacting GC 后保持不变，可用于跨调用确认对象
+传播；它与 DOM/BOM 合同的 `object_id` 分属不同命名空间。
 
 当对象类型已记录、但 `ImageData.data`、WebGL vector、extension array 或
 `TextMetrics` 的内部值仍缺失时，Agent 在下一轮完整配置中加入
@@ -330,7 +336,7 @@ VM/opcode 也不截断
 
 | 项 | 默认 |
 |---|---:|
-| VM window records | 65536（约 5 MiB/目标线程） |
+| VM window records | 65536（`ftvmw1-le` 约 5 MiB/目标线程） |
 | opcode 上限 | 4096 |
 | opcode 执行预算 | 65536 |
 | VM step 上限 | 2048 |
@@ -362,7 +368,7 @@ UI 现在提供阶段预设，普通使用不需要手动研究每个 checkbox�
 | 预设 | 自动设置 | 你需要填写 |
 |---|---|---|
 | `一轮还原模式（推荐：请求触发回溯）` | 不开全站 opcode/VM step/raw operands；用请求命中回溯 JS/value/source ring buffer | 执行一次目标动作 |
-| `VM window：目标触发环形缓冲` | 目标脚本写固定 80-byte 二进制记录；目标字段命中后一次落盘，不逐条 JSON/IPC | 加载 Agent 配置后执行同一个目标动作 |
+| `VM window：目标触发环形缓冲` | 目标脚本写固定 80-byte 二进制记录，跨函数切换时不清空 ring，保留连续窗口与 top-2 primitive；目标字段命中后一次落盘，不逐条 JSON/IPC，同时保留完整 boundary/value spool | 加载 Agent 配置后执行同一个目标动作 |
 | `局部 opcode：自动候选脚本` | 只在已有候选脚本/范围时开 JS opcode + raw operands；用于补 VM 证据 | 执行同一个目标动作 |
 | `VM step：已确认 dispatcher` | 仅在 dispatcher PC 已确认后启用 VM step；否则保持局部 opcode/回溯策略 | 执行同一个目标动作 |
 | `默认关闭 VM（普通 full-chain）` | VM/WASM 细粒度全部关闭 | 无 |
@@ -513,6 +519,7 @@ index/
   summary.json
   causal-index.json
   request-timelines.json
+  message-timelines.json
   target-candidates.json
     web-assets.json
 ```
@@ -531,6 +538,7 @@ index/
 | `index/summary.json` | 本轮总览、分类计数、目标字段命中、degraded 数、生成文件。 |
 | `index/causal-index.json` | 请求字段、JS value SHA-256、origin 上下文和 producer 关联索引；`producer_match` 给出最深 exact return，`producer_chain` 给出紧凑父链，`producer_candidates` 保留完整候选。 |
 | `index/request-timelines.json` | 按逻辑 request_id 汇总 XHR/Fetch 阶段，区分页面显式头和最终 HTTP channel 头；跨进程启发式关联带 `exact_id=false`。 |
+| `index/message-timelines.json` | 按 `message_id` 汇总 Worker 消息的 `send/clone/enqueue/dispatch` 四阶段、`task_id/parent_task_id`、发送调用和 payload 摘要；`complete=true` 同时要求阶段齐全且顺序正确。 |
 | `index/target-candidates.json` | 工具自动排名的请求关联脚本、脚本匹配片段、精确脚本身份、opcode PC 范围和 dispatcher 候选；下一轮由中控台读取。 |
 
 ---
@@ -744,7 +752,7 @@ JS return/arg/object value metadata 与请求字段 SHA-256 对齐
 | `tools/trace-desktop.sh` | 启动桌面 UI。 |
 | `tools/run-trace-firefox.sh` | 底层启动 Firefox。 |
 | `tools/trace-control.sh` | 对现有 `TRACE_DIR` start/stop/prewarm/config/new-segment/status。 |
-| `tools/trace_finalize.py` | 生成 `categorized/`、`index/summary.json`、`index/causal-index.json`、`index/request-timelines.json`、`index/target-candidates.json`。 |
+| `tools/trace_finalize.py` | 生成 `categorized/`、`index/summary.json`、`index/causal-index.json`、`index/request-timelines.json`、`index/message-timelines.json`、`index/target-candidates.json`。 |
 | `tools/trace_analyzer.py` | 离线找字段、脚本、函数和下一轮 env；当 request origin 只到 transport wrapper 时，用字段 SHA-256 解析最深 JS return producer 及父链。 |
 | `tools/trace_store.py` | 多轮导入 SQLite，按 field/value/call chain 查询。 |
 | `tools/trace_opcode_analyzer.py` | 分析 opcode 窗口，找热点 PC/dispatcher 线索。 |

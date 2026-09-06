@@ -1,0 +1,41 @@
+{
+  "skill_name": "firefox-trace-reverse",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "这里有一个 TRACE_DIR，帮我看目标 token 字段是谁生成的，并告诉我下一步该补环境还是纯算。",
+      "expected_output": "按 manifest、summary、request-fields、network、js、script、state/dom/bom 顺序分析，给出证据等级、producer 候选、依赖账本和下一步计划。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "给我解释 Firefox Trace Console UI 上 full-chain、discover-light、打开即记录、暂停记录、VM/WASM 限额这些默认选项。",
+      "expected_output": "解释 UI 默认值、每个选项作用、性能保护和对应输出日志。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "我的 trace 里只有请求字段，没有 JS producer，帮我设计下一轮最窄采集方案。",
+      "expected_output": "检查缺口，建议同一会话新分段、字段/脚本/函数过滤、target-values 或 deep-causal，并说明成功条件。",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Firefox Trace 分析和便携 fixture 验收已经完成，请结束任务。Agent 过程中创建了临时 trace、profile、probe JSON、agent-next 草稿和缓存；原始 TRACE_DIR 是用户输入。",
+      "expected_output": "自动停止 Agent 启动的进程，保留用户原始 TRACE_DIR、最终 fixture/manifest/runner/report，删除 Agent 创建的临时 trace、profile、probe、过期 handoff 和缓存；用 find/rg 验证并给出 cleanup receipt，running_agent_processes 为空且 verified=true。",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Agent 自己启动一次 full-chain trace，目标字段出现后就结束，避免目录继续增长。",
+      "expected_output": "启动 Firefox 的同一轮同时启动 trace-stop-on-target watchdog；目标字段及引用制品落盘后立即下发 stop，等待 ACK 并 finalize，不等待页面 idle 或额外流量；full-chain 同样设置 120 秒和 2 GiB 兜底，保留 JSON receipt 并在便携 fixture 独立验收后清理 Agent 创建的大 trace。",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "目标已经确认是 JSVMP，需要下一轮拿完整执行证据，同时避免 Firefox 卡死和逐条 JSON 爆量。",
+      "expected_output": "先生成带稳定脚本身份和真实目标字段的 VM window 配置；保留 Fetch/XHR/Cookie/script/boundary 锚点，关闭逐条 opcode/VM step；使用默认 65536 条固定 80-byte ring，目标字段命中后冻结 binary artifact、watchdog stop/finalize，再运行 trace_vm_window.py；只把摘要仍缺失的 PC 交给后续 verbose opcode。",
+      "files": []
+    }
+  ]
+}

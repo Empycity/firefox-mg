@@ -1,0 +1,67 @@
+{
+  "schema": "firefox_trace.cloudflare_case_fixture.v1",
+  "source_trace": "firefox-trace-20260816-5s-cloudflare-final-evidence",
+  "purpose": "Minimal retained script and value artifacts required after external trace cleanup.",
+  "files": [
+    {
+      "path": "scripts/73eae66de9d6bd075350215e7cd4c97937840a75527ae854b3235cfc8bcf328e.js",
+      "size": 82465,
+      "sha256": "73eae66de9d6bd075350215e7cd4c97937840a75527ae854b3235cfc8bcf328e"
+    },
+    {
+      "path": "scripts/a04f016d07d509b28db2cfc4412a22cfe9e71bd39243ab4154606fdea2bbe5bf.js",
+      "size": 233311,
+      "sha256": "a04f016d07d509b28db2cfc4412a22cfe9e71bd39243ab4154606fdea2bbe5bf"
+    },
+    {
+      "path": "scripts/c76d818a5a431f6d068944534a38918745aaba06ac0a4f1d45f92055e92e0977.js",
+      "size": 21877,
+      "sha256": "c76d818a5a431f6d068944534a38918745aaba06ac0a4f1d45f92055e92e0977"
+    },
+    {
+      "path": "scripts/ccf00d1923b0131a10e0c6d26f95e5dee6ebf8621a27e83c5a2f68a2e0093142.js",
+      "size": 12332,
+      "sha256": "ccf00d1923b0131a10e0c6d26f95e5dee6ebf8621a27e83c5a2f68a2e0093142"
+    },
+    {
+      "path": "values/210d57cfe5fd72be70b933a29ccc1211f5ccf5ca5e9aa369eb5d47f2dda9f076.txt",
+      "size": 822896,
+      "sha256": "210d57cfe5fd72be70b933a29ccc1211f5ccf5ca5e9aa369eb5d47f2dda9f076"
+    },
+    {
+      "path": "values/bd60dc90bb288398ac1314d2a6b21e5229df64aa3899bfea5d319136f479d373.txt",
+      "size": 113560,
+      "sha256": "bd60dc90bb288398ac1314d2a6b21e5229df64aa3899bfea5d319136f479d373"
+    },
+    {
+      "path": "values/e3c4f08509b2af3ff1179b010d4affb3a73f40e88f0b0ead8599a02d7fdc9a3d.txt",
+      "size": 6864,
+      "sha256": "e3c4f08509b2af3ff1179b010d4affb3a73f40e88f0b0ead8599a02d7fdc9a3d"
+    },
+    {
+      "path": "values/e7c40cb9c4b1f965d896e777cdf2c5bfef00b7ec049e623bf5a6123dc7d363b3.txt",
+      "size": 3672,
+      "sha256": "e7c40cb9c4b1f965d896e777cdf2c5bfef00b7ec049e623bf5a6123dc7d363b3"
+    },
+    {
+      "path": "values/xhr_req_body_46543_1.txt",
+      "size": 2199,
+      "sha256": "504089f0dfca93d5af4187c9c2cbb6f7dab3d063599dbd0733ed052958d634de"
+    },
+    {
+      "path": "values/xhr_req_body_46543_2.txt",
+      "size": 8642,
+      "sha256": "0983ca2331f7dde41cffa248f72f9b1dc0e439a69f4deb599c4ff889b19a8e93"
+    },
+    {
+      "path": "values/xhr_req_body_46566_1.txt",
+      "size": 4524,
+      "sha256": "f8c83eaca993e5e9ff71d3cb43177a0ab40cd0512cd9dd2d3cb99cde11cff0e6"
+    },
+    {
+      "path": "values/xhr_req_body_46566_2.txt",
+      "size": 85847,
+      "sha256": "f33a8d9a457f11a3b9e0b207827ed4d13c90aa0477b688c5bcdc6c7cd0030a0b"
+    }
+  ]
+}

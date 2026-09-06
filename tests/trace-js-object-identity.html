@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Trace JS object identity</title>
+<script>
+  function identitySink(value) {
+    return value;
+  }
+
+  const shared = { marker: "stable-object", nested: { value: 7 } };
+  identitySink(shared);
+
+  // Create enough short-lived objects to make a nursery collection likely.
+  for (let i = 0; i < 200000; i++) {
+    ({ index: i, payload: [i, i + 1, i + 2] });
+  }
+
+  queueMicrotask(() => {
+    identitySink(shared);
+    document.title = "Trace JS object identity complete";
+    fetch("/done?trace_identity=done").catch(() => {});
+  });
+</script>

@@ -1,10 +1,24 @@
 # Firefox Trace 魔改进展记录
 
-更新时间：2026-08-10
+更新时间：2026-08-18
 
 > 本文件是历史验证归档，不是通用产品手册、Agent 指南或 skill。这里保留旧运行的
 > 原始证据，便于追溯实现变更；新站点的脚本、字段、hash、长度和 trace 路径必须写入
 > `examples/<case>/`，不得从本归档复制到通用文档或默认配置。
+
+## 2026-08-18：Dedicated Worker 跨任务消息因果链
+
+- 新增 `dom.message`，同一 `message_id` 跨 structured clone 与 Worker runnable
+  保留 `send/clone/enqueue/dispatch` 四阶段，并记录 `task_id`、`parent_task_id`、
+  `origin_call_id`、方向、发送/接收对象和 payload 摘要。
+- `Worker.postMessage` 与 `DedicatedWorkerGlobalScope.postMessage` 的 `dom.call`
+  复用对应 `message_id`；监听器内再次发送会把当前消息任务写入
+  `parent_task_id`，不再依赖时间窗口拼接双向消息。
+- Worker 的 `blob:` 脚本 URL 继承已通过页面过滤的入站消息上下文；未关联的浏览器
+  内部 Worker 仍受原页面过滤约束，避免把启动期内部通信混入目标链。
+- `trace_finalize.py` 将 `dom.message` 归入 `categorized/worker.jsonl`，并生成
+  `index/message-timelines.json`；`causal-index.json` 同时给出消息完整/缺失计数。
+- 新增 `tests/trace-worker-message-causality.html` 和 finalizer 单元回归。
 
 ## 2026-08-10：多阶段请求链验证后的通用改进项
 
@@ -2523,3 +2537,14 @@ obj-aarch64-apple-darwin25.6.0/dist/bin/firefox
 - 回归：Gecko 增量构建成功；本地 XHR/Fetch smoke 在 `TRACE_HTTP_RAW=0` 下记录 4 条
   `http.request_headers`、0 条 `http.raw`，两个 POST 均关联到逻辑 request_id。
 - Python 回归：finalizer/analyzer/skill 同步测试 21 项通过。
+
+## 2026-08-18：JS args/return 普通对象稳定身份
+
+- `js/src/vm/Interpreter.cpp` 的对象 preview 新增 `js_object_id`，使用
+  SpiderMonkey `gc::GetOrCreateUniqueId`，不再依赖会随 moving GC 改变的地址。
+- ID 格式为 `jsobj_<pid>_<unique id>`，覆盖 `this`、args、return、对象属性和数组
+  元素；分配失败时记录 `js_object_id_status=unavailable` 并清理 pending exception。
+- 回归页：`tests/trace-js-object-identity.html`，在两次调用之间制造 nursery GC 压力。
+- Gecko 增量构建通过；有头 trace 的两次 enter/return 共四个对象 preview 均为
+  `jsobj_22155_119`。
+- 回归 trace 健康结果：`evidence_complete=true`、`degraded=0`、517 个事件。

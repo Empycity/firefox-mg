@@ -60,11 +60,23 @@ function forEachJsonLine(filePath, visit) {
 
 function pickRunnerOutput(filePath) {
   const output = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const observed = [...(output.observed_dynamic_requests || [])].reverse().find(
+    (item) => typeof item.url === "string"
+  );
+  if (observed) return { output, url: observed.url, request: observed };
   const send = [...(output.xhr || [])].reverse().find(
     (item) => item.phase === "send" && typeof item.url === "string"
   );
   if (!send) throw new Error("Runner JSON has no xhr send URL");
-  return { output, url: send.url };
+  return { output, url: send.url, request: send };
+}
+
+function headerValue(headers, name) {
+  const wanted = String(name).toLowerCase();
+  for (const [key, value] of Object.entries(headers || {})) {
+    if (key.toLowerCase() === wanted) return String(value);
+  }
+  return "";
 }
 
 function rawQueryValue(url, field) {
@@ -151,7 +163,9 @@ try {
   const runner = runnerJson ? pickRunnerOutput(runnerJson) : null;
   const candidate = candidateUrl || runner.url;
   const actualRaw = String(field.value_raw_preview || rawQueryValue(request.url, fieldName));
-  const candidateRaw = rawQueryValue(candidate, fieldName);
+  const candidateRaw = field.location === "headers"
+    ? headerValue(runner?.request?.headers, fieldName)
+    : rawQueryValue(candidate, fieldName);
   const actualDecoded = decodedValue(actualRaw);
   const candidateDecoded = decodedValue(candidateRaw);
   const actualBytes = decodeBase64Url(actualDecoded);
@@ -167,6 +181,22 @@ try {
   const hostContractComplete = environmentCoverage
     ? scalarContractComplete === true && objectContractComplete === true
     : null;
+  const bodyRow = networkRows.find(
+    (row) => row.type === "xhr.body" && row.request_id === requestId
+  );
+  const actualBodySize = bodyRow?.request_body_size ?? bodyRow?.body_size ?? null;
+  const actualBodySha256 = bodyRow?.request_body_sha256 || bodyRow?.body_sha256 || null;
+  const candidateBodySize = runner?.request?.body?.size ?? null;
+  const candidateBodySha256 = runner?.request?.body?.sha256 || null;
+  const bodyComparable = actualBodySha256 !== null && candidateBodySha256 !== null;
+  const bodyEqual = bodyComparable && actualBodySha256 === candidateBodySha256;
+  const urlEqual =
+    new URL(request.url).origin === new URL(candidate).origin &&
+    new URL(request.url).pathname === new URL(candidate).pathname;
+  const nonTargetQueryEqual =
+    JSON.stringify(queryEntries(request.url, fieldName)) ===
+    JSON.stringify(queryEntries(candidate, fieldName));
+  const fieldEqual = actualRaw === candidateRaw;
   const report = {
     schema: "firefox_trace.alignment_report.v1",
     trace_dir: path.resolve(traceDir),
@@ -189,12 +219,16 @@ try {
       decoded_equal: actualDecoded === candidateDecoded,
     },
     url: {
-      same_origin_and_path:
-        new URL(request.url).origin === new URL(candidate).origin &&
-        new URL(request.url).pathname === new URL(candidate).pathname,
-      non_target_query_equal:
-        JSON.stringify(queryEntries(request.url, fieldName)) ===
-        JSON.stringify(queryEntries(candidate, fieldName)),
+      same_origin_and_path: urlEqual,
+      non_target_query_equal: nonTargetQueryEqual,
+    },
+    body: {
+      actual_size: actualBodySize,
+      actual_sha256: actualBodySha256,
+      candidate_size: candidateBodySize,
+      candidate_sha256: candidateBodySha256,
+      comparable: bodyComparable,
+      equal: bodyEqual,
     },
     base64url: {
       actual_bytes: actualBytes ? actualBytes.length : null,
@@ -214,7 +248,7 @@ try {
       runner_host_audit: runner?.output?.host_accesses || null,
     },
     status:
-      actualRaw === candidateRaw
+      fieldEqual && urlEqual && nonTargetQueryEqual && (!bodyComparable || bodyEqual)
         ? "aligned"
         : hostContractComplete === false
           ? "host_contract_incomplete"

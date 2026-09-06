@@ -1,0 +1,4 @@
+interface:
+  display_name: "Firefox Trace Agent"
+  short_description: "读取 Firefox Trace 日志，定位请求字段生成链，判断补环境/纯算/JSVM/WASM 路线并输出复现合同"
+  default_prompt: "Use $firefox-trace-reverse to analyze TRACE_DIR, identify the target request field producer, classify dependencies, produce a reproduction or next-trace plan, and clean Agent-created temporary artifacts before completion."

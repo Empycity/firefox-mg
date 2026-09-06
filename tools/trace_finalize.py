@@ -30,7 +30,10 @@ from typing import Any, Iterable
 
 
 VM_WINDOW_HEADER = struct.Struct("<8sIIQQQQIIQ")
-VM_WINDOW_RECORD = struct.Struct("<QQQQQQIIIB16sBBB")
+VM_WINDOW_RECORD_V1 = struct.Struct("<QQQQQQIIIB16sBBB")
+VM_WINDOW_RECORD_V2 = struct.Struct("<QQQQQQQIIIIIIB16sBBB4x")
+# Kept for callers that construct historical fixtures.
+VM_WINDOW_RECORD = VM_WINDOW_RECORD_V1
 
 
 BOM_INTERFACES = {
@@ -203,7 +206,11 @@ def classify_event(path: pathlib.Path, row: dict[str, Any]) -> str:
         return "wasm-vm"
     if typ.startswith(("js.",)):
         return "js"
-    if typ.startswith(("worker.",)) or str(row.get("process_type") or "").lower() == "worker":
+    if (
+        typ.startswith(("worker.",))
+        or typ == "dom.message"
+        or str(row.get("process_type") or "").lower() == "worker"
+    ):
         return "worker"
     if typ.startswith(("dom.",)) or "dom" in lower_path:
         return classify_dom_interface(row)
@@ -215,7 +222,7 @@ def inspect_vm_window_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> 
     result: dict[str, Any] = {
         "valid": False,
         "artifact_path": relative,
-        "format": "ftvmw1-le",
+        "format": str(row.get("format") or "unknown"),
     }
     if not relative:
         result["error"] = "missing_artifact_path"
@@ -247,10 +254,19 @@ def inspect_vm_window_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> 
                 trigger_ts_us,
             ) = VM_WINDOW_HEADER.unpack(raw_header)
             expected_size = VM_WINDOW_HEADER.size + count * record_size
-            if magic.rstrip(b"\0") != b"FTVMW1":
+            format_by_version = {
+                1: (b"FTVMW1", VM_WINDOW_RECORD_V1, "ftvmw1-le"),
+                2: (b"FTVMW2", VM_WINDOW_RECORD_V2, "ftvmw2-le"),
+            }
+            expected_format = format_by_version.get(version)
+            if expected_format is None:
+                result["error"] = "unsupported_record_format"
+                return result
+            expected_magic, record_struct, format_name = expected_format
+            if magic.rstrip(b"\0") != expected_magic:
                 result["error"] = "bad_magic"
                 return result
-            if version != 1 or record_size != VM_WINDOW_RECORD.size:
+            if record_size != record_struct.size:
                 result["error"] = "unsupported_record_format"
                 return result
             if size != expected_size:
@@ -262,7 +278,7 @@ def inspect_vm_window_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> 
             for _ in range(count):
                 raw_record = stream.read(record_size)
                 digest.update(raw_record)
-                seq = VM_WINDOW_RECORD.unpack(raw_record)[0]
+                seq = record_struct.unpack(raw_record)[0]
                 if seq != expected_seq:
                     result["error"] = "record_sequence_gap"
                     result["expected_seq"] = expected_seq
@@ -275,6 +291,7 @@ def inspect_vm_window_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> 
     result.update(
         {
             "valid": True,
+            "format": format_name,
             "sha256": digest.hexdigest(),
             "size": size,
             "version": version,
@@ -2713,6 +2730,52 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
         encoding="utf-8",
     )
 
+    message_groups: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for row in all_rows:
+        message_id = str(row.get("message_id") or "")
+        if message_id and row.get("type") in {"dom.message", "dom.call"}:
+            message_groups[message_id].append(row)
+    required_message_phases = ("send", "clone", "enqueue", "dispatch")
+    message_timelines = []
+    for message_id, rows in sorted(message_groups.items()):
+        rows.sort(key=lambda item: (int(item.get("ts_us") or 0), int(item.get("_source_line") or 0)))
+        message_rows = [row for row in rows if row.get("type") == "dom.message"]
+        phases = [str(row.get("phase") or "") for row in message_rows]
+        phase_positions = {
+            phase: next((index for index, value in enumerate(phases) if value == phase), -1)
+            for phase in required_message_phases
+        }
+        missing_phases = [phase for phase, position in phase_positions.items() if position < 0]
+        ordered = not missing_phases and list(phase_positions.values()) == sorted(phase_positions.values())
+        first = message_rows[0] if message_rows else rows[0]
+        message_timelines.append(
+            {
+                "message_id": message_id,
+                "task_id": first.get("task_id"),
+                "parent_task_id": first.get("parent_task_id"),
+                "origin_call_id": first.get("origin_call_id"),
+                "transport": first.get("transport"),
+                "direction": first.get("direction"),
+                "phases": phases,
+                "missing_phases": missing_phases,
+                "ordered": ordered,
+                "complete": not missing_phases and ordered,
+                "dom_call_count": sum(row.get("type") == "dom.call" for row in rows),
+                "events": rows,
+            }
+        )
+    message_index = {
+        "schema": "firefox_trace.message_timelines.v1",
+        "message_count": len(message_timelines),
+        "complete_count": sum(item["complete"] for item in message_timelines),
+        "incomplete_count": sum(not item["complete"] for item in message_timelines),
+        "messages": message_timelines,
+    }
+    (index_dir / "message-timelines.json").write_text(
+        json.dumps(message_index, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
     js_by_sha: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     js_artifacts_by_path: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     js_call_enters: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -2893,6 +2956,12 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
         "target_fields": sorted(wanted),
         "targets": targets,
         "degraded_count": len(degraded),
+        "message_timelines": {
+            "path": "index/message-timelines.json",
+            "message_count": message_index["message_count"],
+            "complete_count": message_index["complete_count"],
+            "incomplete_count": message_index["incomplete_count"],
+        },
         "notes": [
             "matched means a request field raw/decoded/segment value equals or is contained by a JS-captured value artifact.",
             "producer_match selects the deepest exact JS return before the request; producer_chain walks its parent_call_id lineage.",
@@ -2924,6 +2993,7 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
         index_dir / "environment-contract.json",
         index_dir / "trace-health.json",
         index_dir / "request-timelines.json",
+        index_dir / "message-timelines.json",
     ):
         try:
             files[str(generated.relative_to(trace_dir))] = generated.stat().st_size

@@ -148,10 +148,37 @@ Implement only the observed surface, with complete semantics for that surface:
   `src`, prototype and `parentNode` agree. Preserve record discriminator fields
   used to build that collection; dropping `type`/kind metadata can silently
   produce an empty collection.
+- Execute a dynamically inserted script in the node's owning document and realm.
+  Keep that exact node as `document.currentScript` while it executes and expose
+  the same identity through script collections. Let the script's own query or
+  property-based `load` callback fire once; the host must not invoke it again.
+- Match `PerformanceObserver` delivery semantics, not just its constructor and
+  callback shape. A normal `observe()` registration receives only later entries;
+  historical entries are replayed only for an observed Firefox form that
+  explicitly requests buffered delivery. `disconnect()` must unregister the
+  observer so no later task can deliver to it.
+- Preserve browser-native `Error.stack` and function-string formats separately in
+  the main page, iframe and Worker realms. Probe the same Firefox build/profile
+  before implementing them. Do not hide host leakage by returning an empty stack:
+  remove Node, VM-wrapper and host-path frames while retaining the browser's
+  observed frame syntax and ordering. Timer wrappers must not add synthetic host
+  frames.
 - Preserve typed return values and inner bytes for Canvas/WebGL/TextMetrics;
   correct outer brands with empty arrays or zeroed fields are still incomplete.
 - Queue Worker-originated trace records onto the owning/main trace thread and
   retain task order. Do not write shared trace state directly from Worker hooks.
+- Worker `blob:` script realms may inherit trace eligibility only from a
+  captured inbound message task. Do not globally bypass the page URL filter;
+  that mixes browser-internal Worker traffic into the target timeline.
+- Compare Worker and iframe execution as ordered task streams. After each server
+  response, record the exact `postMessage` payload sequence and locate the first
+  browser/local divergence. A changed next-task list proves the decision occurred
+  in the preceding computation or response handling; do not fabricate a missing
+  downstream URL or message to make the later transport appear complete.
+- Compare nested values, not only outer key sets, types, array lengths or encoded
+  payload size. Inspect stack strings, `PerformanceEntry` fields, event
+  `origin`/`source`/`isTrusted`, constructor realm identity and inner byte arrays.
+  Similar request lengths are diagnostic context, never replay acceptance.
 - Object preview must not recursively invoke page getters. Use a per-thread
   re-entry guard, bounded target-only expansion and a scalar fallback; diagnose a
   tab crash from the symbolized stack before blaming target-field count.

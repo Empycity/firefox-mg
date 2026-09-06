@@ -1,0 +1,12 @@
+{
+  "key": "SESSION_KEY_HEX",
+  "switch": 1,
+  "sessionId": "APP_KEY-h-TIMESTAMP-SESSION_UUID32",
+  "version": "1.5.1/feilin005.VERSION_HASH",
+  "pluginElements": "",
+  "pluginResource": "",
+  "globalVariable": "",
+  "timestamp": "INIT_TIMESTAMP_MS",
+  "ip": "DEVICE_CONFIG_IP",
+  "certifyId": "CERTIFY_ID"
+}

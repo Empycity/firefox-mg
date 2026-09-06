@@ -118,17 +118,16 @@ These fields exist in the JSON schema but are not normal free-text UI inputs:
 The user should load these through `agent-next.json`; the Agent should not ask
 the user to copy a long script URL, function filter or hash by hand.
 
-### Known targeted-object crash guard
+### Targeted-object re-entry guard
 
-Before emitting a complete config, check the combined effective payload, not
-only the visible intensity preset. If any of `script_contains`,
-`function_contains`, or `script_sha256` is non-empty, force both
-`options.object_depth` and `TRACE_JS_OBJECT_DEPTH` to `0` for the current
-runtime. A matching identity sets `object_target_match=true`; positive depth
-then reaches `writeObjectProps()` and `JS_GetPropertyById()`, where a scripted
-getter can recursively enter `AutoFirefoxTraceJSCall` until the content process
-hits its stack guard page. Preserve value metadata/store and use
-`TRACE_DOM_MEMBERS` with `TRACE_DOM_OBJECT_VALUES=1` for named values instead.
+The patched runtime has a thread-local value-preview re-entry guard, so a narrow
+targeted overlay may use positive depth. Count every object/array container as
+one level: an object containing an array of objects needs depth `3` to read the
+element properties. Keep depth `1..2` as the normal ceiling. Use depth `3` only
+for a confirmed short-lived plain-data structure with a narrow script/function
+identity and `TRACE_JS_OBJECT_VALUE_KEYS`; scripted getters and Proxies still
+make deep traversal observably expensive. Use `TRACE_DOM_MEMBERS` with
+`TRACE_DOM_OBJECT_VALUES=1` for named browser object values instead.
 
 ## 5. VM / WASM panel
 

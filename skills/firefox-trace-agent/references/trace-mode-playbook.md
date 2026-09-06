@@ -61,6 +61,12 @@
 | boundary window events | `8192` | 按目标 sink 定向调整 | 只影响回刷窗口，不等于普通 JS 总数保险丝。 |
 | event fuse | full-chain=`0` | light=`50000` 或显式预算 | `0` 表示不以普通 JS 总数截断；命中非零预算必须写入 health/degraded 证据。 |
 
+对象深度按每个容器边递减：根参数对象为第一层，对象属性中的数组为第二层，数组元素
+对象为第三层。因此 `root.yQYB9[].dMHi2` 需要 depth `3`；depth `2` 只会记录数组元素
+的类型摘要。`TRACE_JS_OBJECT_VALUE_KEYS` 只决定已到达层级的哪些属性读取值，不会跳过
+中间容器直接按路径展开。depth `3` 只用于已确认由普通 data object/array 构成的短窗口，
+带 getter/Proxy 的对象继续使用较浅深度或后续 consumer 调用证据。
+
 ### 2.4 VM / WASM
 
 | 阶段 | VM window | JS opcode | raw operands | 栈 primitive | VM step | WASM module/artifact/raw |
@@ -74,11 +80,14 @@
 
 安全参数默认：opcode limit `4096`、opcode execution `65536`、VM step `2048`、opcode `2000 events/s`、opcode `4194304 bytes/s`。这些只属于 VM/opcode 细粒度模式。普通 full-chain 的 IPC 为 `0`（不按每秒事件/字节数丢弃），DOM/BOM、JS value、Fetch/XHR body/header、script raw 也不设 trace-side 截断；`0` 表示不截断。`VM/opcode 也不截断` 只用于已锁定脚本的一次短操作。
 
-VM window 热路径不生成 JSON、不逐条 IPC。每条固定 `80` bytes，默认
-`65536` 条约占 `5 MiB/目标线程`；query/body/header/cookie 任一配置字段命中后
+VM window 热路径不生成 JSON、不逐条 IPC。`ftvmw1-le` 每条固定 `80` bytes，
+默认 `65536` 条约占 `5 MiB/目标线程`；记录不会在同一资源的不同函数
+`JSScript` 间清零，保留连续执行窗口。每条记录携带 top-2 value type 和
+primitive payload。query/body/header/cookie 任一配置字段命中后
 通过 parent IPC 每个 segment 首次命中冻结为一个
 `firefox-vm-window-*.bin`，并写一条 `js.vm_window` 元数据事件。普通
-Fetch/XHR/Cookie、script artifact 和 boundary 锚点继续保留。使用
+Fetch/XHR/Cookie、script artifact 和完整 boundary/value spool 继续保留，VM window
+模式不设置 IPC 每秒速率上限。使用
 `python3 tools/trace_vm_window.py TRACE_DIR` 检查 PC、转移边和 primitive 覆盖率。
 
 Agent 配置已经写入脚本 token、line/column、bytecode length 或 PC range 时，这些显式身份在新输出目录中仍然生效；`target-candidates.json` 只用于补全空白字段，不会覆盖一份完整的 Agent handoff。局部 opcode 需要中间数值时，再在同一脚本/PC 窗口打开 stack slots/primitive；不要把栈采集扩展到全站。

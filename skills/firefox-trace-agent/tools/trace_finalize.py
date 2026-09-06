@@ -30,7 +30,10 @@ from typing import Any, Iterable
 
 
 VM_WINDOW_HEADER = struct.Struct("<8sIIQQQQIIQ")
-VM_WINDOW_RECORD = struct.Struct("<QQQQQQIIIB16sBBB")
+VM_WINDOW_RECORD_V1 = struct.Struct("<QQQQQQIIIB16sBBB")
+VM_WINDOW_RECORD_V2 = struct.Struct("<QQQQQQQIIIIIIB16sBBB4x")
+# Kept for callers that construct historical fixtures.
+VM_WINDOW_RECORD = VM_WINDOW_RECORD_V1
 
 
 BOM_INTERFACES = {
@@ -203,7 +206,11 @@ def classify_event(path: pathlib.Path, row: dict[str, Any]) -> str:
         return "wasm-vm"
     if typ.startswith(("js.",)):
         return "js"
-    if typ.startswith(("worker.",)) or str(row.get("process_type") or "").lower() == "worker":
+    if (
+        typ.startswith(("worker.",))
+        or typ == "dom.message"
+        or str(row.get("process_type") or "").lower() == "worker"
+    ):
         return "worker"
     if typ.startswith(("dom.",)) or "dom" in lower_path:
         return classify_dom_interface(row)
@@ -215,7 +222,7 @@ def inspect_vm_window_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> 
     result: dict[str, Any] = {
         "valid": False,
         "artifact_path": relative,
-        "format": "ftvmw1-le",
+        "format": str(row.get("format") or "unknown"),
     }
     if not relative:
         result["error"] = "missing_artifact_path"
@@ -247,10 +254,19 @@ def inspect_vm_window_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> 
                 trigger_ts_us,
             ) = VM_WINDOW_HEADER.unpack(raw_header)
             expected_size = VM_WINDOW_HEADER.size + count * record_size
-            if magic.rstrip(b"\0") != b"FTVMW1":
+            format_by_version = {
+                1: (b"FTVMW1", VM_WINDOW_RECORD_V1, "ftvmw1-le"),
+                2: (b"FTVMW2", VM_WINDOW_RECORD_V2, "ftvmw2-le"),
+            }
+            expected_format = format_by_version.get(version)
+            if expected_format is None:
+                result["error"] = "unsupported_record_format"
+                return result
+            expected_magic, record_struct, format_name = expected_format
+            if magic.rstrip(b"\0") != expected_magic:
                 result["error"] = "bad_magic"
                 return result
-            if version != 1 or record_size != VM_WINDOW_RECORD.size:
+            if record_size != record_struct.size:
                 result["error"] = "unsupported_record_format"
                 return result
             if size != expected_size:
@@ -262,7 +278,7 @@ def inspect_vm_window_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> 
             for _ in range(count):
                 raw_record = stream.read(record_size)
                 digest.update(raw_record)
-                seq = VM_WINDOW_RECORD.unpack(raw_record)[0]
+                seq = record_struct.unpack(raw_record)[0]
                 if seq != expected_seq:
                     result["error"] = "record_sequence_gap"
                     result["expected_seq"] = expected_seq
@@ -275,6 +291,7 @@ def inspect_vm_window_artifact(trace_dir: pathlib.Path, row: dict[str, Any]) -> 
     result.update(
         {
             "valid": True,
+            "format": format_name,
             "sha256": digest.hexdigest(),
             "size": size,
             "version": version,
@@ -298,6 +315,156 @@ def compact_event(row: dict[str, Any], path: pathlib.Path, line: int, category: 
     result["_source_file"] = path.name
     result["_source_line"] = line
     return result
+
+
+def build_request_timelines(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build logical request stages and join final parent-channel headers.
+
+    XHR/Fetch events use a content-process request_id, while the parent HTTP
+    channel currently exposes channel_id.  Preserve that distinction: an exact
+    URL+method nearest-time join is useful evidence but is explicitly labeled
+    heuristic until the IDs are propagated through IPC.
+    """
+
+    timelines: dict[str, dict[str, Any]] = {}
+    final_channels: list[dict[str, Any]] = []
+
+    for row in rows:
+        typ = str(row.get("type") or "")
+        if typ == "http.request_headers":
+            final_channels.append(row)
+            continue
+        request_id = str(row.get("request_id") or "")
+        if not request_id or not typ.startswith(("xhr.", "fetch.")):
+            continue
+        pid = str(row.get("pid") or "unknown")
+        key = f"{pid}:{request_id}"
+        item = timelines.setdefault(
+            key,
+            {
+                "pid": row.get("pid"),
+                "request_id": request_id,
+                "transport": "xhr" if typ.startswith("xhr.") else "fetch",
+                "method": None,
+                "url": None,
+                "explicit_headers": {},
+                "events": [],
+                "final_channel": None,
+            },
+        )
+        method = row.get("method")
+        url = row.get("url") or row.get("request_url")
+        if method and not item["method"]:
+            item["method"] = str(method).upper()
+        if url and not item["url"]:
+            item["url"] = str(url)
+
+        if typ == "xhr.header":
+            name = str(row.get("detail_name") or "")
+            if name:
+                item["explicit_headers"][name] = {
+                    "value": str(row.get("detail_value") or ""),
+                    "provenance": "xhr.setRequestHeader",
+                }
+        for field_name, provenance in (
+            ("request_headers", "fetch.request.headers"),
+            ("headers", "logical_request.headers"),
+        ):
+            headers = row.get(field_name)
+            if not isinstance(headers, dict):
+                continue
+            for name, entry in headers.items():
+                item["explicit_headers"][str(name)] = {
+                    "value": header_value(entry),
+                    "provenance": provenance,
+                }
+
+        item["events"].append(
+            {
+                "type": typ,
+                "ts_us": row.get("ts_us"),
+                "segment_id": row.get("segment_id"),
+                "source_file": row.get("_source_file"),
+                "source_line": row.get("_source_line"),
+                "origin_call_id": row.get("origin_call_id"),
+            }
+        )
+
+    for item in timelines.values():
+        item["events"].sort(
+            key=lambda event: (
+                int(event.get("ts_us") or 0),
+                str(event.get("source_file") or ""),
+                int(event.get("source_line") or 0),
+            )
+        )
+
+    unmatched: list[dict[str, Any]] = []
+    for channel in final_channels:
+        url = str(channel.get("url") or "")
+        method = str(channel.get("method") or "").upper()
+        ts_us = int(channel.get("ts_us") or 0)
+        candidates: list[tuple[int, dict[str, Any]]] = []
+        for item in timelines.values():
+            if str(item.get("url") or "") != url:
+                continue
+            if method and str(item.get("method") or "").upper() not in {"", method}:
+                continue
+            event_times = [int(event.get("ts_us") or 0) for event in item["events"]]
+            if not event_times:
+                continue
+            prior = [value for value in event_times if not ts_us or value <= ts_us]
+            nearest = max(prior) if prior else min(event_times)
+            candidates.append((abs(ts_us - nearest), item))
+        candidates.sort(key=lambda pair: pair[0])
+        if not candidates:
+            unmatched.append(channel)
+            continue
+        distance, item = candidates[0]
+        item["final_channel"] = {
+            "channel_id": channel.get("channel_id"),
+            "stage": channel.get("stage") or "final_channel",
+            "header_provenance": channel.get("header_provenance") or "final_http_channel",
+            "headers": channel.get("headers") or {},
+            "headers_count": channel.get("headers_count"),
+            "headers_truncated": channel.get("headers_truncated"),
+            "ts_us": channel.get("ts_us"),
+            "source_file": channel.get("_source_file"),
+            "source_line": channel.get("_source_line"),
+            "join": {
+                "basis": "exact_url_method_nearest_time",
+                "candidate_count": len(candidates),
+                "distance_us": distance,
+                "exact_id": False,
+            },
+        }
+
+    ordered = sorted(
+        timelines.values(),
+        key=lambda item: min(
+            (int(event.get("ts_us") or 0) for event in item["events"]), default=0
+        ),
+    )
+    return {
+        "schema": "firefox_trace.request_timelines.v1",
+        "requests": ordered,
+        "unmatched_final_channels": [
+            {
+                "channel_id": row.get("channel_id"),
+                "method": row.get("method"),
+                "url": row.get("url"),
+                "ts_us": row.get("ts_us"),
+                "source_file": row.get("_source_file"),
+                "source_line": row.get("_source_line"),
+            }
+            for row in unmatched
+        ],
+        "notes": [
+            "explicit_headers are the JS-visible XHR/Fetch header operations.",
+            "final_channel headers are the parent HTTP channel snapshot after browser-managed additions.",
+            "A final_channel join with exact_id=false is correlation evidence, not an IPC identity proof.",
+        ],
+    }
 
 
 def enrich_script_resource_identity(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -2556,6 +2723,59 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
         encoding="utf-8",
     )
 
+    request_timelines = build_request_timelines(all_rows)
+    (index_dir / "request-timelines.json").write_text(
+        json.dumps(request_timelines, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    message_groups: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for row in all_rows:
+        message_id = str(row.get("message_id") or "")
+        if message_id and row.get("type") in {"dom.message", "dom.call"}:
+            message_groups[message_id].append(row)
+    required_message_phases = ("send", "clone", "enqueue", "dispatch")
+    message_timelines = []
+    for message_id, rows in sorted(message_groups.items()):
+        rows.sort(key=lambda item: (int(item.get("ts_us") or 0), int(item.get("_source_line") or 0)))
+        message_rows = [row for row in rows if row.get("type") == "dom.message"]
+        phases = [str(row.get("phase") or "") for row in message_rows]
+        phase_positions = {
+            phase: next((index for index, value in enumerate(phases) if value == phase), -1)
+            for phase in required_message_phases
+        }
+        missing_phases = [phase for phase, position in phase_positions.items() if position < 0]
+        ordered = not missing_phases and list(phase_positions.values()) == sorted(phase_positions.values())
+        first = message_rows[0] if message_rows else rows[0]
+        message_timelines.append(
+            {
+                "message_id": message_id,
+                "task_id": first.get("task_id"),
+                "parent_task_id": first.get("parent_task_id"),
+                "origin_call_id": first.get("origin_call_id"),
+                "transport": first.get("transport"),
+                "direction": first.get("direction"),
+                "phases": phases,
+                "missing_phases": missing_phases,
+                "ordered": ordered,
+                "complete": not missing_phases and ordered,
+                "dom_call_count": sum(row.get("type") == "dom.call" for row in rows),
+                "events": rows,
+            }
+        )
+    message_index = {
+        "schema": "firefox_trace.message_timelines.v1",
+        "message_count": len(message_timelines),
+        "complete_count": sum(item["complete"] for item in message_timelines),
+        "incomplete_count": sum(not item["complete"] for item in message_timelines),
+        "messages": message_timelines,
+    }
+    (index_dir / "message-timelines.json").write_text(
+        json.dumps(message_index, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
     js_by_sha: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     js_artifacts_by_path: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     js_call_enters: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -2736,6 +2956,12 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
         "target_fields": sorted(wanted),
         "targets": targets,
         "degraded_count": len(degraded),
+        "message_timelines": {
+            "path": "index/message-timelines.json",
+            "message_count": message_index["message_count"],
+            "complete_count": message_index["complete_count"],
+            "incomplete_count": message_index["incomplete_count"],
+        },
         "notes": [
             "matched means a request field raw/decoded/segment value equals or is contained by a JS-captured value artifact.",
             "producer_match selects the deepest exact JS return before the request; producer_chain walks its parent_call_id lineage.",
@@ -2766,6 +2992,8 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
         index_dir / "target-candidates.json",
         index_dir / "environment-contract.json",
         index_dir / "trace-health.json",
+        index_dir / "request-timelines.json",
+        index_dir / "message-timelines.json",
     ):
         try:
             files[str(generated.relative_to(trace_dir))] = generated.stat().st_size
@@ -2802,6 +3030,7 @@ def finalize(trace_dir: pathlib.Path, download_assets: bool = True) -> dict[str,
             "request_fields": "categorized/request-fields.jsonl",
             "web_assets": "index/web-assets.json" if web_assets is not None else "",
             "target_candidates": "index/target-candidates.json",
+            "request_timelines": "index/request-timelines.json",
             "environment_contract": "index/environment-contract.json",
             "trace_health": "index/trace-health.json",
         },

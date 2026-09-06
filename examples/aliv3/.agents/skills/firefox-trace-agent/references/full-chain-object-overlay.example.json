@@ -1,0 +1,60 @@
+{
+  "schema": "firefox_trace.agent_config.v1",
+  "kind": "agent-next",
+  "version": 1,
+  "ui": {
+    "label": "final-repro-object-overlay",
+    "plan": "full-chain",
+    "trace_start": "active",
+    "trace_start_label": "打开即记录（捕获加载 JS / Script，推荐查链路）",
+    "query_fields": "TARGET_FIELD",
+    "body_fields": "__disabled__",
+    "header_fields": "__disabled__",
+    "cookie_fields": "__disabled__",
+    "field_scopes": {"query": true, "body": false, "header": false, "cookie": false},
+    "show_advanced": true,
+    "vm_stage": "默认关闭 VM（普通 full-chain）"
+  },
+  "modules": {
+    "js": true, "xhr": true, "fetch": true, "dom": true,
+    "cookie": true, "storage": true, "script": true, "ws": true,
+    "http_raw": false
+  },
+  "options": {
+    "profile": "discover",
+    "js_mode": "boundary",
+    "script_contains": "TARGET_SCRIPT_A.js,TARGET_SCRIPT_B.js",
+    "script_sha256": "",
+    "function_contains": "=TARGET_FUNCTION_A,=TARGET_FUNCTION_B",
+    "target_match": "all",
+    "query_fields": "TARGET_FIELD",
+    "body_fields": "__disabled__",
+    "header_fields": "__disabled__",
+    "cookie_fields": "__disabled__",
+    "object_depth": "1",
+    "object_keys": "32",
+    "array_items": "16",
+    "typed_array_bytes": "256",
+    "value_metadata": "1",
+    "primitive_metadata": "1",
+    "value_store_min_bytes": "1",
+    "value_store_max_bytes": "0",
+    "deferred_value_capture": "1",
+    "deferred_value_pool_bytes": "67108864",
+    "boundary_buffer_events": "32768",
+    "limit_events": "0"
+  },
+  "vm": {
+    "opcode": false, "opcode_operands": false, "opcode_stack": false,
+    "opcode_stack_primitives": false, "vm_step": false,
+    "wasm_module": false, "wasm_dump": false, "wasm_insn": false,
+    "unlimited": false
+  },
+  "env": {
+    "TRACE_JS_FULL_SPOOL": "1",
+    "TRACE_JS_SCRIPT_EVENTS": "1",
+    "TRACE_JS_OBJECT_TARGET_ONLY": "1",
+    "TRACE_WASM": "0",
+    "FIREFOX_TRACE_WASM": "0"
+  }
+}

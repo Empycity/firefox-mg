@@ -133,6 +133,26 @@ Classify each material input:
 
 For each item, include source event, propagation calls, producer relation, and evidence level.
 
+### Locate the first state-machine divergence
+
+For Worker, iframe or multi-request protocols, compare browser and local runs as
+ordered state transitions rather than only comparing the final request. At every
+response boundary, retain the ordered messages/tasks produced next, including
+payload hashes, destination realm and request relation. The first unequal task
+list locates the decision boundary in the preceding response handler or host
+telemetry calculation.
+
+For Dedicated Worker traffic, read `index/message-timelines.json` before doing
+time-window correlation. Require one `message_id` across
+`send/clone/enqueue/dispatch`, use `parent_task_id` for listener-triggered sends,
+and join the sender's `dom.call` by the same ID. A missing phase is recorded as
+an incomplete message, not inferred from nearby payload text.
+
+Do not synthesize the browser's missing next URL, message or request in the local
+run. That hides the upstream divergence and cannot satisfy replay acceptance.
+Continue by diffing the inputs consumed before the first unequal task, including
+nested object values, realm identities, event metadata, stacks and timing/order.
+
 ## Phase 6: Present reproduction routes
 
 - If original script can run when APIs/state are supplied: build a supplemented browser-like environment and let the SDK generate dynamic values.

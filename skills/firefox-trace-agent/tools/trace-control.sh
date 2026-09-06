@@ -232,20 +232,19 @@ PRESETS = {
         "TRACE_VM_WINDOW_RECORDS": "65536",
         "TRACE_OPCODE": "0",
         "TRACE_VM_STEP": "0",
-        "TRACE_JS_CAPTURE_VALUES": "0",
-        "TRACE_JS_AUTO_CAPTURE_VALUES": "0",
+        "TRACE_JS_CAPTURE_VALUES": "1",
+        "TRACE_JS_AUTO_CAPTURE_VALUES": "1",
         "TRACE_JS_BOUNDARY_BUFFER": "1",
-        "TRACE_JS_FULL_SPOOL": "0",
+        "TRACE_JS_FULL_SPOOL": "1",
         "FIREFOX_TRACE_JS_LIMIT_EVENTS": "0",
-        "TRACE_IPC_MAX_EVENTS_PER_SECOND": "6000",
-        "TRACE_IPC_MAX_BYTES_PER_SECOND": "4194304",
+        "TRACE_IPC_MAX_EVENTS_PER_SECOND": "0",
+        "TRACE_IPC_MAX_BYTES_PER_SECOND": "0",
     },
     "opcode-window": {
         "TRACE_PLAN": "opcode-window",
         "TRACE_CAPTURE_PLAN": "opcode-window",
         "TRACE_PROFILE": "vm",
-        "TRACE_JS_MODE": "target",
-        "TRACE_TARGET_MATCH": "all",
+        "TRACE_JS_MODE": "boundary",
         "TRACE_EXECUTION_MODE": "opcode",
         "TRACE_OPCODE": "1",
         "TRACE_OPCODE_LIMIT": "4096",
@@ -604,8 +603,8 @@ def apply_vm_safety_defaults(env):
         out.setdefault("TRACE_VM_STEP_LIMIT", "2048")
         out.setdefault("TRACE_OPCODE_MAX_EVENTS_PER_SECOND", "2000")
         out.setdefault("TRACE_OPCODE_MAX_BYTES_PER_SECOND", "4194304")
-        out.setdefault("TRACE_IPC_MAX_EVENTS_PER_SECOND", "6000")
-        out.setdefault("TRACE_IPC_MAX_BYTES_PER_SECOND", "4194304")
+        out.setdefault("TRACE_IPC_MAX_EVENTS_PER_SECOND", "0" if vm_window_enabled else "6000")
+        out.setdefault("TRACE_IPC_MAX_BYTES_PER_SECOND", "0" if vm_window_enabled else "4194304")
         out.setdefault("TRACE_VM_WINDOW_RECORDS", "65536")
     return with_aliases(out)
 
@@ -705,8 +704,9 @@ def enforce_safety(record):
         bounded("TRACE_OPCODE_EXECUTION_LIMIT", 65536, 1024, 1000000)
         bounded("TRACE_OPCODE_MAX_EVENTS_PER_SECOND", 2000, 1, 12000)
         bounded("TRACE_OPCODE_MAX_BYTES_PER_SECOND", 1048576, 65536, 8388608)
-        bounded("TRACE_IPC_MAX_EVENTS_PER_SECOND", 6000, 1, 12000)
-        bounded("TRACE_IPC_MAX_BYTES_PER_SECOND", 4194304, 65536, 8388608)
+        if not vm_window_enabled:
+            bounded("TRACE_IPC_MAX_EVENTS_PER_SECOND", 6000, 1, 12000)
+            bounded("TRACE_IPC_MAX_BYTES_PER_SECOND", 4194304, 65536, 8388608)
         bounded("TRACE_OPCODE_STACK_SLOTS", 0, 0, 4)
         bounded("TRACE_VM_STEP_LIMIT", 2048, 1, 20000)
         bounded("TRACE_VM_WINDOW_RECORDS", 65536, 1024, 262144)

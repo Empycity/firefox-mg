@@ -138,6 +138,101 @@ class TraceStopOnTargetTests(unittest.TestCase):
             )
             self.assertEqual(match["request_id"], "target-1")
 
+    def test_cookie_http_set_matches_top_level_key_and_host_url(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            trace_dir = pathlib.Path(raw_dir)
+            targets = {key: set() for key in MODULE.FIELD_KEYS}
+            targets["cookie_fields"] = {"cf_clearance"}
+            event = {
+                "type": "cookie.http_set",
+                "channel_id": "channel-1",
+                "host_url": "https://fixture.test/challenge/final",
+                "channel_url": "https://fixture.test/challenge/start",
+                "key": "CF_Clearance",
+                "value_preview": "durable-cookie-value",
+            }
+
+            match = MODULE.find_target(
+                trace_dir,
+                event,
+                targets,
+                "firefox-cookie-1.jsonl",
+                "/challenge/final",
+            )
+
+            self.assertIsNotNone(match)
+            self.assertEqual(match["field"], "CF_Clearance")
+            self.assertEqual(match["field_location"], "cookie")
+            self.assertEqual(match["request_id"], "channel-1")
+            self.assertEqual(match["url"], event["host_url"])
+            self.assertTrue(MODULE.may_contain_target(event, targets))
+
+    def test_cookie_http_set_requires_nonempty_durable_value(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            trace_dir = pathlib.Path(raw_dir)
+            targets = {key: set() for key in MODULE.FIELD_KEYS}
+            targets["cookie_fields"] = {"session"}
+            event = {
+                "type": "cookie.http_set",
+                "final_url": "https://fixture.test/final",
+                "key": "session",
+                "value_preview": "",
+            }
+
+            self.assertIsNone(MODULE.find_target(trace_dir, event, targets, "cookie.jsonl"))
+            self.assertFalse(MODULE.may_contain_target(event, targets))
+
+    def test_process_cookie_target_hit_stops_then_finalizes(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            trace_dir = pathlib.Path(raw_dir)
+            (trace_dir / "manifest.json").write_text(
+                json.dumps({"env": {"TRACE_COOKIE_FIELDS": "session"}}), encoding="utf-8"
+            )
+            (trace_dir / "firefox-cookie-1.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "cookie.http_set",
+                        "host_url": "https://fixture.test/final",
+                        "key": "session",
+                        "value_preview": "abc",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            result = self.run_watchdog(trace_dir, "--url-contains", "/final")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            receipt = json.loads(result.stdout)
+            self.assertEqual(receipt["reason"], "target-found")
+            self.assertEqual(receipt["field_location"], "cookie")
+
+    def test_initial_segment_accepts_untagged_cookie_event(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            trace_dir = pathlib.Path(raw_dir)
+            (trace_dir / "trace-control.json").write_text(
+                json.dumps({"segment_id": "seg_001", "env": {"TRACE_COOKIE_FIELDS": "cf_clearance"}}),
+                encoding="utf-8",
+            )
+            (trace_dir / "firefox-cookie-1.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "cookie.http_set",
+                        "segment_id": None,
+                        "host_url": "https://fixture.test/final",
+                        "key": "cf_clearance",
+                        "value_preview": "dynamic-cookie",
+                    }
+                ) + "\n",
+                encoding="utf-8",
+            )
+            result = self.run_watchdog(trace_dir)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["reason"], "target-found")
+
+    def test_resumed_segment_rejects_untagged_old_event(self):
+        self.assertFalse(MODULE.segment_matches({"segment_id": None}, "seg_002"))
+        self.assertTrue(MODULE.segment_matches({"segment_id": "seg_002"}, "seg_002"))
+
     def test_unconfigured_event_is_retained_until_manifest_fields_arrive(self):
         event = {"body_fields": {"p": "value"}}
         empty = {key: set() for key in MODULE.FIELD_KEYS}
