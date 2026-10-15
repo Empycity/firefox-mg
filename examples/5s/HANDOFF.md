@@ -1101,3 +1101,111 @@ headed Firefox 成功样本使用 Firefox 142 原生网络栈；本地默认 tra
    reload gate。
 4. 每轮 trace 继续使用 90 秒 watchdog，结束后立即 stop/finalize/关闭 Firefox，
    删除 Agent 创建的 trace、profile、watchdog receipt 和 `/tmp` 中间文件。
+
+
+## H. 2026-09-01 深夜追加：interactive 阶段深挖结论
+
+### 已确认
+
+1. **transport 彻底排除**：curl-cffi firefox135、requests-go TLS_FIREFOX_145、
+   Firefox BiDi 原生 transport（74KB body 逐字节与浏览器一致）三种方式
+   全部得到 127KB interactive 响应。判定输入在 body 内容。
+2. **telemetry 对象明文对比**（`CLOUDFLARE_DIAGNOSTIC_ENCODER=1` +
+   `sample-round-*.json`）：我们 49-key vs 浏览器（Aug-23 lifecycle）48-key。
+   字段名每轮轮换，按位置对齐后标量值域差异 2-3x：
+   - 耗时类字段：我们 746/756/1053/485 vs 浏览器 372/381/424/372（约 2x）
+   - `uGyjw9`(=init 耗时) 27-28ms vs 浏览器 HmVl5=8ms（3.5x）
+   - `NnqX6`=112-115（递增计数，≈启动以来秒数）
+   `CLOUDFLARE_VIRTUAL_TIME_SCALE=0.4` 缩放后服务器仍判 interactive。
+3. **interactive 脚本崩溃根因画像**：dynamic-call helper
+   `function(a,b){return a(b)}` 收到的 a 是字符串而非函数：
+   - `'[object HTMLInputElement]'`（checkbox 元素被 String()）
+   - `'appendChild'`（方法名 token）
+   - `'<html><head>...</html>'`（document 序列化串）
+   - `'TypeError: Cannot read properties of undefined (reading call)'`
+   说明 VM 寄存器里【本应是函数的位置存了字符串】。已排除
+   setAttribute 字符串化、Map/Set HTML-key、addEventListener 字符串 handler。
+   `CLOUDFLARE_TOLERATE_BAD_CALL=1`（helper 对非函数返回 undefined）可防止
+   TypeError 但流程在 interactiveBegin 后静默 stall（等不到交互完成）。
+   合成点击（`CLOUDFLARE_AUTO_INTERACTIVE_CLICK=1`）+ tolerate 会触发
+   解释器死循环（99% CPU，switch(undefined) 永转）。
+4. **frame realm eval 修复已回滚**：把 frame realm 的 `eval` 从 host eval 改为
+   `vm.runInContext` 会使 interactive 解码代码在 VM 内死循环。原因：direct eval
+   需要调用者作用域，decoded 代码引用闭包变量，换 context 后为 undefined。
+   正确修法需要保留 direct eval 语义（如 `vm.compileFunction` 或在解码处注入
+   作用域），**未完成**。
+5. **探针清单（本轮新增，全部 env 门控或无副作用）**：
+   - `frame.bad-call`：dynamic-call helper 非函数调用（含 p1/p2 值 + VM 栈）
+   - `frame.call-trace`（`CLOUDFLARE_TRACE_CALLS=1`）：全部动态调用序列
+   - `frame.member-get-probe` / `frame.interpreter-switch-probe`（`CLOUDFLARE_SWITCH_PROBE=1`）
+   - `frame.prog-oob`：解释器 program table 越界（stderr 同步写）
+   - `frame.map-html-key`、`element.attr-object-value`、`element.stringy-listener`
+   - `frame.execute-cs-meta`、`message.long-string`、`timer.member-error`
+   - in-flight flush：runtime-data/inflight-worker-log-<pid>.json 每 2s
+   - `CLOUDFLARE_SETTLE_MS`（validator 可调 settle）
+
+### 下一步优先级（接手者照此执行）
+
+1. **修 frame realm direct-eval**：interactive 解码代码必须拿到调用者作用域。
+   可行方案：hook 交互脚本中的 eval 调用点（已知列位置每轮轮换，但可用
+   dynamic-call helper 相同的结构 patch 方式），把解码后的代码用
+   `vm.compileFunction`+显式传入其引用的闭包变量编译；或用 Node 的
+   `vm.SourceTextModule`（实验性）。
+2. **若 eval 修复后 interactive VM 仍 stall**：用 `frame.call-trace` 全量轨迹
+   （interactiveBegin 后为 0 说明提交逻辑不走这些 helper，需换
+   `CLOUDFLARE_SWITCH_PROBE=1` 抓 interpreter 分支）。
+3. **若 interactive 无法完成**：回到降级原因——服务端行为分析判定。已确认
+   不是 transport、不是时序标量 scale、不是 schema 字段数。剩余嫌疑集中在
+   加密 body 里的行为数据（鼠标/键盘合成事件的时序特征、心跳间隔分布）。
+   可尝试：让 firePageEvents 的合成事件携带更真实的时序分布（对齐浏览器
+   trace 的 dom.get 间隔）。
+4. 验收标准不变：三个 gate passed + 连续两轮 + 动态产物每轮变化。
+
+
+## I. 2026-09-07 追加：direct-eval 修复与 DOM 序列化修复
+
+1. **frame realm eval 覆盖已移除**（不是换 vm.runInContext——那会丢失调用者
+   作用域并触发解释器死循环）。内建 direct eval 保留 VM realm 身份和调用者
+   作用域，与浏览器语义一致。interactive 解码代码现在在正确的 realm 执行。
+2. **live DOM 序列化**：`innerHTML` getter 原来返回存储字段（appendChild 构建
+   的子树不反映），导致 widget 的 DOM 完整性探针读到
+   `<html><head></head><body></body></html>` 空文档。已改为动态序列化
+   childNodes，并新增 `outerHTML` getter。修复后该坏调用消失（2→1）。
+3. **人体鼠标流**（`CLOUDFLARE_HUMAN_POINTER=1`，默认开）：settle 期间以 70ms
+   间隔、随机抖动坐标持续注入 mousemove/pointermove 各 260 次。已证明
+   行为流不是 interactive 判定依据（仍 127KB）。
+4. **virtual time scale 0.5**：时间标量已落入浏览器值域（442/381、297/424、
+   282/372、14/8），服务器仍判 interactive —— 时间标量也不是判定依据。
+5. **剩余唯一断点**：interactive 解码代码里 `dynamic-call helper('appendChild', div)`
+   —— 寄存器本应持有方法引用却持有 token 字符串。已排除 member-get 形态
+   （`function(a,b){return a[b]}` 探针 3 轮 0 命中）。这是 VM 字节码寄存器
+   错位，需要 opcode 级 trace（本项目 VM/opcode 模式）或解码 interactive
+   payload 才能定位。当前 tolerate 模式可防崩溃（流程停在心跳等待）。
+6. 运行时长注意：完整验证一轮需 70-255s（settle 30s + drain 90s + 交互重试），
+   不要误判为 hang 而中途 kill。
+
+当前 gate 状态：passed / failed / failed。
+
+
+## J. 2026-09-07 续：opcode 级 trace 尝试与环境限制
+
+1. **inspector 脚本捕获不可用**：尝试用 Node `inspector.Session` +
+   `Debugger.scriptParsed/getScriptSource` 抓取 direct-eval 解码后的 interactive
+   payload。当前沙箱运行环境（ChatGPT codex sandbox）限制 `net.Socket`，
+   inspector 内部报 `net.Socket is not a constructor`，且 scriptParsed 事件全部
+   为空 url/undefined scriptId 的噪声（41631 个，主要是 realm pump 的
+   `void 0` 编译），`getScriptSource` 全部 -32602。**在常规终端环境重试**
+   该方案大概率可行（代码已固化在 runtime main()，
+   `CLOUDFLARE_CAPTURE_SCRIPTS=1` 开启；需注意 Debugger.enable 必须 await
+   完成后再跑 VM 脚本，否则 scriptId 无效）。
+2. **本轮新增实验结论**：
+   - live DOM 序列化修复后，`outerHTML` 空文档坏调用消失（2→1 个 bad-call）。
+   - 剩余 1 个坏调用 `helper('appendChild', div)` 确认为 VM 寄存器错位：
+     member-get 形态探针 3 轮 0 命中，'appendChild' 是字符串表 token 常量，
+     不是属性查找结果。需要 opcode/寄存器写入级 trace。
+   - 人体鼠标流（260 次随机 mousemove）与时间标量缩放（scale 0.5 值域已对齐
+     浏览器）均不改变服务端 interactive 判定 —— 行为流与时间标量排除。
+3. **探针留存**：`CLOUDFLARE_TOLERATE_BAD_CALL`（含方法恢复分支）、
+   `CLOUDFLARE_TRACE_CALLS`、`CLOUDFLARE_SWITCH_PROBE`、
+   `CLOUDFLARE_CAPTURE_SCRIPTS`、`CLOUDFLARE_HUMAN_POINTER`、
+   `CLOUDFLARE_AUTO_INTERACTIVE_CLICK`、`CLOUDFLARE_SETTLE_MS`。

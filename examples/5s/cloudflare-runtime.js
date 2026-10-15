@@ -487,7 +487,13 @@ class NodeShim extends EventTargetShim {
     n.text = this.text; n.textContent = this.textContent; n.innerHTML = this.innerHTML;
     return n;
   }
-  get innerHTML() { return getNodeState(this).innerHTML || ''; }
+  get innerHTML() {
+    // Live serialization: appendChild-built children must be visible to the challenge's
+    // DOM-integrity probes (documentElement.outerHTML etc).
+    if ((this.childNodes || []).length) return serializeNodeToHtml(this);
+    return getNodeState(this).innerHTML || '';
+  }
+  get outerHTML() { return serializeNodeToHtml(this); }
   set innerHTML(value) {
     getNodeState(this).innerHTML = String(value ?? '');
     parseHTMLFragment(this, getNodeState(this).innerHTML);
@@ -628,6 +634,27 @@ for (const name of ['appendChild', 'insertBefore', 'removeChild', 'replaceChild'
   if (descriptor) Object.defineProperty(NodeShim.prototype, name, { ...descriptor, enumerable: true });
 }
 Object.defineProperty(NodeShim, 'name', { value: 'Node', configurable: true });
+
+// Live DOM serialization: the interactive probe reads documentElement.outerHTML to
+// verify the rendered widget markup. appendChild-built children must appear here, so
+// serialize the live childNodes instead of returning the stored innerHTML string.
+function serializeNodeToHtml(node) {
+  if (!node) return '';
+  if (node.nodeType === 3) return String(node.textContent || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (node.nodeType === 8) return `<!--${node.textContent || ''}-->`;
+  if (node.nodeType !== 1) return '';
+  const tag = String(node.localName || node.nodeName || 'div').toLowerCase();
+  let attrs = '';
+  for (const a of node.attributes || []) {
+    attrs += a.name === 'class'
+      ? ` class="${String(node.className || a.value || '')}"`
+      : ` ${a.name}="${String(a.value ?? '').replace(/"/g, '&quot;')}"`;
+  }
+  const inner = (node.childNodes || []).map(serializeNodeToHtml).join('');
+  const voidTags = /^(br|img|input|hr|meta|link|area|base|col|embed|source|track|wbr)$/i;
+  return voidTags.test(tag) ? `<${tag}${attrs}>` : `<${tag}${attrs}>${inner}</${tag}>`;
+}
 
 // The challenge frame writes generated markup through innerHTML and then
 // queries the resulting nodes. Keep this parser deliberately small: it
@@ -2913,6 +2940,21 @@ class FirefoxLikeRuntime {
         // The interactive stage renders the Turnstile checkbox inside the frame and waits for a
         // trusted pointer sequence on it. Deliver the same gesture into the frame realm once the
         // widget announces itself, matching the headed-browser interaction path.
+        if (message && typeof message === 'object' && message.event === 'interactiveBegin') {
+          try {
+            const dEl = document.documentElement;
+            this.context.__workerLog.push({
+              op: 'frame.dom-state',
+              docElementChildren: dEl ? dEl.childNodes.length : -1,
+              headChildren: document.head ? document.head.childNodes.length : -1,
+              bodyChildren: document.body ? document.body.childNodes.length : -1,
+              outerHTMLLen: dEl && dEl.outerHTML !== undefined ? String(dEl.outerHTML).length : -1,
+              outerHTMLHead: dEl ? String(dEl.outerHTML).slice(0, 200) : '',
+            });
+          } catch (err) {
+            this.context.__workerLog.push({ op: 'frame.dom-state-error', message: String(err && err.message) });
+          }
+        }
         if (message && typeof message === 'object' && message.event === 'interactiveBegin' && this.interactiveClickEnabled === true) {
           setTimeout(() => {
             try {
@@ -3165,13 +3207,11 @@ class FirefoxLikeRuntime {
         aliases[name] = { value: globalThis, writable: true, enumerable: true, configurable: true };
       }
       Object.defineProperties(globalThis, aliases);
-      Object.defineProperty(globalThis, 'eval', {
-        // Direct eval must run inside THIS realm: the widget decodes its interactive
-        // payload and evals it. Host eval would execute the code in the Node module
-        // realm, breaking every realm-identity check in the decoded script.
-        value: eval,
-        writable: true, enumerable: false, configurable: true,
-      });
+      // Do NOT shadow the realm's intrinsic eval with the host eval. The widget
+      // decodes its interactive payload and direct-evals it; the intrinsic eval
+      // keeps both the VM realm identity AND the caller's scope (exactly like a
+      // browser). Shadowing it with the host eval made indirect eval run in the
+      // Node module realm, breaking every realm check in the decoded script.
       return globalThis;
     })()`, frameContext);
     setDocumentField(document, 'defaultView', frameGlobal);
@@ -3245,18 +3285,33 @@ class FirefoxLikeRuntime {
         // (usually the missing member name) instead of surfacing as an opaque TypeError.
         try {
           const dynamicCallPattern = /function\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)(?:,([A-Za-z_$][\w$]*))?\)\{return \1\(\2(?:,\3)?\)\}/g;
+          // Member-get probe: `function(a,b){return a[b]}` helpers reveal which object's
+          // property lookup returned a string where the browser returns a method.
+          const memberGetPattern = /function\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{return \1\[\2\]\}/g;
+          let memberGetCount = 0;
+          code = code.replace(memberGetPattern, (_, o, k) => {
+            memberGetCount += 1;
+            return `function(${o},${k}){var __mv=${o}[${k}];if(typeof __mv==='string'&&__mv.length>2&&globalThis.__cfLogBadCall){globalThis.__cfLogBadCall('member-string:'+Object.prototype.toString.call(${o})+':'+String(${k}).slice(0,30),__mv.slice(0,40)+' host='+(typeof ${o}[${k}]));}return __mv;}`;
+          });
+          if (memberGetCount) {
+            this.vmProbePatches.push({ name: 'frame.member-get-probe', count: memberGetCount, applied: true, script: src });
+          }
           let dynamicCallCount = 0;
           // Experiment (env-gated): when the VM's dynamic-call helper receives a stringified
           // element ("[object HTML…Element]") — a register that should hold a callback —
           // return undefined instead of throwing so the interactive flow keeps running.
           const tolerate = String(process.env.CLOUDFLARE_TOLERATE_BAD_CALL || '') === '1';
+          const traceCalls = String(process.env.CLOUDFLARE_TRACE_CALLS || '') === '1';
           code = code.replace(dynamicCallPattern, (_, p1, p2, p3) => {
             dynamicCallCount += 1;
             const inner = p3 ? `${p1}(${p2},${p3})` : `${p1}(${p2})`;
             const guard = tolerate
-              ? `if(typeof ${p1}!=='function'){if(globalThis.__cfLogBadCall)globalThis.__cfLogBadCall(typeof ${p1},String(${p1}).slice(0,60)+' || ' + String(${p2}).slice(0,60));return void 0;}`
+              ? `if(typeof ${p1}!=='function'){if(globalThis.__cfLogBadCall)globalThis.__cfLogBadCall(typeof ${p1},String(${p1}).slice(0,60)+' || ' + String(${p2}).slice(0,60) + ' || info=' + (function(v){try{if(v&&v.nodeType)return 'tag='+v.tagName+' id='+v.id+' parent='+(v.parentNode&&v.parentNode.tagName)+' html='+String(v.innerHTML||'').slice(0,80);if(typeof v==='string')return 'len='+v.length;}catch(e){}return '';}(${p2})));if(${p2}&&typeof ${p2}==='object'&&typeof ${p2}[${p1}]==='function'){return ${p2}[${p1}].call(${p2});}return void 0;}`
               : `if(typeof ${p1}!=='function'&&globalThis.__cfLogBadCall){globalThis.__cfLogBadCall(typeof ${p1},String(${p1}).slice(0,60)+' || ' + String(${p2}).slice(0,60));}`;
-            return `function(${p1},${p2}${p3 ? ',' + p3 : ''}){${guard}return ${inner};}`;
+            const trace = traceCalls
+              ? `if(globalThis.__cfTraceCall)globalThis.__cfTraceCall(typeof ${p1}==='function'?'fn':String(${p1}).slice(0,50),typeof ${p2}==='object'&&${p2}?Object.prototype.toString.call(${p2}):String(${p2}).slice(0,40));`
+              : '';
+            return `function(${p1},${p2}${p3 ? ',' + p3 : ''}){${trace}${guard}return ${inner};}`;
           });
           if (dynamicCallCount) {
             this.vmProbePatches.push({ name: 'frame.dynamic-call-probe', count: dynamicCallCount, applied: true, script: src });
@@ -3295,7 +3350,8 @@ class FirefoxLikeRuntime {
   OS.prototype.has = function(k){ if(typeof k==='string' && k.indexOf('[object HTML')===0 && globalThis.__cfMapHit) globalThis.__cfMapHit('has', k, this.size); return OHD.value.call(this, k); };
 })();`, frameContext, { filename: 'cf-frame-map-probe.js', timeout: 2000 });
     vm.runInContext(`globalThis.__cfSw=function(tbl,idx,site){var v=tbl[idx];if(v===undefined&&globalThis.__cfProgOOB)globalThis.__cfProgOOB(tbl,idx,site);return true;};`, frameContext, { filename: 'cf-frame-switch-probe.js', timeout: 2000 });
-        vm.runInContext(`if(!globalThis.__cfLogBadCall){globalThis.__cfLogBadCall=function(type,arg){(globalThis.__cfRuntimeSink||function(){})(__cfBadCallRecord(type,arg));};globalThis.__cfBadCallRecord=function(type,arg){return {op:'frame.bad-call',arg_type:type,arg_preview:(typeof arg==='string'?arg.slice(0,80):String(arg).slice(0,80)),stack:String(new Error().stack||'').split('\\n').slice(1,8).join(' | ').slice(0,900)};};}`, frameContext, { filename: 'cf-frame-badcall-probe.js', timeout: 2000 });
+        vm.runInContext(`if(globalThis.__cfTraceCall===undefined){globalThis.__cfTraceCall=function(fn, arg){(globalThis.__cfRuntimeSink||function(){})({op:'frame.call-trace', fn, arg});};}
+if(!globalThis.__cfLogBadCall){globalThis.__cfLogBadCall=function(type,arg){(globalThis.__cfRuntimeSink||function(){})(__cfBadCallRecord(type,arg));};globalThis.__cfBadCallRecord=function(type,arg){return {op:'frame.bad-call',arg_type:type,arg_preview:(typeof arg==='string'?arg.slice(0,80):String(arg).slice(0,80)),stack:String(new Error().stack||'').split('\\n').slice(1,24).join(' | ').slice(0,2400)};};}`, frameContext, { filename: 'cf-frame-badcall-probe.js', timeout: 2000 });
         const frameExecStartedAt = process.hrtime.bigint();
         this.scriptByUrl.set(src, { url: src, code });
         vm.runInContext(code, frameContext, { filename: src, timeout: this.opts.timeoutMs });
@@ -3308,6 +3364,7 @@ class FirefoxLikeRuntime {
         node.dispatchEvent({ type: 'load', isTrusted: true });
         updateNavigationTiming(frame.performance, { duration: frame.performance.now() });
       } catch (error) {
+        try { process.stderr.write(`[iframe-script-error] ${error && error.name}: ${error && error.message}\n${error && error.stack}\n`); } catch {}
         this.recordError(`iframe-script:${src}`, error);
       }
     };
@@ -5005,6 +5062,27 @@ class FirefoxLikeRuntime {
           this.context.document.dispatchEvent(evt);
           this.context.window.dispatchEvent(new this.context.MouseEvent(type, { clientX: 42, clientY: 17, screenX: 46, screenY: 50, bubbles: true, cancelable: true, isTrusted: true }));
         }
+        // Human-like pointer traffic: the challenge collects mousemove samples for the
+        // whole widget lifetime. A real session produces hundreds of spaced samples with
+        // jittered coordinates; a handful of instantaneous fixed-position events is a
+        // strong automation signal. Stream randomized moves for ~20s at human cadence.
+        if (String(process.env.CLOUDFLARE_HUMAN_POINTER || '1') === '1') {
+          const mk = (type, x, y) => new this.context.MouseEvent(type, { clientX: x, clientY: y, screenX: x + 20, screenY: y + 30, bubbles: true, cancelable: true, isTrusted: true });
+          let px = 700 + Math.floor(Math.random() * 200);
+          let py = 300 + Math.floor(Math.random() * 200);
+          let moves = 0;
+          const humanTimer = setInterval(() => {
+            try {
+              px = Math.max(4, Math.min(1270, px + Math.floor(Math.random() * 41) - 20));
+              py = Math.max(4, Math.min(880, py + Math.floor(Math.random() * 31) - 15));
+              this.context.document.dispatchEvent(mk('mousemove', px, py));
+              this.context.document.dispatchEvent(mk('pointermove', px, py));
+              moves += 1;
+              if (moves >= 260) clearInterval(humanTimer);
+            } catch {}
+          }, 70);
+          this.timers.push({ id: humanTimer, tid: ++this.timerSeq, kind: 'setInterval', delay: 70 });
+        }
         this.context.document.dispatchEvent(new this.context.KeyboardEvent('keydown', { key: 'Tab', code: 'Tab', keyCode: 9, which: 9, bubbles: true, cancelable: true, isTrusted: true }));
         this.context.window.dispatchEvent(new this.context.KeyboardEvent('keydown', { key: 'Tab', code: 'Tab', keyCode: 9, which: 9, bubbles: true, cancelable: true, isTrusted: true }));
         this.context.document.dispatchEvent(new this.context.Event('touchstart', { bubbles: true, cancelable: true, isTrusted: true, touches: [] }));
@@ -5132,6 +5210,55 @@ class FirefoxLikeRuntime {
 }
 
 async function main() {
+  if (String(process.env.CLOUDFLARE_CAPTURE_SCRIPTS || '') === '1') {
+    process.stderr.write('[capture] enabled\n');
+    // Capture every parsed script source (incl. direct-eval'd decoded payloads) so the
+    // interactive VM can be analyzed statically.
+    const inspector = require('inspector');
+    const session = new inspector.Session();
+    session.connect();
+    const capDir = path.join(__dirname, 'runtime-data', 'captured-scripts');
+    fs.mkdirSync(capDir, { recursive: true });
+    let capSeq = 0;
+    let parsedCount = 0;
+    session.on('Debugger.scriptParsed', raw => {
+      // Node inspector delivers the full message ({method, params}) to session.on
+      // handlers — unwrap params before use.
+      const params = raw && raw.params ? raw.params : raw;
+      parsedCount += 1;
+      if (parsedCount % 25 === 1) { try { process.stderr.write(`[capture] parsed #${parsedCount} url=${String(params.url||'').slice(0,80)} len=${params.length}\n`); } catch {} }
+      session.post('Debugger.getScriptSource', { scriptId: params.scriptId }, (err, res) => {
+        if (err || !res || !res.scriptSource) {
+          setTimeout(() => session.post('Debugger.getScriptSource', { scriptId: params.scriptId }, (err2, res2) => {
+            if (err2 || !res2 || !res2.scriptSource) return;
+            const src2 = res2.scriptSource;
+            if (src2.length < 3000) return;
+            try {
+              capSeq += 1;
+              const base2 = `script-${String(capSeq).padStart(3, '0')}-${params.scriptId}`;
+              fs.writeFileSync(path.join(capDir, base2 + '.js'), src2);
+              fs.writeFileSync(path.join(capDir, base2 + '.meta.json'), JSON.stringify({ url: params.url || '', length: src2.length }, null, 2));
+            } catch {}
+          }), 300);
+          return;
+        }
+        const src = res.scriptSource || '';
+        if (capSeq === 0) { try { process.stderr.write(`[capture] first src len=${src.length} url=${String(params.url||'').slice(0,60)}\n`); } catch {} }
+        if (src.length < 3000) return;
+        try {
+          capSeq += 1;
+          const base = `script-${String(capSeq).padStart(3, '0')}-${String(params.scriptId).replace(/[^\w.-]/g, '_')}`;
+          if (capSeq <= 3 || capSeq % 50 === 0) { try { process.stderr.write(`[capture] writing ${base} len=${src.length}\n`); } catch {} }
+          fs.writeFileSync(path.join(capDir, base + '.js'), src);
+          fs.writeFileSync(path.join(capDir, base + '.meta.json'), JSON.stringify({
+            url: params.url || '', length: src.length,
+            hasAppendChild: src.includes('appendChild'),
+          }, null, 2));
+        } catch {}
+      });
+    });
+    session.post('Debugger.enable');
+  }
   const opts = parseArgs(process.argv);
   let rtcProbeTimer = null;
   try {

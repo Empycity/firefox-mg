@@ -28,7 +28,10 @@ EOF
 find_default_firefox_bin() {
   local candidate=""
   shopt -s nullglob
-  for path in "$ROOT_DIR"/gecko-dev/obj-*/dist/Nightly.app/Contents/MacOS/firefox; do
+  for path in \
+    "${FIREFOX_TRACE_RUNTIME_ROOT:-}"/Nightly.app/Contents/MacOS/firefox \
+    "$ROOT_DIR"/firefox-trace-runtime/Nightly.app/Contents/MacOS/firefox \
+    "$ROOT_DIR"/gecko-dev/obj-*/dist/Nightly.app/Contents/MacOS/firefox; do
     if [[ -x "$path" ]]; then
       candidate="$path"
     fi
@@ -38,7 +41,7 @@ find_default_firefox_bin() {
     printf '%s\n' "$candidate"
     return 0
   fi
-  printf '%s\n' "$ROOT_DIR/gecko-dev/obj-aarch64-apple-darwin25.5.0/dist/Nightly.app/Contents/MacOS/firefox"
+  printf '%s\n' "$ROOT_DIR/gecko-dev/obj-*/dist/Nightly.app/Contents/MacOS/firefox"
 }
 
 FIREFOX_BIN="${FIREFOX_BIN:-$(find_default_firefox_bin)}"
@@ -56,6 +59,11 @@ TRACE_AUTOMATION_SURFACE="${TRACE_AUTOMATION_SURFACE:-baseline}"
 TRACE_START="${TRACE_START:-active}"
 TRACE_WAIT_SECONDS="${TRACE_WAIT_SECONDS:-0}"
 TRACE_CONTROL_FILE="${TRACE_CONTROL_FILE:-$TRACE_DIR/trace-control.json}"
+if [[ -z "${FIREFOX_TRACE_PYTHON:-}" ]]; then
+  for candidate in "$(command -v python3 2>/dev/null || true)" "$(command -v python 2>/dev/null || true)"; do
+    if [[ -x "$candidate" ]]; then FIREFOX_TRACE_PYTHON="$candidate"; break; fi
+  done
+fi
 FIREFOX_TRACE_PYTHON="${FIREFOX_TRACE_PYTHON:-/opt/miniconda3/envs/firefox-trace/bin/python}"
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
@@ -827,6 +835,10 @@ manifest_target_url() {
 }
 
 args=(--new-instance --profile "$PROFILE_DIR")
+RUNTIME_BROWSER_APPLICATION_INI="${FIREFOX_BIN%/Contents/MacOS/firefox}/Contents/Resources/browser/application.ini"
+if [[ -f "$RUNTIME_BROWSER_APPLICATION_INI" ]]; then
+  args=(--app "$RUNTIME_BROWSER_APPLICATION_INI" "${args[@]}")
+fi
 if [[ "$TRACE_HEADLESS" == "1" ]]; then
   args+=(--headless)
   if [[ -n "${TRACE_SCREENSHOT:-}" ]]; then

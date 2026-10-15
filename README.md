@@ -71,6 +71,9 @@ Agent 和 MCP 是辅助层：Agent 先消费 Trace 已经收窄的结果，只�
 
 ## 快速使用入口
 
+异机编译与部署完整手册见 [BUILD.md](BUILD.md)。它覆盖 Gecko 固定基线、patch
+应用、本机 `.mozconfig`、macOS 编译、bundle 安装、中控启动和 smoke 验收。
+
 交付给实际使用者的产品手册见 [docs/PRODUCT_MANUAL.md](docs/PRODUCT_MANUAL.md)。
 已验证的站点案例统一放在 [examples/](examples/README.md)，不参与通用 Trace 默认流程。
 当前推荐桌面软件式中控台 `Firefox Trace Console.app`：双击打开窗口，在窗口里填写 URL、
@@ -129,6 +132,12 @@ Firefox Trace Console.app
 ```bash
 tools/trace-desktop.sh
 ```
+
+异机从 patch 生成浏览器时，先运行 `tools/bootstrap-trace.sh --prepare`，再按需运行
+`--build` 和 `--install`。它会读取 `patches/gecko-base-commit.txt`，应用仓库内的
+`patches/gecko-firefox-trace.patch`，并通过 `GECKO_DIR`、`MOZBUILD_STATE_PATH`、
+`FIREFOX_TRACE_RUNTIME_APP` 适配本机路径。构建完成后，中控会自动发现仓库内的
+`firefox-trace-runtime/Nightly.app`；也可设置 `FIREFOX_TRACE_RUNTIME_ROOT`。
 
 打开桌面窗口后：
 

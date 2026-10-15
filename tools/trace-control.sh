@@ -50,6 +50,11 @@ shift 2
 
 CONTROL_FILE="${TRACE_CONTROL_FILE:-$TRACE_DIR/trace-control.json}"
 CONTROL_LOG="$TRACE_DIR/firefox-control.jsonl"
+if [[ -z "${FIREFOX_TRACE_PYTHON:-}" ]]; then
+  for candidate in "$(command -v python3 2>/dev/null || true)" "$(command -v python 2>/dev/null || true)"; do
+    if [[ -x "$candidate" ]]; then FIREFOX_TRACE_PYTHON="$candidate"; break; fi
+  done
+fi
 FIREFOX_TRACE_PYTHON="${FIREFOX_TRACE_PYTHON:-/opt/miniconda3/envs/firefox-trace/bin/python}"
 if [[ ! -x "$FIREFOX_TRACE_PYTHON" ]]; then
   echo "Firefox Trace python env not found: $FIREFOX_TRACE_PYTHON" >&2
