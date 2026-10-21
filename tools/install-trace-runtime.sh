@@ -31,6 +31,18 @@ fi
   exit 2
 }
 
+# obj/dist app bundles contain absolute symlinks back into the source/build
+# tree. Materialize file links before installing files so the copies below
+# never write through a link into the build tree, the packaged runtime remains
+# relocatable, and codesign does not reject destinations outside the bundle.
+while IFS= read -r -d '' link; do
+  temp="${link}.trace-materialize.$$"
+  cp -pL "$link" "$temp"
+  rm "$link"
+  mv "$temp" "$link"
+done < <(find "$RUNTIME_APP" -type l -print0)
+find "$RUNTIME_APP" -type f -name .DS_Store -delete
+
 cp "$SOURCE_XUL" "$TARGET_XUL"
 cmp -s "$SOURCE_XUL" "$TARGET_XUL" || {
   print -u2 "Installed XUL differs before signing: $TARGET_XUL"
@@ -88,17 +100,6 @@ target.parent.mkdir(parents=True, exist_ok=True)
 target.write_text(text, encoding="utf-8")
 PY
 fi
-
-# obj/dist app bundles contain absolute symlinks back into the source/build
-# tree. Materialize file links so the packaged runtime remains relocatable and
-# codesign does not reject destinations outside the bundle.
-while IFS= read -r -d '' link; do
-  temp="${link}.trace-materialize.$$"
-  cp -pL "$link" "$temp"
-  rm "$link"
-  mv "$temp" "$link"
-done < <(find "$RUNTIME_APP" -type l -print0)
-find "$RUNTIME_APP" -type f -name .DS_Store -delete
 
 codesign --force --deep --sign - "$RUNTIME_APP"
 codesign --verify --strict "$TARGET_XUL"

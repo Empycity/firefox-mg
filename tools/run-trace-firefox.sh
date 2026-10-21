@@ -34,6 +34,7 @@ find_default_firefox_bin() {
     "$ROOT_DIR"/gecko-dev/obj-*/dist/Nightly.app/Contents/MacOS/firefox; do
     if [[ -x "$path" ]]; then
       candidate="$path"
+      break
     fi
   done
   shopt -u nullglob
