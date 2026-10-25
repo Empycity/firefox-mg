@@ -532,7 +532,7 @@ index 124a48bdf9..dd41378138 100644
    nsCOMPtr<nsIMarionette> marionette = do_GetService(NS_MARIONETTE_CONTRACTID);
    if (marionette) {
 diff --git a/dom/bindings/BindingUtils.cpp b/dom/bindings/BindingUtils.cpp
-index e3d43bfc7b..ba8337b370 100644
+index e3d43bfc7b..ebe185f184 100644
 --- a/dom/bindings/BindingUtils.cpp
 +++ b/dom/bindings/BindingUtils.cpp
 @@ -7,8 +7,14 @@
@@ -587,7 +587,7 @@ index e3d43bfc7b..ba8337b370 100644
  #include "mozilla/dom/WebIDLGlobalNameHash.h"
  #include "mozilla/dom/WorkerPrivate.h"
  #include "mozilla/dom/WorkerScope.h"
-@@ -85,10 +98,1954 @@
+@@ -85,10 +98,2109 @@
  #include "ipc/IPCMessageUtilsSpecializations.h"
  #include "mozilla/dom/DocGroup.h"
  #include "nsXULElement.h"
@@ -1725,6 +1725,142 @@ index e3d43bfc7b..ba8337b370 100644
 +         JS::GetCompartment(aObject) == js::GetContextCompartment(aCx);
 +}
 +
++// Targeted depth expansion for protocol payloads (postMessage data /
++// MessageEvent.data). Off by default; TRACE_DOM_ARG_OBJECT_DEPTH=1..4.
++uint32_t FirefoxTraceDOMArgObjectDepth() {
++  const char* value = FirefoxTraceEnv("FIREFOX_TRACE_DOM_ARG_OBJECT_DEPTH",
++                                      "TRACE_DOM_ARG_OBJECT_DEPTH");
++  if (!value || !value[0]) {
++    return 0;
++  }
++  char* end = nullptr;
++  unsigned long parsed = strtoul(value, &end, 10);
++  if (end == value) {
++    return 0;
++  }
++  return parsed > 4 ? 4 : parsed;
++}
++
++void FirefoxTraceAppendExpandedValue(JSContext* aCx, nsACString& aLine,
++                                     JS::Handle<JS::Value> aValue,
++                                     uint32_t aDepth);
++
++void FirefoxTraceAppendExpandedObject(JSContext* aCx, nsACString& aLine,
++                                      JS::Handle<JSObject*> aObject,
++                                      uint32_t aDepth) {
++  aLine.Append('{');
++  JS::Rooted<JS::IdVector> ids(aCx, JS::IdVector(aCx));
++  {
++    // Suppress re-entrant DOM tracing while reading properties; getters on
++    // hostile objects must not re-enter the tracer.
++    ++sFirefoxTraceDOMInternalReadDepth;
++    bool ok = JS_Enumerate(aCx, aObject, &ids);
++    --sFirefoxTraceDOMInternalReadDepth;
++    if (!ok) {
++      JS_ClearPendingException(aCx);
++      aLine.AppendLiteral("{\"_enumerate_failed\":true}");
++      return;
++    }
++  }
++  uint32_t written = 0;
++  const uint32_t kMaxKeys = 32;
++  for (size_t i = 0; i < ids.length() && written < kMaxKeys; ++i) {
++    const JS::RootedId id(aCx, ids[i]);
++    if (!id.get().isString()) {
++      continue;
++    }
++    JS::Rooted<JSString*> keyStr(aCx, id.get().toString());
++    JS::UniqueChars keyUtf8 = JS_EncodeStringToUTF8(aCx, keyStr);
++    if (!keyUtf8) {
++      JS_ClearPendingException(aCx);
++      continue;
++    }
++    JS::Rooted<JS::Value> prop(aCx);
++    {
++      ++sFirefoxTraceDOMInternalReadDepth;
++      bool got = JS_GetPropertyById(aCx, aObject, id, &prop);
++      --sFirefoxTraceDOMInternalReadDepth;
++      if (!got) {
++        JS_ClearPendingException(aCx);
++        continue;
++      }
++    }
++    if (written) {
++      aLine.Append(',');
++    }
++    FirefoxTraceAppendJsonCString(aLine, keyUtf8.get());
++    aLine.Append(':');
++    FirefoxTraceAppendExpandedValue(aCx, aLine, prop, aDepth);
++    ++written;
++  }
++  if (ids.length() > kMaxKeys) {
++    if (written) {
++      aLine.Append(',');
++    }
++    aLine.AppendLiteral("\"_keys_truncated\":true");
++  }
++  aLine.Append('}');
++}
++
++void FirefoxTraceAppendExpandedValue(JSContext* aCx, nsACString& aLine,
++                                     JS::Handle<JS::Value> aValue,
++                                     uint32_t aDepth) {
++  if (aDepth == 0 || !aValue.isObject()) {
++    nsAutoCString kind;
++    nsAutoCString preview;
++    FirefoxTraceDescribeValue(aCx, aValue, kind, preview);
++    aLine.AppendLiteral("{\"kind\":");
++    FirefoxTraceAppendJsonCString(aLine, kind.get());
++    aLine.AppendLiteral(",\"preview\":");
++    FirefoxTraceAppendJsonCString(aLine, preview.get());
++    aLine.Append('}');
++    return;
++  }
++  JS::Rooted<JSObject*> obj(aCx, &aValue.toObject());
++  if (!FirefoxTraceDOMObjectInCurrentCompartment(aCx, obj)) {
++    // Cross-compartment (e.g. widget iframe objects): stop at identity.
++    aLine.AppendLiteral("{\"kind\":\"object\",\"cross_compartment\":true}");
++    return;
++  }
++  bool isArray = false;
++  if (JS::IsArrayObject(aCx, obj, &isArray) && isArray) {
++    uint32_t length = 0;
++    if (!JS::GetArrayLength(aCx, obj, &length)) {
++      JS_ClearPendingException(aCx);
++      length = 0;
++    }
++    aLine.Append('[');
++    const uint32_t kMaxItems = 16;
++    uint32_t n = length < kMaxItems ? length : kMaxItems;
++    JS::Rooted<JS::Value> item(aCx);
++    for (uint32_t i = 0; i < n; ++i) {
++      if (i) {
++        aLine.Append(',');
++      }
++      {
++        ++sFirefoxTraceDOMInternalReadDepth;
++        bool got = JS_GetElement(aCx, obj, i, &item);
++        --sFirefoxTraceDOMInternalReadDepth;
++        if (!got) {
++          JS_ClearPendingException(aCx);
++          aLine.AppendLiteral("null");
++          continue;
++        }
++      }
++      FirefoxTraceAppendExpandedValue(aCx, aLine, item, aDepth - 1);
++    }
++    if (length > n) {
++      if (n) {
++        aLine.Append(',');
++      }
++      aLine.AppendLiteral("\"_truncated\"");
++    }
++    aLine.Append(']');
++    return;
++  }
++  FirefoxTraceAppendExpandedObject(aCx, aLine, obj, aDepth - 1);
++}
++
 +void FirefoxTraceAppendDescribedValue(JSContext* aCx, nsACString& aLine,
 +                                      JS::Handle<JS::Value> aValue,
 +                                      bool aIncludeObjectContract = true) {
@@ -2221,6 +2357,14 @@ index e3d43bfc7b..ba8337b370 100644
 +    if (aArgs) {
 +      JS::Rooted<JS::Value> arg(aCx, (*aArgs)[i]);
 +      FirefoxTraceAppendDescribedValue(aCx, line, arg);
++      if (i == 0 && aValue.isUndefined() == aValue.isUndefined() &&
++          strcmp(aMemberName, "postMessage") == 0) {
++        const uint32_t argDepth = FirefoxTraceDOMArgObjectDepth();
++        if (argDepth && arg.isObject()) {
++          line.AppendLiteral(",\"arg_object\":");
++          FirefoxTraceAppendExpandedValue(aCx, line, arg, argDepth);
++        }
++      }
 +    } else if (i == 0) {
 +      FirefoxTraceAppendDescribedValue(aCx, line, aSetterArg);
 +    } else {
@@ -2342,6 +2486,17 @@ index e3d43bfc7b..ba8337b370 100644
 +    }
 +  } else {
 +    line.AppendLiteral(",\"value_preview_enabled\":false");
++  }
++  // Protocol payload capture: expand MessageEvent.data (and any member named
++  // "data" on message-like interfaces) to the configured depth.
++  {
++    const uint32_t argDepth = FirefoxTraceDOMArgObjectDepth();
++    if (argDepth && aValue.isObject() &&
++        strcmp(aMemberName, "data") == 0 &&
++        strstr(aInterfaceName, "MessageEvent") != nullptr) {
++      line.AppendLiteral(",\"value_object\":");
++      FirefoxTraceAppendExpandedValue(aCx, line, aValue, argDepth);
++    }
 +  }
 +  if (previewPage) {
 +    line.AppendLiteral(",\"page_url\":");
@@ -2541,8 +2696,7 @@ index e3d43bfc7b..ba8337b370 100644
 +
  // Forward declare GetConstructorObjectHandle methods.
  #define HTML_TAG(_tag, _classname, _interfacename)                \
-   namespace HTML##_interfacename##Element_Binding {               \
-diff --git a/dom/bindings/BindingUtils.h b/dom/bindings/BindingUtils.h
+   namespace HTML##_interfacename##Element_Binding {               \diff --git a/dom/bindings/BindingUtils.h b/dom/bindings/BindingUtils.h
 index 77a2ce8002..7a887b4697 100644
 --- a/dom/bindings/BindingUtils.h
 +++ b/dom/bindings/BindingUtils.h
@@ -6331,7 +6485,7 @@ index a2e3b14d29..f6fd01976a 100644
  
  protocol PFetch {
 diff --git a/dom/ipc/ContentChild.cpp b/dom/ipc/ContentChild.cpp
-index dc0a572729..b452982ae1 100644
+index dc0a572729..e1b139535e 100644
 --- a/dom/ipc/ContentChild.cpp
 +++ b/dom/ipc/ContentChild.cpp
 @@ -13,8 +13,10 @@
@@ -6360,7 +6514,7 @@ index dc0a572729..b452982ae1 100644
  
  #include "ChildProfilerController.h"
  
-@@ -313,6 +323,873 @@ using namespace mozilla::net;
+@@ -313,6 +323,894 @@ using namespace mozilla::net;
  using namespace mozilla::widget;
  using mozilla::loader::PScriptCacheChild;
  
@@ -6999,6 +7153,8 @@ index dc0a572729..b452982ae1 100644
 +
 +}  // namespace
 +
++extern "C" bool FirefoxTraceDrainJSBatchForControl();
++
 +extern "C" bool FirefoxTraceRuntimeActive() {
 +  return FirefoxTraceRuntimeStateCached() == FirefoxTraceRuntimeStateActive;
 +}
@@ -7065,6 +7221,23 @@ index dc0a572729..b452982ae1 100644
 +  return child->SendFirefoxTraceDOMEventBatch(lines);
 +}
 +
++// Only already-captured main-thread JS bytes use this path. The dedicated
++// receiver persists them even after the parent has entered paused state.
++extern "C" bool FirefoxTraceSendJSBatchDrainToParent(const char* aLines,
++                                                    size_t aLen) {
++  if (!NS_IsMainThread() || !aLines || !aLen) {
++    return false;
++  }
++  auto* child = mozilla::dom::ContentChild::GetSingleton();
++  if (!child) {
++    return false;
++  }
++  // Reuse the existing wire message: no generated IPC ABI/vtable changes.
++  nsAutoCString message("FIREFOX_TRACE_CONTROL_DRAIN_V1\n");
++  message.Append(aLines, aLen);
++  return child->SendFirefoxTraceDOMEventBatch(message);
++}
++
 +extern "C" bool FirefoxTraceQueueEventToParent(const char* aLine,
 +                                                size_t aLen) {
 +  if (!aLine || !aLen) {
@@ -7113,15 +7286,14 @@ index dc0a572729..b452982ae1 100644
 +    nsCString valueId(aValueId);
 +    nsCString artifactKey(aArtifactKey ? aArtifactKey : "");
 +    nsCString data(aData, aLen);
-+    NS_DispatchToMainThread(NS_NewRunnableFunction(
++    return NS_SUCCEEDED(NS_DispatchToMainThread(NS_NewRunnableFunction(
 +        "FirefoxTraceQueuedJSValue",
 +        [valueId = std::move(valueId), artifactKey = std::move(artifactKey),
 +         data = std::move(data)]() {
 +          Unused << FirefoxTraceSendValueToParent(
 +              valueId.BeginReading(), artifactKey.BeginReading(),
 +              data.BeginReading(), data.Length());
-+        }));
-+    return true;
++        })));
 +  }
 +
 +  mozilla::dom::ContentChild* child =
@@ -7131,14 +7303,13 @@ index dc0a572729..b452982ae1 100644
 +  }
 +
 +  if (!FirefoxTraceRuntimeAllowsArtifact()) {
-+    return true;
++    return false;
 +  }
 +
 +  nsDependentCString valueId(aValueId);
 +  nsDependentCString artifactKey(aArtifactKey ? aArtifactKey : "");
 +  nsDependentCSubstring data(aData, aLen);
-+  mozilla::Unused << child->SendFirefoxTraceJSValue(valueId, artifactKey, data);
-+  return true;
++  return child->SendFirefoxTraceJSValue(valueId, artifactKey, data);
 +}
 +
 +extern "C" bool FirefoxTraceSendWasmArtifactToParent(
@@ -7218,13 +7389,17 @@ index dc0a572729..b452982ae1 100644
 +
 +mozilla::ipc::IPCResult mozilla::dom::ContentChild::RecvFirefoxTraceRuntimeConfig(
 +    const nsACString& aConfigJson) {
++  // Persist the old main-thread full-spool tail before applying the new
++  // segment/config. A failed drain must not earn a successful control ACK.
++  // This is not an all-Worker drain barrier.
++  bool drained = FirefoxTraceDrainJSBatchForControl();
 +  nsCString config(aConfigJson);
 +  config.Append('\0');
 +  FirefoxTraceApplyRuntimeConfigJson(config.BeginWriting());
 +  const char* versionText = PR_GetEnv("TRACE_CONTROL_VERSION");
 +  const char* configHash = PR_GetEnv("TRACE_CONFIG_HASH");
 +  uint64_t version = versionText ? strtoull(versionText, nullptr, 10) : 0;
-+  bool ackSent = SendFirefoxTraceRuntimeConfigApplied(
++  bool ackSent = drained && SendFirefoxTraceRuntimeConfigApplied(
 +      version, nsDependentCString(configHash ? configHash : ""));
 +  FirefoxTraceWriteRuntimeConfigReceipt(
 +      version, nsDependentCString(configHash ? configHash : ""), ackSent);
@@ -7249,10 +7424,19 @@ index f22b544499..d73f14408d 100644
    virtual void OnChannelReceivedMessage(const Message& aMsg) override;
  
 diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
-index aa775fdf14..f46b932c0a 100644
+index aa775fdf14..ec99f60cc2 100644
 --- a/dom/ipc/ContentParent.cpp
 +++ b/dom/ipc/ContentParent.cpp
-@@ -26,6 +26,11 @@
+@@ -10,6 +10,7 @@
+ #include "base/basictypes.h"
+-
++
+ #include "ContentParent.h"
++#include "FirefoxTraceBatchWriter.h"
+ #include "mozilla/ipc/ProcessUtils.h"
+ #include "mozilla/CmdLineAndEnvUtils.h"
+ #include "BrowserParent.h"
+@@ -26,6 +27,11 @@
  #include "HandlerServiceParent.h"
  #include "IHistory.h"
  #include <cstdint>
@@ -7264,7 +7448,7 @@ index aa775fdf14..f46b932c0a 100644
  #include <map>
  #include <utility>
  
-@@ -234,6 +239,7 @@
+@@ -234,6 +240,7 @@
  #if defined(MOZ_WIDGET_GTK) || defined(XP_WIN)
  #  include "nsIconChannel.h"
  #endif
@@ -7272,7 +7456,7 @@ index aa775fdf14..f46b932c0a 100644
  #include "nsMemoryInfoDumper.h"
  #include "nsMemoryReporterManager.h"
  #include "nsOpenURIInFrameParams.h"
-@@ -251,6 +257,7 @@
+@@ -251,6 +258,7 @@
  #include "nsWindowWatcher.h"
  #include "prenv.h"
  #include "prio.h"
@@ -7280,7 +7464,7 @@ index aa775fdf14..f46b932c0a 100644
  #include "private/pprio.h"
  #include "xpcpublic.h"
  #include "nsOpenWindowInfo.h"
-@@ -422,6 +429,9 @@ extern FileDescriptor CreateAudioIPCConnection();
+@@ -422,6 +430,9 @@ extern FileDescriptor CreateAudioIPCConnection();
  
  namespace dom {
  
@@ -7290,7 +7474,7 @@ index aa775fdf14..f46b932c0a 100644
  LazyLogModule gProcessLog("Process");
  
  MOZ_RUNINIT static std::map<RemoteMediaIn, media::MediaCodecsSupported>
-@@ -1592,6 +1602,9 @@ void ContentParent::Init() {
+@@ -1592,6 +1603,9 @@ void ContentParent::Init() {
    nsTArray<nsCString> remoteSchemes;
    MOZ_ALWAYS_SUCCEEDS(io->GetSimpleURIUnknownRemoteSchemes(remoteSchemes));
    Unused << SendSimpleURIUnknownRemoteSchemes(std::move(remoteSchemes));
@@ -7300,7 +7484,7 @@ index aa775fdf14..f46b932c0a 100644
  }
  
  void ContentParent::AsyncSendShutDownMessage() {
-@@ -5662,6 +5675,1056 @@ mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
+@@ -5662,6 +5676,1084 @@ mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
    return IPC_OK();
  }
  
@@ -7862,16 +8046,17 @@ index aa775fdf14..f46b932c0a 100644
 +  return IPC_OK();
 +}
 +
-+mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceDOMEvent(
-+    const nsACString& aLine) {
++static mozilla::ipc::IPCResult FirefoxTraceReceiveDOMEvent(
++    ContentParent* aParent, const nsACString& aLine,
++    FirefoxTraceBatchWriter& aWriter, bool aControlDrain = false) {
 +  const char* enabled = PR_GetEnv("FIREFOX_TRACE_ENABLE");
 +  if (!enabled || !enabled[0] || strcmp(enabled, "0") == 0) {
 +    return IPC_OK();
 +  }
 +
-+  FirefoxTraceMaybePushRuntimeConfigToChild(this);
++  FirefoxTraceMaybePushRuntimeConfigToChild(aParent);
 +
-+  if (!FirefoxTraceRuntimeAllowsEvent(aLine)) {
++  if (!aControlDrain && !FirefoxTraceRuntimeAllowsEvent(aLine)) {
 +    return IPC_OK();
 +  }
 +
@@ -7971,33 +8156,41 @@ index aa775fdf14..f46b932c0a 100644
 +    logDir = "/tmp/firefox-trace";
 +  }
 +
-+  mkdir(logDir, 0755);
-+
 +  nsAutoCString path(logDir);
 +  if (!path.IsEmpty() && path.Last() != '/') {
 +    path.Append('/');
 +  }
++  using Stream = FirefoxTraceBatchWriter::Stream;
++  Stream stream = Stream::DOM;
 +  const char* filename = "firefox-dom-%d.jsonl";
 +  if (isXHR) {
 +    filename = "firefox-xhr-%d.jsonl";
++    stream = Stream::XHR;
 +  } else if (isFetch) {
 +    filename = "firefox-fetch-%d.jsonl";
++    stream = Stream::Fetch;
 +  } else if (isWebSocket) {
 +    filename = "firefox-websocket-%d.jsonl";
++    stream = Stream::WebSocket;
 +  } else if (isStorage) {
 +    filename = "firefox-storage-%d.jsonl";
++    stream = Stream::Storage;
 +  } else if (isCookie) {
 +    filename = "firefox-cookie-%d.jsonl";
++    stream = Stream::Cookie;
 +  } else if (isWasm) {
 +    filename = "firefox-wasm-%d.jsonl";
++    stream = Stream::Wasm;
 +  } else if (isScriptResource) {
 +    filename = "firefox-script-%d.jsonl";
++    stream = Stream::Script;
 +  } else if (isJS) {
 +    filename = "firefox-js-%d.jsonl";
++    stream = Stream::JS;
 +  }
 +  path.AppendPrintf(filename, getpid());
 +
-+  FILE* file = fopen(path.get(), "a");
++  FILE* file = aWriter.Open(stream, logDir, path.get());
 +  if (!file) {
 +    return IPC_OK();
 +  }
@@ -8006,19 +8199,26 @@ index aa775fdf14..f46b932c0a 100644
 +  FirefoxTraceDecorateRuntimeEventLine(aLine, decoratedLine);
 +  fwrite(decoratedLine.BeginReading(), 1, decoratedLine.Length(), file);
 +  fputc('\n', file);
-+  fclose(file);
 +  return IPC_OK();
 +}
 +
-+mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceDOMEventBatch(
-+    const nsACString& aLines) {
++mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceDOMEvent(
++    const nsACString& aLine) {
++  FirefoxTraceBatchWriter writer;
++  return FirefoxTraceReceiveDOMEvent(this, aLine, writer);
++}
++
++static mozilla::ipc::IPCResult FirefoxTraceReceiveDOMEventBatch(
++    ContentParent* aParent, const nsACString& aLines, bool aControlDrain) {
++  FirefoxTraceBatchWriter writer;
 +  uint32_t start = 0;
 +  while (start < aLines.Length()) {
 +    int32_t end = aLines.FindChar('\n', start);
 +    uint32_t length = end < 0 ? aLines.Length() - start
 +                              : static_cast<uint32_t>(end) - start;
 +    if (length) {
-+      RecvFirefoxTraceDOMEvent(Substring(aLines, start, length));
++      FirefoxTraceReceiveDOMEvent(aParent, Substring(aLines, start, length),
++                                   writer, aControlDrain);
 +    }
 +    if (end < 0) {
 +      break;
@@ -8026,6 +8226,18 @@ index aa775fdf14..f46b932c0a 100644
 +    start = static_cast<uint32_t>(end) + 1;
 +  }
 +  return IPC_OK();
++}
++
++mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceDOMEventBatch(
++    const nsACString& aLines) {
++  constexpr char prefix[] = "FIREFOX_TRACE_CONTROL_DRAIN_V1\n";
++  constexpr size_t prefixLength = sizeof(prefix) - 1;
++  if (aLines.Length() >= prefixLength &&
++      memcmp(aLines.BeginReading(), prefix, prefixLength) == 0) {
++    return FirefoxTraceReceiveDOMEventBatch(
++        this, Substring(aLines, prefixLength), true);
++  }
++  return FirefoxTraceReceiveDOMEventBatch(this, aLines, false);
 +}
 +
 +mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceJSValue(
@@ -12164,10 +12376,10 @@ index 7fe5f3a8cc..d3f022c9a2 100644
    return true;
  }
 diff --git a/js/src/vm/Interpreter.cpp b/js/src/vm/Interpreter.cpp
-index 81a10dba41..e2ccf2d3a1 100644
+index 81a10dba41..1e07d97edd 100644
 --- a/js/src/vm/Interpreter.cpp
 +++ b/js/src/vm/Interpreter.cpp
-@@ -17,73 +17,4522 @@
+@@ -17,73 +17,4600 @@
  #include "mozilla/Sprintf.h"
  #include "mozilla/TimeStamp.h"
  
@@ -12218,6 +12430,7 @@ index 81a10dba41..e2ccf2d3a1 100644
 +#  include "vm/ErrorObject.h"
 +#endif
 +#include "vm/EqualityOperations.h"  // js::StrictlyEqual
++#include "vm/FirefoxTraceValueTransport.h"
 +#include "vm/GeneratorObject.h"
 +#include "vm/Iteration.h"
 +#include "vm/JSContext.h"
@@ -12319,6 +12532,8 @@ index 81a10dba41..e2ccf2d3a1 100644
 +static thread_local size_t sFirefoxTraceJSBatchLen = 0;
 +static thread_local size_t sFirefoxTraceJSBatchCapacity = 0;
 +static constexpr size_t kFirefoxTraceJSBatchBytes = 512 * 1024;
++static thread_local FirefoxTraceValueTransportCache sFirefoxTraceSentJSValues;
++static thread_local char sFirefoxTraceSentJSValuesDir[4096] = "";
 +
 +// VM-window records stay compact on the interpreter hot path. They are
 +// written as one binary artifact when a configured request field is observed;
@@ -12386,6 +12601,9 @@ index 81a10dba41..e2ccf2d3a1 100644
 +extern "C" bool FirefoxTraceSendEventBatchToParent(const char* aLines,
 +                                                     size_t aLen)
 +    __attribute__((weak_import));
++extern "C" bool FirefoxTraceSendJSBatchDrainToParent(const char* aLines,
++                                                    size_t aLen)
++    __attribute__((weak_import));
 +extern "C" bool FirefoxTraceSendValueToParent(const char* aValueId,
 +                                              const char* aArtifactKey,
 +                                              const char* aData, size_t aLen)
@@ -12402,6 +12620,9 @@ index 81a10dba41..e2ccf2d3a1 100644
 +    __attribute__((weak));
 +extern "C" bool FirefoxTraceSendEventBatchToParent(const char* aLines,
 +                                                     size_t aLen)
++    __attribute__((weak));
++extern "C" bool FirefoxTraceSendJSBatchDrainToParent(const char* aLines,
++                                                    size_t aLen)
 +    __attribute__((weak));
 +extern "C" bool FirefoxTraceSendValueToParent(const char* aValueId,
 +                                              const char* aArtifactKey,
@@ -12641,6 +12862,7 @@ index 81a10dba41..e2ccf2d3a1 100644
 +    return;
 +  }
 +
++  sFirefoxTraceSentJSValues.Clear();
 +  strncpy(sFirefoxTraceJSSegmentId, segmentId,
 +          sizeof(sFirefoxTraceJSSegmentId) - 1);
 +  sFirefoxTraceJSSegmentId[sizeof(sFirefoxTraceJSSegmentId) - 1] = '\0';
@@ -13826,20 +14048,36 @@ index 81a10dba41..e2ccf2d3a1 100644
 +  }
 +
 +  const char* logDir = FirefoxTraceLogDir();
-+  mkdir(logDir, 0755);
-+
-+  char valuesDir[4096];
-+  SprintfLiteral(valuesDir, "%s/values", logDir);
-+  mkdir(valuesDir, 0755);
-+
 +  snprintf(relPath, relPathLen, "values/%s.txt", artifactKey);
++  bool cacheable = FirefoxTraceEnvEnabledAlias(
++      "FIREFOX_TRACE_JS_VALUE_TRANSPORT_CACHE",
++      "TRACE_JS_VALUE_TRANSPORT_CACHE", true) &&
++      strlen(logDir) < sizeof(sFirefoxTraceSentJSValuesDir);
++  if (cacheable) {
++    if (strcmp(sFirefoxTraceSentJSValuesDir, logDir) != 0) {
++      sFirefoxTraceSentJSValues.Clear();
++      strcpy(sFirefoxTraceSentJSValuesDir, logDir);
++    }
++    if (sFirefoxTraceSentJSValues.Contains(artifactKey, len)) {
++      return true;
++    }
++  }
 +
 +#if defined(__APPLE__) || defined(__GNUC__)
 +  if (FirefoxTraceSendValueToParent &&
 +      FirefoxTraceSendValueToParent(valueId, artifactKey, data, len)) {
++    if (cacheable) {
++      sFirefoxTraceSentJSValues.Remember(artifactKey, len);
++    }
 +    return true;
 +  }
 +#endif
++
++  // Only the non-IPC writer needs to touch the filesystem in this process.
++  mkdir(logDir, 0755);
++  char valuesDir[4096];
++  SprintfLiteral(valuesDir, "%s/values", logDir);
++  mkdir(valuesDir, 0755);
 +
 +  char path[4096];
 +  SprintfLiteral(path, "%s/%s", logDir, relPath);
@@ -13849,8 +14087,15 @@ index 81a10dba41..e2ccf2d3a1 100644
 +  }
 +
 +  size_t written = fwrite(data, 1, len, file);
-+  fclose(file);
-+  return written == len;
++  bool closed = fclose(file) == 0;
++  if (written != len || !closed) {
++    unlink(path);
++    return false;
++  }
++  if (cacheable) {
++    sFirefoxTraceSentJSValues.Remember(artifactKey, len);
++  }
++  return true;
 +}
 +
 +// Sink-time artifacts already run outside the JS call hot path.  Write them
@@ -14044,6 +14289,40 @@ index 81a10dba41..e2ccf2d3a1 100644
 +                                    sFirefoxTraceJSBatchLen);
 +  }
 +  sFirefoxTraceJSBatchLen = 0;
++}
++
++// The parent may already have observed enabled=false when the content ACK is
++// being prepared. Sending through its normal active-event gate would discard
++// this tail. Persist only bytes captured under the previous active state,
++// without re-reading config or generating new page events.
++extern "C" bool FirefoxTraceDrainJSBatchForControl() {
++  if (!sFirefoxTraceJSBatchLen) {
++    return true;
++  }
++#if defined(__APPLE__) || defined(__GNUC__)
++  if (FirefoxTraceSendJSBatchDrainToParent) {
++    if (!FirefoxTraceSendJSBatchDrainToParent(sFirefoxTraceJSBatchData,
++                                             sFirefoxTraceJSBatchLen)) {
++      return false;
++    }
++    sFirefoxTraceJSBatchLen = 0;
++    return true;
++  }
++#endif
++  // Standalone SpiderMonkey embeddings have no content-process IPC bridge.
++  FILE* file = FirefoxTraceOpenJSLog();
++  if (!file) {
++    return false;
++  }
++  size_t written = fwrite(sFirefoxTraceJSBatchData, 1,
++                          sFirefoxTraceJSBatchLen, file);
++  bool closed = fclose(file) == 0;
++  if (written != sFirefoxTraceJSBatchLen || !closed) {
++    fprintf(stderr, "FirefoxTrace JS batch control drain failed\n");
++    return false;
++  }
++  sFirefoxTraceJSBatchLen = 0;
++  return true;
 +}
 +
 +void FirefoxTraceQueueJSBatchEvent(const char* aLine, size_t aLen) {
@@ -15826,9 +16105,7 @@ index 81a10dba41..e2ccf2d3a1 100644
 +    if (!JS::IsArrayBufferObject(obj)) {
 +      return false;
 +    }
- 
--#include "jsapi.h"
--#include "jsnum.h"
++
 +    size_t byteLength = JS::GetArrayBufferByteLength(obj);
 +    bool isSharedMemory = false;
 +    uint8_t* data = nullptr;
@@ -15848,6 +16125,14 @@ index 81a10dba41..e2ccf2d3a1 100644
 +    return true;
 +  }
  
+-#include "jsapi.h"
+-#include "jsnum.h"
++  bool writeArrayBufferViewPreview(FILE* file, JS::HandleObject obj) {
++    if (!JS_IsArrayBufferViewObject(obj)) {
++      return false;
++    }
+-
++
 -#include "builtin/Array.h"
 -#include "builtin/Eval.h"
 -#include "builtin/ModuleObject.h"
@@ -15872,11 +16157,6 @@ index 81a10dba41..e2ccf2d3a1 100644
 -#include "vm/ConstantCompareOperand.h"
 -#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
 -#  include "vm/ErrorObject.h"
-+  bool writeArrayBufferViewPreview(FILE* file, JS::HandleObject obj) {
-+    if (!JS_IsArrayBufferViewObject(obj)) {
-+      return false;
-+    }
-+
 +    bool isSharedMemory = false;
 +    JS::AutoCheckCannotGC nogc(cx_);
 +    uint8_t* data = static_cast<uint8_t*>(
@@ -16222,59 +16502,71 @@ index 81a10dba41..e2ccf2d3a1 100644
 +                                  valuePath);
 +    } else if (value.isString()) {
 +      JS::RootedString str(cx_, value.toString());
-+      JS::UniqueChars utf8 = JS_EncodeStringToUTF8(cx_, str);
++      JSLinearString* linear = JS_EnsureLinearString(cx_, str);
++      size_t stringSize = linear ? JS::GetDeflatedUTF8StringLength(linear) : 0;
++      JS::UniqueChars utf8 = linear ? JS_EncodeStringToUTF8(cx_, str) : nullptr;
 +      const char* stringBytes = utf8 ? utf8.get() : "";
-+      size_t stringSize = utf8 ? strlen(stringBytes) : 0;
++      if (!utf8) {
++        stringSize = 0;
++      }
++      char valueId[128] = "";
++      char sha256[65] = "";
++      char relPath[512] = "";
++      uint32_t storeThreshold = FirefoxTraceJSValueStoreMinBytes();
++      uint32_t metadataThreshold = FirefoxTraceJSValueMetadataMinBytes();
++      uint32_t storeMaxBytes = FirefoxTraceJSValueStoreMaxBytes();
++      bool valueStoreEnabled = FirefoxTraceJSValueStoreEnabled();
++      bool canStoreValue = utf8 && valueStoreEnabled &&
++          (storeThreshold == 0 || stringSize >= storeThreshold) &&
++          stringSize <= storeMaxBytes;
++      bool shouldWriteMetadata = utf8 && (canStoreValue ||
++          (valueStoreEnabled && FirefoxTraceJSValueMetadataEnabled() &&
++           (metadataThreshold == 0 || stringSize >= metadataThreshold) &&
++           stringSize <= storeMaxBytes));
++      bool stored = false;
++      bool deferred = false;
++      if (shouldWriteMetadata) {
++        FirefoxTraceComputeSHA256Hex(stringBytes, stringSize, sha256);
++        if (canStoreValue) {
++          deferred = FirefoxTraceJSDeferredValueStoreEnabled() &&
++                     !FirefoxTraceJSFullSpoolEnabled();
++          if (deferred) {
++            stored = FirefoxTraceQueueDeferredJSValue(
++                sha256, stringBytes, stringSize, valueId, sizeof(valueId),
++                relPath, sizeof(relPath));
++          } else {
++            uint64_t valueSeq = sFirefoxTraceNextJSValueId.fetch_add(
++                1, std::memory_order_relaxed);
++            SprintfLiteral(valueId, "jsv_%d_%llu", getpid(),
++                           static_cast<unsigned long long>(valueSeq));
++            stored = FirefoxTraceWriteJSValueStoreFile(
++                valueId, sha256, stringBytes, stringSize, relPath,
++                sizeof(relPath));
++          }
++        }
++        if (!valueId[0]) {
++          uint64_t valueSeq = sFirefoxTraceNextJSValueId.fetch_add(
++              1, std::memory_order_relaxed);
++          SprintfLiteral(valueId, "jsv_%d_%llu", getpid(),
++                         static_cast<unsigned long long>(valueSeq));
++        }
++      }
++      // A short inline preview is allowed only when the full bytes have an
++      // artifact reference. Failed/disabled storage keeps the original limit.
++      if (stored) {
++        uint32_t inlineLimit = FirefoxTraceParseUintEnvUnlimited0(
++            "FIREFOX_TRACE_JS_INLINE_PREVIEW_BYTES",
++            "TRACE_JS_INLINE_PREVIEW_BYTES", 512, 1048576);
++        limit = std::min(limit, inlineLimit);
++      }
 +      fputs("\"type\":\"string\",\"preview\":", file);
-+      FirefoxTraceWriteJsonStringLimited(file, stringBytes, limit);
++      FirefoxTraceWriteJsonBytes(file, stringBytes, stringSize, limit);
 +      if (utf8) {
 +        fprintf(file, ",\"size\":%zu", stringSize);
 +        if (stringSize > limit) {
 +          fputs(",\"truncated\":true", file);
 +        }
-+        uint32_t storeThreshold = FirefoxTraceJSValueStoreMinBytes();
-+        uint32_t metadataThreshold = FirefoxTraceJSValueMetadataMinBytes();
-+        uint32_t storeMaxBytes = FirefoxTraceJSValueStoreMaxBytes();
-+        bool valueStoreEnabled = FirefoxTraceJSValueStoreEnabled();
-+        bool canStoreValue =
-+            valueStoreEnabled &&
-+            (storeThreshold == 0 || stringSize >= storeThreshold) &&
-+            stringSize <= storeMaxBytes;
-+        bool shouldWriteMetadata =
-+            canStoreValue ||
-+            (valueStoreEnabled && FirefoxTraceJSValueMetadataEnabled() &&
-+             (metadataThreshold == 0 || stringSize >= metadataThreshold) &&
-+             stringSize <= storeMaxBytes);
 +        if (shouldWriteMetadata) {
-+          char valueId[128];
-+          char sha256[65];
-+          char relPath[512];
-+          FirefoxTraceComputeSHA256Hex(stringBytes, stringSize, sha256);
-+          valueId[0] = '\0';
-+          bool stored = false;
-+          relPath[0] = '\0';
-+          if (canStoreValue) {
-+            if (FirefoxTraceJSDeferredValueStoreEnabled() &&
-+                !FirefoxTraceJSFullSpoolEnabled()) {
-+              stored = FirefoxTraceQueueDeferredJSValue(
-+                  sha256, stringBytes, stringSize, valueId, sizeof(valueId),
-+                  relPath, sizeof(relPath));
-+            } else {
-+              uint64_t valueSeq = sFirefoxTraceNextJSValueId.fetch_add(
-+                  1, std::memory_order_relaxed);
-+              SprintfLiteral(valueId, "jsv_%d_%llu", getpid(),
-+                             static_cast<unsigned long long>(valueSeq));
-+              stored = FirefoxTraceWriteJSValueStoreFile(
-+                  valueId, sha256, stringBytes, stringSize, relPath,
-+                  sizeof(relPath));
-+            }
-+          }
-+          if (!valueId[0]) {
-+            uint64_t valueSeq = sFirefoxTraceNextJSValueId.fetch_add(
-+                1, std::memory_order_relaxed);
-+            SprintfLiteral(valueId, "jsv_%d_%llu", getpid(),
-+                           static_cast<unsigned long long>(valueSeq));
-+          }
 +          writeValueStoreMetadata(valueId, sha256, stored ? relPath : "",
 +                                  stringSize, stored, role, argIndex,
 +                                  valuePath, stored ? nullptr : stringBytes);
@@ -16286,11 +16578,10 @@ index 81a10dba41..e2ccf2d3a1 100644
 +          FirefoxTraceWriteJsonString(file, sha256);
 +          fputs(",\"stored\":", file);
 +          fputs(stored ? "true" : "false", file);
-+          if (stored && FirefoxTraceJSDeferredValueStoreEnabled()) {
++          if (stored && deferred) {
 +            fputs(",\"deferred\":true", file);
 +          }
-+        } else if (FirefoxTraceJSValueStoreEnabled() &&
-+                   stringSize > storeMaxBytes) {
++        } else if (valueStoreEnabled && stringSize > storeMaxBytes) {
 +          fputs(",\"value_store_skipped\":\"too_large\"", file);
 +        }
 +      }
@@ -16749,7 +17040,7 @@ index 81a10dba41..e2ccf2d3a1 100644
  
  template <bool Eq>
  static MOZ_ALWAYS_INLINE bool LooseEqualityOp(JSContext* cx,
-@@ -433,6 +4882,8 @@ bool js::RunScript(JSContext* cx, RunState& state) {
+@@ -433,6 +4960,8 @@ bool js::RunScript(JSContext* cx, RunState& state) {
      return false;
    }
  
@@ -16758,7 +17049,7 @@ index 81a10dba41..e2ccf2d3a1 100644
    GeckoProfilerEntryMarker marker(cx, state.script());
  
    // If the isExecuting flag was not set, then enable it.
-@@ -458,21 +4909,23 @@ bool js::RunScript(JSContext* cx, RunState& state) {
+@@ -458,21 +4987,23 @@ bool js::RunScript(JSContext* cx, RunState& state) {
      }
    });
  
@@ -16791,7 +17082,7 @@ index 81a10dba41..e2ccf2d3a1 100644
  }
  #ifdef _MSC_VER
  #  pragma optimize("", on)
-@@ -564,23 +5017,26 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
+@@ -564,23 +5095,26 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
      return ReportIsNotFunction(cx, args.calleev(), skipForCallee, construct);
    }
  
@@ -16821,7 +17112,7 @@ index 81a10dba41..e2ccf2d3a1 100644
    }
  
    /* Invoke native functions. */
-@@ -594,19 +5050,19 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
+@@ -594,19 +5128,19 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
          native = jitInfo->ignoresReturnValueMethod;
        }
      }
@@ -16844,7 +17135,7 @@ index 81a10dba41..e2ccf2d3a1 100644
    }
  
    /* Run function until JSOp::RetRval, JSOp::Return or error. */
-@@ -616,20 +5072,20 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
+@@ -616,20 +5150,20 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
    // ensure this object has the correct realm.
    AutoRealm ar(cx, state.script());
    if (construct && !MaybeCreateThisForConstructor(cx, args)) {
@@ -16868,7 +17159,7 @@ index 81a10dba41..e2ccf2d3a1 100644
  }
  
  // Returns true if the callee needs an outerized |this| object. Outerization
-@@ -1817,6 +6273,15 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -1817,6 +6351,15 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
  #define ADVANCE_AND_DISPATCH(N)                  \
    JS_BEGIN_MACRO                                 \
      REGS.pc += (N);                              \
@@ -16884,7 +17175,7 @@ index 81a10dba41..e2ccf2d3a1 100644
      SANITY_CHECKS();                             \
      DISPATCH_TO(*REGS.pc | activation.opMask()); \
    JS_END_MACRO
-@@ -1928,6 +6393,13 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -1928,6 +6471,13 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
    RootedScript script(cx);
    SET_SCRIPT(REGS.fp()->script());
  
@@ -16898,7 +17189,7 @@ index 81a10dba41..e2ccf2d3a1 100644
    /*
     * Pool of rooters for use in this interpreter frame. References to these
     * are used for local variables within interpreter cases. This avoids
-@@ -2025,11 +6497,12 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -2025,11 +6575,12 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
      COUNT_COVERAGE();
      END_CASE(JumpTarget)
  
@@ -16913,7 +17204,7 @@ index 81a10dba41..e2ccf2d3a1 100644
          script->incWarmUpCounter();
  
          jit::MethodStatus status =
-@@ -3320,20 +7793,55 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+@@ -3320,20 +7871,55 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
            goto error;
          }
  
@@ -19024,3 +19315,159 @@ zzfgPC57d7$%97bkmd$clJ}YEJ%*M)D1*>IsYzy1U?q}QC1B|oXY%kl-4zfe+2z!tn
 zV~?>D>}B=}dySoC=h%66f&G@f&fZ{evbWef>>}%Bm)I3{m0f2y*oW*U`-uI8{eykU
 mzGDBefQ48rmRQR$%V^6OOOhqck^#mc2<Dx*&3p7}$^I`pb+KCj
 
+diff --git a/dom/ipc/FirefoxTraceBatchWriter.h b/dom/ipc/FirefoxTraceBatchWriter.h
+new file mode 100644
+--- /dev/null
++++ b/dom/ipc/FirefoxTraceBatchWriter.h
+@@ -0,0 +1,52 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++#ifndef mozilla_dom_FirefoxTraceBatchWriter_h
++#define mozilla_dom_FirefoxTraceBatchWriter_h
++
++#include <stdio.h>
++#include <sys/stat.h>
++
++namespace mozilla::dom {
++
++// One scope per IPC batch, not one process-global cache: stop/finalize sees
++// closed files, output-directory changes cannot reuse an old descriptor, and
++// unrelated batches never retain unwritten stdio buffers.
++class FirefoxTraceBatchWriter final {
++ public:
++  enum class Stream : size_t {
++    DOM, XHR, Fetch, WebSocket, Storage, Cookie, Wasm, Script, JS, Count
++  };
++
++  FirefoxTraceBatchWriter() = default;
++  FirefoxTraceBatchWriter(const FirefoxTraceBatchWriter&) = delete;
++  FirefoxTraceBatchWriter& operator=(const FirefoxTraceBatchWriter&) = delete;
++
++  ~FirefoxTraceBatchWriter() {
++    for (FILE* file : files_) {
++      if (file) {
++        fclose(file);
++      }
++    }
++  }
++
++  FILE* Open(Stream aStream, const char* aDirectory, const char* aPath) {
++    size_t index = static_cast<size_t>(aStream);
++    if (index >= static_cast<size_t>(Stream::Count)) {
++      return nullptr;
++    }
++    if (!files_[index]) {
++      mkdir(aDirectory, 0755);
++      files_[index] = fopen(aPath, "a");
++    }
++    return files_[index];
++  }
++
++ private:
++  FILE* files_[static_cast<size_t>(Stream::Count)] = {};
++};
++
++}  // namespace mozilla::dom
++
++#endif  // mozilla_dom_FirefoxTraceBatchWriter_h
+diff --git a/js/src/vm/FirefoxTraceValueTransport.h b/js/src/vm/FirefoxTraceValueTransport.h
+new file mode 100644
+--- /dev/null
++++ b/js/src/vm/FirefoxTraceValueTransport.h
+@@ -0,0 +1,94 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef vm_FirefoxTraceValueTransport_h
++#define vm_FirefoxTraceValueTransport_h
++
++#include <stddef.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++
++// Exact content-key comparison, never a probabilistic membership filter.
++// Collisions evict an entry and cause a resend, not a missing artifact.
++class FirefoxTraceValueTransportCache {
++  struct Entry {
++    char key[65] = "";
++    size_t length = 0;
++  };
++  static constexpr size_t Capacity = 4096;
++  Entry entries_[Capacity];
++
++  static size_t Slot(const char* key) {
++    uint64_t hash = 1469598103934665603ULL;
++    for (const unsigned char* p =
++             reinterpret_cast<const unsigned char*>(key); *p; ++p) {
++      hash = (hash ^ *p) * 1099511628211ULL;
++    }
++    return hash % Capacity;
++  }
++
++ public:
++  bool Contains(const char* key, size_t length) const {
++    if (!key || !*key || strlen(key) > 64) {
++      return false;
++    }
++    const Entry& entry = entries_[Slot(key)];
++    return entry.length == length && strcmp(entry.key, key) == 0;
++  }
++
++  void Remember(const char* key, size_t length) {
++    if (!key || !*key || strlen(key) > 64) {
++      return;
++    }
++    Entry& entry = entries_[Slot(key)];
++    strcpy(entry.key, key);
++    entry.length = length;
++  }
++
++  void Clear() {
++    for (Entry& entry : entries_) {
++      entry.key[0] = '\0';
++      entry.length = 0;
++    }
++  }
++};
++
++// Explicit byte lengths preserve embedded NULs. Cut only at a UTF-8 codepoint
++// boundary so a short preview remains valid JSON/UTF-8.
++inline void FirefoxTraceWriteJsonBytes(FILE* file, const char* data, size_t len,
++                                      size_t limit) {
++  size_t end = len < limit ? len : limit;
++  if (end < len) {
++    while (end && (static_cast<unsigned char>(data[end]) & 0xc0) == 0x80) {
++      --end;
++    }
++  }
++  fputc('"', file);
++  for (size_t i = 0; i < end; ++i) {
++    unsigned char c = static_cast<unsigned char>(data[i]);
++    switch (c) {
++      case '"': fputs("\\\"", file); break;
++      case '\\': fputs("\\\\", file); break;
++      case '\b': fputs("\\b", file); break;
++      case '\f': fputs("\\f", file); break;
++      case '\n': fputs("\\n", file); break;
++      case '\r': fputs("\\r", file); break;
++      case '\t': fputs("\\t", file); break;
++      default:
++        if (c < 0x20) {
++          fprintf(file, "\\u%04x", c);
++        } else {
++          fputc(c, file);
++        }
++        break;
++    }
++  }
++  if (end < len) {
++    fputs("...", file);
++  }
++  fputc('"', file);
++}
++
++#endif  // vm_FirefoxTraceValueTransport_h

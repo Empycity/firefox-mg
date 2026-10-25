@@ -6,17 +6,31 @@ set -euo pipefail
 # bundle is rejected as CODESIGNING / Invalid Page before trace code runs.
 ROOT="${0:A:h:h}"
 find_default_xul() {
+  setopt local_options null_glob
   local path
+  # Partial mach builds link dist/bin/XUL. The packaged app may be stale until
+  # a separate packaging step, so prefer the actual linker output.
+  for path in "$ROOT"/gecko-dev/obj-*/dist/bin/XUL; do
+    [[ -f "$path" ]] && { print -r -- "$path"; return 0; }
+  done
   for path in "$ROOT"/gecko-dev/obj-*/dist/Nightly.app/Contents/MacOS/XUL; do
     [[ -f "$path" ]] && { print -r -- "$path"; return 0; }
   done
   return 1
 }
 
+source_app_for_xul() {
+  case "$1" in
+    */dist/bin/XUL) print -r -- "${1%/bin/XUL}/Nightly.app" ;;
+    */Contents/MacOS/XUL) print -r -- "${1%/Contents/MacOS/XUL}" ;;
+    *) return 1 ;;
+  esac
+}
+
 SOURCE_XUL="${1:-$(find_default_xul || true)}"
 RUNTIME_APP="${FIREFOX_TRACE_RUNTIME_APP:-$ROOT/firefox-trace-runtime/Nightly.app}"
 TARGET_XUL="$RUNTIME_APP/Contents/MacOS/XUL"
-SOURCE_APP="${SOURCE_XUL%/Contents/MacOS/XUL}"
+SOURCE_APP="$(source_app_for_xul "$SOURCE_XUL")"
 SOURCE_APPLICATION_INI="$SOURCE_APP/Contents/Resources/application.ini"
 TARGET_APPLICATION_INI="$RUNTIME_APP/Contents/Resources/application.ini"
 TARGET_BROWSER_APPLICATION_INI="$RUNTIME_APP/Contents/Resources/browser/application.ini"
@@ -100,6 +114,10 @@ target.parent.mkdir(parents=True, exist_ok=True)
 target.write_text(text, encoding="utf-8")
 PY
 fi
+
+# Firefox consumes this development cache sentinel on first launch. Sealing
+# it into a packaged app makes the signature invalid immediately afterwards.
+find "$RUNTIME_APP" -type f -name .purgecaches -delete
 
 codesign --force --deep --sign - "$RUNTIME_APP"
 codesign --verify --strict "$TARGET_XUL"

@@ -2,6 +2,30 @@
 
 本文是 Agent 生成 `agent-next.json` 和用户运行桌面 UI 的共同准则。每个最终目录必须单独包含初始化、目标请求、脚本、环境合同和值制品；不要拼接多个目录来证明最终结论。
 
+## 大字符串的内联预览与完整制品
+
+普通 JS string 的完整 UTF-8 字节仍由 `TRACE_JS_VALUE_STORE` 和既有 min/max 配置控制。
+`TRACE_JS_MAX_VALUE_BYTES=0` 仍表示原预览上限不限。成功提交完整 value artifact 后，
+新增 `TRACE_JS_INLINE_PREVIEW_BYTES` 默认 `512`，只缩短 JSON 中重复的 `preview`；
+`0` 恢复原来的内联预览上限，正数最大 `1048576`。缩短时记录 `truncated:true`，
+同时保留每次调用的 `value_id`、`value_store_path`、`sha256`、`size` 和调用关系。
+完整制品包含嵌入 NUL；预览截断保持 UTF-8 码点边界。存储关闭、超限或提交失败时，
+不套用新增的 512 字节上限，沿用 `TRACE_JS_MAX_VALUE_BYTES`，且不得据此宣称完整。
+两项配置均支持 `FIREFOX_TRACE_` 前缀别名。
+
+`TRACE_JS_VALUE_TRANSPORT_CACHE` 默认 `1`（`0` 关闭），在各线程内用有界精确内容键缓存
+减少重复 IPC 与文件写入；不采样调用记录。缓存碰撞只引起重传；切换 segment 或输出目录
+清空缓存。缓存命中表示此前提交成功，不代表磁盘持久化成功；最终仍须逐一验证引用文件的
+存在、长度和 SHA-256。ACK、健康索引和 HTTP 200 均不替代此验证。
+
+控制配置更新前会将内容主线程的 full-spool 尾批次发往专用父进程排空接口，
+发送成功后才发送 ACK；父进程按同一 PContent 通道顺序先写盘关闭批次，再处理 ACK。
+专用接口仅排空已采集字节，跳过已暂停的事件闸门，不产生新的页面事件。
+看门狗在有 `trace.config.push` 记录时要求本版本、本 config hash 的全部已推送子进程 ACK；
+旧运行时无 push 记录时才沿用单 ACK 判定。命中目标但缺 ACK 时仍 finalize，退出码为 `6`。
+该 ACK **不是所有 Worker 的排空屏障**；进程崩溃、Worker 尾批次、IPC 队列及磁盘故障
+仍需单独验收。JIT 下原有调用边界的可见范围不因本优化变为逐指令完整覆盖。
+
 ## 1. 先选模式
 
 | 观察到的事实 | 启动方式 | UI 计划 / JS Call | 要填写的字段 | 保持关闭 |

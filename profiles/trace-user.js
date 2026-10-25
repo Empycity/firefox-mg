@@ -97,3 +97,11 @@ user_pref("services.sync.engine.tabs", false);
 
 // Keep the target page's normal web security model. Do not disable CSP, CORS,
 // storage partitioning, cookies, WebGL, canvas, WebCrypto, or site isolation here.
+
+// Traced-run script watchdog: full-chain trace adds per-call overhead to hot
+// loops (e.g. challenge PoW); Firefox's default 10s content script timeout
+// kills the traced loop mid-run and forces the site to restart its challenge.
+// Raising the ceiling removes the kill without touching any evidence surface.
+user_pref("dom.max_script_run_time", 120);
+user_pref("dom.max_script_run_time_about_blank", 120);
+user_pref("dom.max_ext_content_script_run_time", 120);

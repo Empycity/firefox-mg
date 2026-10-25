@@ -110,7 +110,14 @@ def artifact_ready(trace_dir: pathlib.Path, event: dict[str, Any], field_key: st
 
 
 def event_urls(event: dict[str, Any]) -> list[str]:
-    return [str(event.get(key)) for key in URL_KEYS if event.get(key)]
+    urls = [str(event.get(key)) for key in URL_KEYS if event.get(key)]
+    # document.cookie events have page_url, unlike HTTP cookie events which
+    # have host_url/channel_url. Do not let the initiator page override an
+    # explicit request endpoint: that would stop on unrelated XHR/Fetch calls.
+    if not urls and str(event.get("type") or "").startswith("cookie."):
+        if event.get("page_url"):
+            urls.append(str(event["page_url"]))
+    return urls
 
 
 def url_matches(event: dict[str, Any], url_contains: str) -> bool:
@@ -149,7 +156,7 @@ def find_target(
                     "field_location": field_key.removesuffix("_fields"),
                     "event_type": str(event.get("type") or "unknown"),
                     "request_id": event.get("request_id"),
-                    "url": event.get("url"),
+                    "url": next(iter(event_urls(event)), None),
                     "source_file": source_file,
                 }
     cookie = top_level_cookie_match(event, targets["cookie_fields"])
@@ -246,16 +253,28 @@ def wait_for_ack(trace_dir: pathlib.Path, control: dict[str, Any], timeout: floa
         return False
     deadline = time.monotonic() + max(timeout, 0)
     while True:
+        required: set[tuple[Any, Any]] = set()
+        received: set[tuple[Any, Any]] = set()
         try:
-            for line in reversed(path.read_text(encoding="utf-8", errors="ignore").splitlines()):
-                event = json.loads(line)
-                if (
-                    event.get("type") == "trace.config.applied"
-                    and event.get("control_version") == expected_version
-                    and event.get("config_hash") == expected_hash
-                ):
-                    return True
-        except (OSError, json.JSONDecodeError):
+            with path.open(encoding="utf-8", errors="replace") as stream:
+                for line in stream:
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if (event.get("control_version") != expected_version
+                            or event.get("config_hash") != expected_hash):
+                        continue
+                    identity = (event.get("child_id"), event.get("pid"))
+                    if event.get("type") == "trace.config.push" and event.get("detail") == "sent":
+                        required.add(identity)
+                    elif event.get("type") == "trace.config.applied":
+                        received.add(identity)
+            # Legacy runtimes do not emit push records. New runtimes must ACK
+            # every successfully pushed child, not just an unrelated process.
+            if received and (not required or required <= received):
+                return True
+        except OSError:
             pass
         if time.monotonic() >= deadline:
             return False
@@ -296,6 +315,8 @@ def stop_and_finalize(args: argparse.Namespace, reason: str, detail: dict[str, A
     print(json.dumps(receipt, ensure_ascii=False, separators=(",", ":")), flush=True)
     if stop.returncode or finalized.returncode:
         return 5
+    if reason == "target-found" and not acknowledged:
+        return 6
     return {"target-found": 0, "time-limit": 3, "size-limit": 4}[reason]
 
 

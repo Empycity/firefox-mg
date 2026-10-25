@@ -44,3 +44,4 @@ examples/**/traces/
 examples/**/trace-logs/
 examples/5s/runtime-data/
 examples/douyin/log/
+/.agent/

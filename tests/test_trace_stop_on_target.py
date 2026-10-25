@@ -15,16 +15,32 @@ SPEC.loader.exec_module(MODULE)
 
 
 class TraceStopOnTargetTests(unittest.TestCase):
-    def run_watchdog(self, trace_dir, *extra):
+    def test_document_cookie_target_uses_page_url_without_widening_network_filter(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            targets = {key: set() for key in MODULE.FIELD_KEYS}
+            targets["cookie_fields"] = {"trace_done"}
+            event = {"type": "cookie.set", "key": "trace_done", "value_preview": "ok",
+                     "page_url": "https://fixture.test/target/"}
+            match = MODULE.find_target(pathlib.Path(raw_dir), event, targets,
+                                       "cookie.jsonl", "/target/")
+            self.assertIsNotNone(match)
+            self.assertEqual(match["url"], event["page_url"])
+            structured = dict(event, cookie_fields={"trace_done": "ok"})
+            match = MODULE.find_target(pathlib.Path(raw_dir), structured, targets,
+                                       "cookie.jsonl", "/target/")
+            self.assertEqual(match["url"], event["page_url"])
+            self.assertIsNone(MODULE.find_target(pathlib.Path(raw_dir), event, targets,
+                                               "cookie.jsonl", "/other/"))
+            explicit = dict(event, host_url="https://fixture.test/other/")
+            self.assertFalse(MODULE.url_matches(explicit, "/target/"))
+            network = {"type": "fetch.request", "url": "https://fixture.test/other/",
+                       "page_url": "https://fixture.test/target/"}
+            self.assertFalse(MODULE.url_matches(network, "/target/"))
+
+    def run_watchdog(self, trace_dir, *extra, ack=True):
         control = trace_dir / "fake-control.py"
         finalizer = trace_dir / "fake-finalize.py"
-        control.write_text(
-            "#!/usr/bin/env python3\n"
-            "import pathlib,sys\n"
-            "p=pathlib.Path(sys.argv[1])/'calls.log'\n"
-            "p.write_text((p.read_text() if p.exists() else '')+'stop '+sys.argv[3]+'\\n')\n",
-            encoding="utf-8",
-        )
+        control.write_text("#!/usr/bin/env python3\nimport pathlib,sys,json\nroot=pathlib.Path(sys.argv[1]);p=root/'calls.log'\np.write_text((p.read_text() if p.exists() else '')+'stop '+sys.argv[3]+'\\n')\ncpath=root/'trace-control.json'\nc=json.loads(cpath.read_text()) if cpath.exists() else {}\nc.update(version=int(c.get('version',0))+1, config_hash='fixture-stop')\ncpath.write_text(json.dumps(c))\n" + ("(root/'firefox-control-acks.jsonl').write_text(json.dumps(dict(type='trace.config.applied',control_version=c['version'],config_hash=c['config_hash'],pid=123,child_id=1))+'\\n')\n" if ack else ""), encoding="utf-8")
         control.chmod(0o755)
         finalizer.write_text(
             "import pathlib,sys\n"
@@ -60,6 +76,35 @@ class TraceStopOnTargetTests(unittest.TestCase):
         )
         self.assertEqual(fields["query_fields"], {"token", "nonce"})
         self.assertEqual(fields["body_fields"], set())
+
+    def test_ack_from_other_child_does_not_cover_missing_target_process(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            directory = pathlib.Path(raw_dir)
+            path = directory / "firefox-control-acks.jsonl"
+            def event(kind, child):
+                return dict(type=kind, child_id=child, pid=100 + child,
+                            control_version=2, config_hash="new", detail="sent")
+            rows = [event("trace.config.push", 1), event("trace.config.push", 2),
+                    event("trace.config.applied", 1)]
+            path.write_text("\n".join(map(json.dumps, rows)) + "\n")
+            control = {"version": 2, "config_hash": "new"}
+            self.assertFalse(MODULE.wait_for_ack(directory, control, 0))
+            with path.open("a") as stream:
+                stream.write(json.dumps(event("trace.config.applied", 2)) + "\n")
+            self.assertTrue(MODULE.wait_for_ack(directory, control, 0))
+
+    def test_missing_ack_still_finalizes_but_is_not_success(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            directory = pathlib.Path(raw_dir)
+            (directory / "manifest.json").write_text(json.dumps({"env": {"TRACE_COOKIE_FIELDS": "done"}}))
+            (directory / "firefox-cookie-1.jsonl").write_text(json.dumps({
+                "type": "cookie.set", "key": "done", "value_preview": "ok"}) + "\n")
+            result = self.run_watchdog(directory, ack=False)
+            self.assertEqual(result.returncode, 6, result.stderr)
+            receipt = json.loads(result.stdout)
+            self.assertFalse(receipt["stop_acknowledged"])
+            self.assertTrue(receipt["finalized"])
+            self.assertEqual((directory / "calls.log").read_text(), "stop target-found\nfinalize\n")
 
     def test_tail_preserves_partial_line_and_finds_target(self):
         with tempfile.TemporaryDirectory() as raw_dir:
