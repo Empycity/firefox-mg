@@ -1,0 +1,76 @@
+{
+  "schema": "trace.collector_comparison.v2",
+  "scope": "Package-level single-run comparison with identical synthetic fixture and explicit launch env, fresh profiles, different builds; not a statistical latency experiment.",
+  "baseline": {
+    "js_log_bytes": 3770800,
+    "page": {
+      "fixture": "value-transport-v2",
+      "iterations": 48,
+      "total": 9894448,
+      "digests": [
+        {
+          "size": 262150,
+          "sha256": "5ec149272f213c43c2c1afa4f74003ff2e46cc0224064f0cd40aa94b87274696"
+        },
+        {
+          "size": 266245,
+          "sha256": "c710f900370e128e4e0649b4bcfc8609b8a08bd6856494e180f82e2a1c4589bc"
+        },
+        {
+          "size": 234008,
+          "sha256": "f05df22f50756aeeb538e82448744608fd7e7352766a893d41717711d39d5dc0"
+        }
+      ],
+      "heartbeats": 32,
+      "maxHeartbeatGapMs": 412,
+      "elapsedMs": 1707
+    },
+    "full_test_values_equal": [
+      true,
+      false,
+      true
+    ],
+    "tail_refs": 0
+  },
+  "accepted": {
+    "run": "validated",
+    "js_log_bytes": 250447,
+    "page": {
+      "fixture": "value-transport-v2",
+      "iterations": 48,
+      "total": 9894448,
+      "digests": [
+        {
+          "size": 262150,
+          "sha256": "5ec149272f213c43c2c1afa4f74003ff2e46cc0224064f0cd40aa94b87274696"
+        },
+        {
+          "size": 266245,
+          "sha256": "c710f900370e128e4e0649b4bcfc8609b8a08bd6856494e180f82e2a1c4589bc"
+        },
+        {
+          "size": 234008,
+          "sha256": "f05df22f50756aeeb538e82448744608fd7e7352766a893d41717711d39d5dc0"
+        }
+      ],
+      "heartbeats": 32,
+      "maxHeartbeatGapMs": 429,
+      "elapsedMs": 1724
+    },
+    "full_test_values_equal": [
+      true,
+      true,
+      true
+    ],
+    "tail_refs": 2,
+    "unique_artifacts_verified": 15
+  },
+  "js_log_reduction_percent": 93.358,
+  "latency_speedup_proven": false,
+  "trace_tests_passed": 50,
+  "manual_sync_tests_passed": 1,
+  "control_ack_scope": "All successfully pushed children of matching control version/config hash; not a Worker barrier",
+  "python_only_artifact_verifier_passed": true,
+  "website_challenge_implemented": false,
+  "ipc_protocol_abi_unchanged": true
+}

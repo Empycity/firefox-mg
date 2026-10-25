@@ -1,0 +1,6 @@
+{
+  "protocol_file_equal_to_baseline": true,
+  "new_generated_ipc_methods": 0,
+  "existing_message_ids_and_vtables_unchanged": true,
+  "transport": "Reserved control-drain prefix inside existing FirefoxTraceDOMEventBatch"
+}

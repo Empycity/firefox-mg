@@ -1,0 +1,74 @@
+{
+  "schema": "cell.local_acceptance_manifest.v1",
+  "root": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-release/trace",
+  "files": [
+    {
+      "path": "firefox-control-acks.jsonl",
+      "bytes": 1999,
+      "sha256": "ffbb65fed2ed1e3e0570dd012d110bd66d619f5e1c7afd53081f29cb0219dbd4"
+    },
+    {
+      "path": "firefox-control.jsonl",
+      "bytes": 545,
+      "sha256": "a7d2d3eff3e523d9200ce958e5ea387fd37b17d86261d1ca5da394a9a9fcdd04"
+    },
+    {
+      "path": "firefox-cookie-4070.jsonl",
+      "bytes": 521,
+      "sha256": "18c5ef6ad9a968b8b347df6ea78f46c2b336403ad285049a58f67881fd0ed6a9"
+    },
+    {
+      "path": "firefox-dom-4070.jsonl",
+      "bytes": 4280,
+      "sha256": "2814cfa6e68bc3318267b55f443f021033563f3120c8c594df7a64baf4e4506f"
+    },
+    {
+      "path": "firefox-fetch-4070.jsonl",
+      "bytes": 16515,
+      "sha256": "89326c7777e9e0631dc56cf94ee6efa125fef6dce9fe692999b3b609e8dcadfc"
+    },
+    {
+      "path": "firefox-http-raw-4070.jsonl",
+      "bytes": 2003,
+      "sha256": "fc278f7a7cdaed1e4271df02c03eafcdec0252798a72eca2f3f71c538271f07c"
+    },
+    {
+      "path": "firefox-js-4070.jsonl",
+      "bytes": 125372,
+      "sha256": "0864ef190b6fa30b8adbfe8f33366a239edf6c20b8917d30c717350f1f8748c4"
+    },
+    {
+      "path": "manifest.json",
+      "bytes": 6191,
+      "sha256": "48df0c34648feaeb89aac63fe4c4c5b87a132571f0fe32272fc73a496f2d1ced"
+    },
+    {
+      "path": "scripts/5dfeeffe8f32654683db81560424aad5f0bb3747ddfb7320b93bff7b0b9ee682.js",
+      "bytes": 1851,
+      "sha256": "5dfeeffe8f32654683db81560424aad5f0bb3747ddfb7320b93bff7b0b9ee682"
+    },
+    {
+      "path": "trace-control.json",
+      "bytes": 8626,
+      "sha256": "703a3af488cb5e021f0401fe8149470079df231f073b720b0a97b0f7649439dc"
+    },
+    {
+      "path": "values/8edd3fea1fc3e5f1b30aa43418c5ff406041cdb59cfa69009897eb72f34f3fec.txt",
+      "bytes": 41,
+      "sha256": "8edd3fea1fc3e5f1b30aa43418c5ff406041cdb59cfa69009897eb72f34f3fec"
+    },
+    {
+      "path": "values/f3e5ae7771777830bf03c7ded3d5288eae993bbd02e058169e406be3173fab87.txt",
+      "bytes": 4117,
+      "sha256": "f3e5ae7771777830bf03c7ded3d5288eae993bbd02e058169e406be3173fab87"
+    },
+    {
+      "path": "values/fetch_req_body_4099_1.txt",
+      "bytes": 4301,
+      "sha256": "b4edb31b13d7ad1582ea9a0a14fb61c144d375e11368fd25b346f64496307cb5"
+    }
+  ],
+  "passed": true,
+  "site_scripts_included": false,
+  "fixture": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/lab/vm-stress.html"
+}

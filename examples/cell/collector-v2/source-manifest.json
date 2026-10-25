@@ -1,0 +1,104 @@
+[
+  {
+    "path": "gecko-dev/js/src/vm/Interpreter.cpp",
+    "before_sha256": "e548c578f15bcadc43194be5a34f1fd477518fb93a467dc5659d797f110aadf7",
+    "after_sha256": "f2238a568ec96e5d6cc9fa57bf2db7020a69a4dc47174c1a7ed697dca9a8f324",
+    "mode": 420
+  },
+  {
+    "path": "gecko-dev/dom/ipc/ContentChild.cpp",
+    "before_sha256": "573e407341068e4c6bca6c5e03b0c6406e4f2e12c3add32ad19b0a3b1884f34e",
+    "after_sha256": "8b8ebe0539e043955261ef68984a5fe5c37838673f3aff34cf37f80dcbb8be23",
+    "mode": 420
+  },
+  {
+    "path": "patches/gecko-firefox-trace.patch",
+    "before_sha256": "7b2c160e2ad6263f5012e4b1fea8df250da4aa9f66abf0d5ae2b9fb57fbfabc8",
+    "after_sha256": "ac84bef110d3942d2064fd1c30f6127769a2660b1c717b68c632c1dd899c6306",
+    "mode": 420
+  },
+  {
+    "path": "tools/run-trace-firefox.sh",
+    "before_sha256": "0697ca74ed1d82d2f803806639c5ee89a4991b433a561a9644c09ec2404dd5ae",
+    "after_sha256": "7a86263ac757ab6976d10e880225f81b6366e6bb2e0e83d333bc2439fd42b443",
+    "mode": 493
+  },
+  {
+    "path": "skills/firefox-trace-agent/tools/run-trace-firefox.sh",
+    "before_sha256": "292c757271c231454f6c8e27b3834c2601b83a81941e273977f9d69743bbec24",
+    "after_sha256": "560f5eb10fa0f4571d20c01ba26299112a16aaa8e9f1e059c346c4aecc6361e9",
+    "mode": 493
+  },
+  {
+    "path": "tests/test_trace_batch_writer.py",
+    "before_sha256": "62977cfef40f608ebc1c6439fc555775f59c7e46265dbe1f4d7fa8a1cbf27a7d",
+    "after_sha256": "41582b1f9c3658a389f8d6b1ed6f780eae908783b09f8cdf314124beb79bdfdb",
+    "mode": 420
+  },
+  {
+    "path": "docs/TRACE_MODE_PLAYBOOK.md",
+    "before_sha256": "c5c1ea2b35f0e6050c1c2e31ca76c2f099ed0d637772b3278ac04dd146127c6f",
+    "after_sha256": "89be812e8e950ce80641cfc33cd4034ebf335825820aeef16332723e45694f3c",
+    "mode": 420
+  },
+  {
+    "path": "skills/firefox-trace-agent/references/trace-mode-operation-manual.md",
+    "before_sha256": "c5c1ea2b35f0e6050c1c2e31ca76c2f099ed0d637772b3278ac04dd146127c6f",
+    "after_sha256": "89be812e8e950ce80641cfc33cd4034ebf335825820aeef16332723e45694f3c",
+    "mode": 420
+  },
+  {
+    "path": "tools/install-trace-runtime.sh",
+    "before_sha256": "22efd677d3b7e68d25ee333ff1fc3fa72e6758e16181a9196e6837cf50f681e5",
+    "after_sha256": "10155d312d48a891a8b3e8feaddbaa2b9f78f6cb980ff9523973f1b5313c4d8e",
+    "mode": 493
+  },
+  {
+    "path": "skills/firefox-trace-agent/tools/install-trace-runtime.sh",
+    "before_sha256": "3550119c7ed3d55d3d43a571d5aa84047b05bd165f938936909f78373fa4de3e",
+    "after_sha256": "7073eabf8010471ab64648d0a993112caa122caa3fc46467a3a4df0ec74128a8",
+    "mode": 493
+  },
+  {
+    "path": "gecko-dev/dom/ipc/ContentParent.cpp",
+    "before_sha256": "8b00740eeef59d9a3e012554eb1dcbcf55b4f339a7b68a76f1de6ac27137861e",
+    "after_sha256": "4d0d1aa529e85c9fe4de1b8fd8eacba3dc7e36e53d4d9d506d8026b6e2cd16ba",
+    "mode": 420
+  },
+  {
+    "path": "tools/trace-stop-on-target.py",
+    "before_sha256": "ead0435d38cb243939d674b87296b6d9d82ee7ced7afb1fa412056a3513a9f51",
+    "after_sha256": "16bc2ad70b0e5cd75fede85a75d01950a3d584b4bfebf85379f48a05a440db22",
+    "mode": 493
+  },
+  {
+    "path": "skills/firefox-trace-agent/tools/trace-stop-on-target.py",
+    "before_sha256": "ead0435d38cb243939d674b87296b6d9d82ee7ced7afb1fa412056a3513a9f51",
+    "after_sha256": "16bc2ad70b0e5cd75fede85a75d01950a3d584b4bfebf85379f48a05a440db22",
+    "mode": 493
+  },
+  {
+    "path": "tests/test_trace_stop_on_target.py",
+    "before_sha256": "88180392c05f839ab94990c40147c996ae4a829ccb70e85b4e342552268ca628",
+    "after_sha256": "059204246527657cbcaab2858e1014c4faf4eee353e7335f9cf08b40c0747d29",
+    "mode": 420
+  },
+  {
+    "path": "examples/cell/.gitignore",
+    "before_sha256": "555453bf05af00e9556ccd62833ece5313efd54097d879fab97235627100cbd5",
+    "after_sha256": "ca6b7f0f8b3b3b5db1eca7746e48d1fa5509b930be175636c8d4db6a05553ca5",
+    "mode": 420
+  },
+  {
+    "path": "gecko-dev/js/src/vm/FirefoxTraceValueTransport.h",
+    "before_sha256": null,
+    "after_sha256": "43a482179abe9e06c690e9f8d213f78b2c12cbcdf15957dfd064904fc4c02083",
+    "mode": 420
+  },
+  {
+    "path": "tests/test_trace_value_transport.py",
+    "before_sha256": null,
+    "after_sha256": "ad3ba153cb6fc84de29c1a992ade117b48d41d2eefea868d58a1709c66d13606",
+    "mode": 420
+  }
+]

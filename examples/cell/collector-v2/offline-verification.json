@@ -1,0 +1,46 @@
+{
+  "passed": true,
+  "runtime_dependencies": "Python standard library only; no browser, Node.js, Playwright or network",
+  "verifier_sha256": "0d8ebcd471479fe36655b8df0fb6875a7324231761e4a08f0f4f97439f7e9385",
+  "commands": [
+    {
+      "label": "validated",
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/verify_local.py",
+        "--verify-trace",
+        "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/validated/portable"
+      ],
+      "exit_code": 0,
+      "stdout": "{\n  \"js_rows\": 419,\n  \"event_counts\": {\n    \"js.time\": 35,\n    \"js.script.enter\": 87,\n    \"js.call.enter\": 105,\n    \"js.call.return\": 105,\n    \"js.script.return\": 87\n  },\n  \"unique_referenced_artifacts\": 15,\n  \"artifact_errors\": [],\n  \"full_test_values_equal\": [\n    true,\n    true,\n    true\n  ],\n  \"expected_value_references\": {\n    \"5ec149272f213c43c2c1afa4f74003ff2e46cc0224064f0cd40aa94b87274696\": 8,\n    \"c710f900370e128e4e0649b4bcfc8609b8a08bd6856494e180f82e2a1c4589bc\": 8,\n    \"f05df22f50756aeeb538e82448744608fd7e7352766a893d41717711d39d5dc0\": 6\n  },\n  \"max_test_value_inline_bytes\": 515,\n  \"post_target_tail_references\": 2,\n  \"js_log_bytes\": 250447,\n  \"fixture_sha256\": \"3c59bd89c96b153a7d8c8ad51fe885a4e15bcb5e2e9efd388bc27478f647220e\",\n  \"passed\": true\n}\n",
+      "stderr": ""
+    },
+    {
+      "label": "baseline",
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/verify_local.py",
+        "--verify-trace",
+        "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/baseline/portable"
+      ],
+      "exit_code": 1,
+      "stdout": "{\n  \"js_rows\": 417,\n  \"event_counts\": {\n    \"js.time\": 35,\n    \"js.script.enter\": 87,\n    \"js.call.enter\": 104,\n    \"js.call.return\": 104,\n    \"js.script.return\": 87\n  },\n  \"unique_referenced_artifacts\": 14,\n  \"artifact_errors\": [],\n  \"full_test_values_equal\": [\n    true,\n    false,\n    true\n  ],\n  \"expected_value_references\": {\n    \"5ec149272f213c43c2c1afa4f74003ff2e46cc0224064f0cd40aa94b87274696\": 8,\n    \"f05df22f50756aeeb538e82448744608fd7e7352766a893d41717711d39d5dc0\": 6\n  },\n  \"max_test_value_inline_bytes\": 262150,\n  \"post_target_tail_references\": 0,\n  \"js_log_bytes\": 3770800,\n  \"fixture_sha256\": \"3c59bd89c96b153a7d8c8ad51fe885a4e15bcb5e2e9efd388bc27478f647220e\",\n  \"passed\": false\n}\n",
+      "stderr": ""
+    },
+    {
+      "label": "tampered",
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/verify_local.py",
+        "--verify-trace",
+        "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/tamper-drill"
+      ],
+      "exit_code": 1,
+      "stdout": "{\n  \"js_rows\": 419,\n  \"event_counts\": {\n    \"js.time\": 35,\n    \"js.script.enter\": 87,\n    \"js.call.enter\": 105,\n    \"js.call.return\": 105,\n    \"js.script.return\": 87\n  },\n  \"unique_referenced_artifacts\": 15,\n  \"artifact_errors\": [\n    \"manifest hash/length mismatch: values/f28d5b0d6f8be0da8446dabe79044cb9ed0ffa3150a003936155409fe778b885.txt\",\n    \"artifact hash mismatch: values/f28d5b0d6f8be0da8446dabe79044cb9ed0ffa3150a003936155409fe778b885.txt\",\n    \"artifact length mismatch: values/f28d5b0d6f8be0da8446dabe79044cb9ed0ffa3150a003936155409fe778b885.txt\"\n  ],\n  \"full_test_values_equal\": [\n    true,\n    true,\n    true\n  ],\n  \"expected_value_references\": {\n    \"5ec149272f213c43c2c1afa4f74003ff2e46cc0224064f0cd40aa94b87274696\": 8,\n    \"c710f900370e128e4e0649b4bcfc8609b8a08bd6856494e180f82e2a1c4589bc\": 8,\n    \"f05df22f50756aeeb538e82448744608fd7e7352766a893d41717711d39d5dc0\": 6\n  },\n  \"max_test_value_inline_bytes\": 515,\n  \"post_target_tail_references\": 2,\n  \"js_log_bytes\": 250447,\n  \"fixture_sha256\": \"3c59bd89c96b153a7d8c8ad51fe885a4e15bcb5e2e9efd388bc27478f647220e\",\n  \"passed\": false\n}\n",
+      "stderr": ""
+    }
+  ]
+}

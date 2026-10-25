@@ -1,0 +1,11 @@
+ac_add_options --enable-application=browser
+ac_add_options --enable-linker=lld
+ac_add_options --disable-bootstrap
+ac_add_options --without-wasm-sandboxed-libraries
+ac_add_options --disable-gecko-profiler
+
+export CBINDGEN=/Users/empycity/dev-tools/cbindgen-/bin/cbindgen
+
+# Case-scoped build configuration; leave the workstation .mozconfig unchanged.
+ac_add_options --with-macos-sdk=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-aarch64-apple-darwin25.6.0

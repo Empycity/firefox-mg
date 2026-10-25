@@ -1,0 +1,65 @@
+[
+  {
+    "run": "accepted",
+    "portable_verified": true,
+    "passed": true,
+    "retained_files": 17,
+    "retained_bytes": 1021017,
+    "trace": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/accepted/trace",
+    "profile": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/accepted/profile"
+  },
+  {
+    "run": "baseline",
+    "portable_verified": true,
+    "passed": false,
+    "retained_files": 16,
+    "retained_bytes": 4277201,
+    "trace": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/baseline/trace",
+    "profile": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/baseline/profile"
+  },
+  {
+    "run": "final",
+    "portable_verified": true,
+    "passed": false,
+    "retained_files": 16,
+    "retained_bytes": 1015030,
+    "trace": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/final/trace",
+    "profile": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/final/profile"
+  },
+  {
+    "run": "ipc-drain",
+    "portable_verified": true,
+    "passed": true,
+    "retained_files": 17,
+    "retained_bytes": 1014839,
+    "trace": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/ipc-drain/trace",
+    "profile": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/ipc-drain/profile"
+  },
+  {
+    "run": "modified",
+    "portable_verified": true,
+    "passed": false,
+    "retained_files": 16,
+    "retained_bytes": 4277725,
+    "trace": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/modified/trace",
+    "profile": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/modified/profile"
+  },
+  {
+    "run": "release",
+    "portable_verified": true,
+    "passed": false,
+    "retained_files": 16,
+    "retained_bytes": 1012630,
+    "trace": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/release/trace",
+    "profile": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/release/profile"
+  },
+  {
+    "run": "validated",
+    "portable_verified": true,
+    "passed": true,
+    "retained_files": 17,
+    "retained_bytes": 1019048,
+    "trace": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/validated/trace",
+    "profile": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/validated/profile"
+  }
+]

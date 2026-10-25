@@ -1,0 +1,898 @@
+{
+  "schema": "cell.observer_effect_comparison.v1",
+  "scope": "Offline instrumentation performance and normal-navigation diagnostics; no page/protocol replay.",
+  "round1": {
+    "raw_js_bytes": 200993170,
+    "raw_js_sha256": "febf90bb85b4403cb61f0877ef4effb22e9c2e2b9358477224a13a6a52cc8823",
+    "js_types": {
+      "js.call.enter": 175037,
+      "js.call.return": 175045,
+      "trace.degraded": 2
+    },
+    "js_bytes_by_type": {
+      "js.call.enter": 101105679,
+      "js.call.return": 99886260,
+      "trace.degraded": 1231
+    },
+    "script_role_events": {
+      "other-web": 10898,
+      "top-level-challenge": 104256,
+      "challenge-iframe": 234928,
+      "other": 2
+    },
+    "first_js_us": 1792687267005040,
+    "last_js_us": 1792687322500882,
+    "js_span_seconds": 55.496,
+    "value_metadata_roles": {},
+    "call_durations_including_observer_work": {
+      "top-level-challenge": {
+        "paired_calls": 52102,
+        "total_duration_us": 6346679,
+        "max_duration_us": 119281,
+        "ge_1000us": 814,
+        "ge_10000us": 137,
+        "ge_100000us": 3
+      },
+      "other-web": {
+        "paired_calls": 5443,
+        "total_duration_us": 8300736,
+        "max_duration_us": 542484,
+        "ge_1000us": 888,
+        "ge_10000us": 137,
+        "ge_100000us": 11
+      },
+      "challenge-iframe": {
+        "paired_calls": 117331,
+        "total_duration_us": 9531381,
+        "max_duration_us": 201699,
+        "ge_1000us": 1149,
+        "ge_10000us": 103,
+        "ge_100000us": 2
+      }
+    },
+    "largest_call_events": [
+      {
+        "bytes": 614,
+        "source_line": 246568,
+        "type": "js.call.enter",
+        "script_role": "challenge-iframe"
+      },
+      {
+        "bytes": 614,
+        "source_line": 246566,
+        "type": "js.call.enter",
+        "script_role": "challenge-iframe"
+      },
+      {
+        "bytes": 613,
+        "source_line": 245561,
+        "type": "js.call.enter",
+        "script_role": "challenge-iframe"
+      },
+      {
+        "bytes": 613,
+        "source_line": 245545,
+        "type": "js.call.enter",
+        "script_role": "challenge-iframe"
+      },
+      {
+        "bytes": 609,
+        "source_line": 60575,
+        "type": "js.call.enter",
+        "script_role": "challenge-iframe"
+      }
+    ],
+    "script_timeout_count": 0,
+    "timeout_source_lines": [],
+    "shutdown_fatal_count": 0,
+    "requests": [
+      {
+        "pid": 11969,
+        "request_id": "xhr_1",
+        "source": "firefox-xhr-11952.jsonl:1",
+        "host": "www.cell.com",
+        "status": 200,
+        "open_to_send_ms": 522.726,
+        "send_to_response_ms": 3495.349,
+        "xhr.open_since_launch_ms": 4581.306,
+        "xhr.send_since_launch_ms": 5104.032,
+        "xhr.response_since_launch_ms": 8599.381
+      },
+      {
+        "pid": 11971,
+        "request_id": "xhr_1",
+        "source": "firefox-xhr-11952.jsonl:4",
+        "host": "challenges.cloudflare.com",
+        "status": 200,
+        "open_to_send_ms": 673.215,
+        "send_to_response_ms": 7845.678,
+        "xhr.open_since_launch_ms": 12650.661,
+        "xhr.send_since_launch_ms": 13323.876,
+        "xhr.response_since_launch_ms": 21169.554
+      },
+      {
+        "pid": 11971,
+        "request_id": "xhr_2",
+        "source": "firefox-xhr-11952.jsonl:7",
+        "host": "challenges.cloudflare.com",
+        "status": 200,
+        "open_to_send_ms": 10532.518,
+        "send_to_response_ms": 1023.819,
+        "xhr.open_since_launch_ms": 39121.783,
+        "xhr.send_since_launch_ms": 49654.301,
+        "xhr.response_since_launch_ms": 50678.12
+      },
+      {
+        "pid": 11969,
+        "request_id": "xhr_2",
+        "source": "firefox-xhr-11952.jsonl:10",
+        "host": "www.cell.com",
+        "status": 200,
+        "open_to_send_ms": 1384.977,
+        "send_to_response_ms": 815.231,
+        "xhr.open_since_launch_ms": 50870.754,
+        "xhr.send_since_launch_ms": 52255.731,
+        "xhr.response_since_launch_ms": 53070.962
+      },
+      {
+        "pid": 11972,
+        "request_id": "xhr_1",
+        "source": "firefox-xhr-11952.jsonl:13",
+        "host": "cdn.cookielaw.org",
+        "status": 200,
+        "open_to_send_ms": 5.08,
+        "send_to_response_ms": 672.027,
+        "xhr.open_since_launch_ms": 56740.537,
+        "xhr.send_since_launch_ms": 56745.617,
+        "xhr.response_since_launch_ms": 57417.644
+      },
+      {
+        "pid": 11972,
+        "request_id": "xhr_2",
+        "source": "firefox-xhr-11952.jsonl:16",
+        "host": "geolocation.onetrust.com",
+        "status": 200,
+        "open_to_send_ms": 15.706,
+        "send_to_response_ms": 876.989,
+        "xhr.open_since_launch_ms": 57460.493,
+        "xhr.send_since_launch_ms": 57476.199,
+        "xhr.response_since_launch_ms": 58353.188
+      },
+      {
+        "pid": 11972,
+        "request_id": "xhr_3",
+        "source": "firefox-xhr-11952.jsonl:18",
+        "host": "www.cell.com",
+        "status": 200,
+        "open_to_send_ms": 21.483,
+        "send_to_response_ms": 816.494,
+        "xhr.open_since_launch_ms": 57620.668,
+        "xhr.send_since_launch_ms": 57642.151,
+        "xhr.response_since_launch_ms": 58458.645
+      }
+    ],
+    "server_cookie_milestones": [
+      {
+        "source": "firefox-cookie-11952.jsonl:4",
+        "name": "cf_clearance",
+        "outcome": "accepted",
+        "ts_us": 1792687316909454,
+        "value_chars": 597
+      },
+      {
+        "source": "firefox-cookie-11952.jsonl:7",
+        "name": "JSESSIONID",
+        "outcome": "accepted",
+        "ts_us": 1792687317423172,
+        "value_chars": 32
+      },
+      {
+        "source": "firefox-cookie-11952.jsonl:8",
+        "name": "MAID",
+        "outcome": "accepted",
+        "ts_us": 1792687317424861,
+        "value_chars": 24
+      },
+      {
+        "source": "firefox-cookie-11952.jsonl:9",
+        "name": "MACHINE_LAST_SEEN",
+        "outcome": "accepted",
+        "ts_us": 1792687317425329,
+        "value_chars": 35
+      },
+      {
+        "source": "firefox-cookie-11952.jsonl:10",
+        "name": "PF",
+        "outcome": "accepted",
+        "ts_us": 1792687318792541,
+        "value_chars": 44
+      }
+    ],
+    "scripts": [
+      {
+        "host": "www.cell.com",
+        "path_group": "challenge-platform",
+        "raw_bytes": 0,
+        "artifact_stored": false,
+        "source": "firefox-script-11952.jsonl:1"
+      },
+      {
+        "host": "www.cell.com",
+        "path_group": "site-product",
+        "raw_bytes": 0,
+        "artifact_stored": false,
+        "source": "firefox-script-11952.jsonl:2"
+      },
+      {
+        "host": "cdn.cookielaw.org",
+        "path_group": "other",
+        "raw_bytes": 0,
+        "artifact_stored": false,
+        "source": "firefox-script-11952.jsonl:3"
+      },
+      {
+        "host": "www.cell.com",
+        "path_group": "site-assets",
+        "raw_bytes": 0,
+        "artifact_stored": false,
+        "source": "firefox-script-11952.jsonl:4"
+      },
+      {
+        "host": "www.cell.com",
+        "path_group": "site-assets",
+        "raw_bytes": 0,
+        "artifact_stored": false,
+        "source": "firefox-script-11952.jsonl:5"
+      },
+      {
+        "host": "www.cell.com",
+        "path_group": "other",
+        "raw_bytes": 0,
+        "artifact_stored": false,
+        "source": "firefox-script-11952.jsonl:6"
+      }
+    ],
+    "trace_health": {
+      "evidence_complete": false,
+      "incomplete_reasons": [
+        "ipc:event_budget",
+        "js:boundary_buffer_overwrite",
+        "environment:value_capture_incomplete"
+      ],
+      "counts": {
+        "dom_bom_events": 3304,
+        "raw_events": 353508,
+        "runtime_config_acks": 11,
+        "target_field_matches": 0,
+        "target_fields_without_complete_artifact": 0,
+        "trace_degraded": 23,
+        "trace_suppressed": 0,
+        "vm_window_artifacts": 0
+      }
+    },
+    "metadata_source": {
+      "summary": "index/summary.json",
+      "health": "index/trace-health.json"
+    },
+    "analysis_seconds": 1.678,
+    "standalone_metadata_unique_paths": 0,
+    "standalone_metadata_unique_hashes": 0,
+    "standalone_metadata_flags": {},
+    "input_metadata_sha256": {
+      "manifest.json": "78e23fed98cf37d1c84203dfdab5c659d2a6a7e0e091b116d1de972911f40b49",
+      "trace-control.json": "d1979ca36289e89b3fbc541d3e6b291603429ff8aee2ac7fae7294c64a28b411",
+      "ui-launcher.log": "099ee323f5b09a92cb1fb3355a41c5170e73a351f932817a663574c295f73c00",
+      "index/trace-health.json": "c8bc4945a0bc4d634bb4a7230363616cf5af6be77c5901f63f7188e9f3c82342"
+    }
+  },
+  "round2-values": {
+    "raw_js_bytes": 1938006918,
+    "raw_js_sha256": "6e553d22f7181030ce5ca8d28abd3ea5c4b8264ebe91808165b0016dd5036f15",
+    "js_types": {
+      "js.time": 567,
+      "js.script.enter": 259391,
+      "js.call.enter": 318087,
+      "js.script.return": 259386,
+      "js.call.return": 318074,
+      "js.random": 24
+    },
+    "js_bytes_by_type": {
+      "js.time": 122077,
+      "js.script.enter": 187669200,
+      "js.call.enter": 882910745,
+      "js.script.return": 190518976,
+      "js.call.return": 676780662,
+      "js.random": 5258
+    },
+    "script_role_events": {
+      "other": 614,
+      "other-web": 4406,
+      "top-level-challenge": 529449,
+      "challenge-iframe": 621060
+    },
+    "first_js_us": 1792772956515708,
+    "last_js_us": 1792773139359546,
+    "js_span_seconds": 182.844,
+    "value_metadata_roles": {},
+    "call_durations_including_observer_work": {
+      "other-web": {
+        "paired_calls": 1699,
+        "total_duration_us": 134091907,
+        "max_duration_us": 14728215,
+        "ge_1000us": 336,
+        "ge_10000us": 177,
+        "ge_100000us": 52,
+        "ge_1000000us": 11,
+        "ge_10000000us": 6
+      },
+      "top-level-challenge": {
+        "paired_calls": 150072,
+        "total_duration_us": 746017078,
+        "max_duration_us": 14367221,
+        "ge_1000us": 11806,
+        "ge_10000us": 2323,
+        "ge_100000us": 533,
+        "ge_1000000us": 109,
+        "ge_10000000us": 22
+      },
+      "challenge-iframe": {
+        "paired_calls": 166303,
+        "total_duration_us": 568897657,
+        "max_duration_us": 36963453,
+        "ge_1000us": 2985,
+        "ge_10000us": 1207,
+        "ge_100000us": 189,
+        "ge_1000000us": 60,
+        "ge_10000000us": 15
+      }
+    },
+    "largest_call_events": [
+      {
+        "bytes": 1338900,
+        "source_line": 1125852,
+        "type": "js.call.enter",
+        "script_role": "top-level-challenge"
+      },
+      {
+        "bytes": 1338813,
+        "source_line": 1127264,
+        "type": "js.call.enter",
+        "script_role": "top-level-challenge"
+      },
+      {
+        "bytes": 1338789,
+        "source_line": 982311,
+        "type": "js.call.enter",
+        "script_role": "challenge-iframe"
+      },
+      {
+        "bytes": 1338789,
+        "source_line": 918847,
+        "type": "js.call.enter",
+        "script_role": "challenge-iframe"
+      },
+      {
+        "bytes": 1338789,
+        "source_line": 918761,
+        "type": "js.call.enter",
+        "script_role": "challenge-iframe"
+      }
+    ],
+    "script_timeout_count": 4,
+    "timeout_source_lines": [
+      54,
+      66,
+      92,
+      120
+    ],
+    "shutdown_fatal_count": 1,
+    "requests": [
+      {
+        "pid": 4667,
+        "request_id": "xhr_1",
+        "source": "firefox-xhr-4634.jsonl:1",
+        "host": "www.cell.com",
+        "status": 200,
+        "open_to_send_ms": 1933.775,
+        "send_to_response_ms": 3579.165,
+        "xhr.open_since_launch_ms": 11080.297,
+        "xhr.send_since_launch_ms": 13014.072,
+        "xhr.response_since_launch_ms": 16593.237
+      },
+      {
+        "pid": 4670,
+        "request_id": "xhr_1",
+        "source": "firefox-xhr-4634.jsonl:7",
+        "host": "challenges.cloudflare.com",
+        "status": 200,
+        "open_to_send_ms": 12090.434,
+        "send_to_response_ms": 37593.832,
+        "xhr.open_since_launch_ms": 23599.444,
+        "xhr.send_since_launch_ms": 35689.878,
+        "xhr.response_since_launch_ms": 73283.71
+      },
+      {
+        "pid": 4667,
+        "request_id": "xhr_2",
+        "source": "firefox-xhr-4634.jsonl:13",
+        "host": "www.cell.com",
+        "status": 200,
+        "open_to_send_ms": 4879.907,
+        "send_to_response_ms": 709.687,
+        "xhr.open_since_launch_ms": 74578.043,
+        "xhr.send_since_launch_ms": 79457.95,
+        "xhr.response_since_launch_ms": 80167.637
+      },
+      {
+        "pid": 4667,
+        "request_id": "xhr_3",
+        "source": "firefox-xhr-4634.jsonl:19",
+        "host": "www.cell.com",
+        "status": 200,
+        "open_to_send_ms": 4950.74,
+        "send_to_response_ms": 5266.051,
+        "xhr.open_since_launch_ms": 87363.652,
+        "xhr.send_since_launch_ms": 92314.392,
+        "xhr.response_since_launch_ms": 97580.443
+      },
+      {
+        "pid": 4671,
+        "request_id": "xhr_1",
+        "source": "firefox-xhr-4634.jsonl:25",
+        "host": "challenges.cloudflare.com",
+        "status": 200,
+        "open_to_send_ms": 23714.928,
+        "send_to_response_ms": 18239.601,
+        "xhr.open_since_launch_ms": 103961.218,
+        "xhr.send_since_launch_ms": 127676.146,
+        "xhr.response_since_launch_ms": 145915.747
+      },
+      {
+        "pid": 4667,
+        "request_id": "xhr_4",
+        "source": "firefox-xhr-4634.jsonl:31",
+        "host": "www.cell.com",
+        "status": 200,
+        "open_to_send_ms": 12310.085,
+        "send_to_response_ms": 2058.763,
+        "xhr.open_since_launch_ms": 155919.991,
+        "xhr.send_since_launch_ms": 168230.076,
+        "xhr.response_since_launch_ms": 170288.839
+      },
+      {
+        "pid": 4667,
+        "request_id": "xhr_5",
+        "source": "firefox-xhr-4634.jsonl:37",
+        "host": "www.cell.com",
+        "open_to_send_ms": null,
+        "send_to_response_ms": null,
+        "xhr.open_since_launch_ms": 182124.345
+      }
+    ],
+    "server_cookie_milestones": [
+      {
+        "source": "firefox-cookie-4634.jsonl:2",
+        "name": "cf_clearance",
+        "outcome": "accepted",
+        "ts_us": 1792773035546488,
+        "value_chars": 597
+      },
+      {
+        "source": "firefox-cookie-4634.jsonl:6",
+        "name": "cf_clearance",
+        "outcome": "accepted",
+        "ts_us": 1792773124321705,
+        "value_chars": 597
+      }
+    ],
+    "scripts": [
+      {
+        "host": "www.cell.com",
+        "path_group": "challenge-platform",
+        "raw_bytes": 255947,
+        "artifact_stored": true,
+        "source": "firefox-script-4634.jsonl:1"
+      },
+      {
+        "host": "challenges.cloudflare.com",
+        "path_group": "other",
+        "raw_bytes": 86732,
+        "artifact_stored": true,
+        "source": "firefox-script-4634.jsonl:2"
+      },
+      {
+        "host": "www.cell.com",
+        "path_group": "challenge-platform",
+        "raw_bytes": 254327,
+        "artifact_stored": true,
+        "source": "firefox-script-4634.jsonl:3"
+      },
+      {
+        "host": "challenges.cloudflare.com",
+        "path_group": "other",
+        "raw_bytes": 86732,
+        "artifact_stored": true,
+        "source": "firefox-script-4634.jsonl:4"
+      },
+      {
+        "host": "www.cell.com",
+        "path_group": "challenge-platform",
+        "raw_bytes": 263445,
+        "artifact_stored": true,
+        "source": "firefox-script-4634.jsonl:5"
+      },
+      {
+        "host": "challenges.cloudflare.com",
+        "path_group": "other",
+        "raw_bytes": 86732,
+        "artifact_stored": true,
+        "source": "firefox-script-4634.jsonl:6"
+      }
+    ],
+    "trace_health": {
+      "evidence_complete": false,
+      "incomplete_reasons": [
+        "request:target_value_without_complete_artifact"
+      ],
+      "counts": {
+        "dom_bom_events": 3938,
+        "raw_events": 1159590,
+        "runtime_config_acks": 13,
+        "target_field_matches": 11,
+        "target_fields_without_complete_artifact": 11,
+        "trace_degraded": 0,
+        "trace_suppressed": 0,
+        "vm_window_artifacts": 0
+      }
+    },
+    "metadata_source": {
+      "summary": "index/summary.json",
+      "health": "index/trace-health.json"
+    },
+    "analysis_seconds": 7.85,
+    "inline_value_analysis": {
+      "inline_value_preview": {
+        "string_occurrences": 60577,
+        "preview_characters": 766859227,
+        "max_preview_characters": 1337359,
+        "over_512_chars": 722,
+        "over_512_preview_chars": 766367837,
+        "over_4096_chars": 607,
+        "over_4096_preview_chars": 766233551
+      },
+      "value_reference_counts": {
+        "referenced_size_sum_including_repeats": 766860383,
+        "stored_value_references": 60147
+      },
+      "unique_referenced_value_paths": 7512,
+      "duplicate_value_reference_count": 52635,
+      "max_references_to_one_artifact": 978,
+      "value_directory": {
+        "file_count": 8480,
+        "total_bytes": 248881667
+      },
+      "record_key_shapes": {
+        "js.time": {
+          "schema": "str",
+          "type": "str",
+          "ts_us": "int",
+          "pid": "int",
+          "call_id": "str",
+          "sequence": "int",
+          "value_ms": "int"
+        },
+        "js.script.enter": {
+          "schema": "str",
+          "type": "str",
+          "ts_us": "int",
+          "pid": "int",
+          "call_id": "str",
+          "parent_call_id": "NoneType",
+          "callee_kind": "str",
+          "function_name": "NoneType",
+          "script_url": "str",
+          "script_id": "str",
+          "script_sha256": "str",
+          "script_source_path": "str",
+          "script_source_status": "str",
+          "script_source_length": "int",
+          "line": "int",
+          "column": "int",
+          "argc": "int",
+          "segment_id": "str",
+          "control_version": "int",
+          "config_hash": "str"
+        },
+        "js.call.enter": {
+          "schema": "str",
+          "type": "str",
+          "ts_us": "int",
+          "pid": "int",
+          "call_id": "str",
+          "parent_call_id": "NoneType",
+          "callee_kind": "str",
+          "function_name": "str",
+          "script_url": "str",
+          "script_id": "str",
+          "script_sha256": "str",
+          "script_source_path": "str",
+          "script_source_status": "str",
+          "script_source_length": "int",
+          "line": "int",
+          "column": "int",
+          "argc": "int",
+          "construct": "bool",
+          "js_mode": "str",
+          "target_match": "bool",
+          "object_target_match": "bool",
+          "capture_tier": "str",
+          "capture_status": "str",
+          "auto_capture_values": "bool",
+          "data": "dict",
+          "segment_id": "str",
+          "control_version": "int",
+          "config_hash": "str"
+        },
+        "js.script.return": {
+          "schema": "str",
+          "type": "str",
+          "ts_us": "int",
+          "pid": "int",
+          "call_id": "str",
+          "parent_call_id": "NoneType",
+          "callee_kind": "str",
+          "function_name": "NoneType",
+          "script_url": "str",
+          "script_id": "str",
+          "script_sha256": "str",
+          "script_source_path": "str",
+          "script_source_status": "str",
+          "script_source_length": "int",
+          "line": "int",
+          "column": "int",
+          "argc": "int",
+          "ok": "bool",
+          "segment_id": "str",
+          "control_version": "int",
+          "config_hash": "str"
+        },
+        "js.call.return": {
+          "schema": "str",
+          "type": "str",
+          "ts_us": "int",
+          "pid": "int",
+          "call_id": "str",
+          "parent_call_id": "NoneType",
+          "callee_kind": "str",
+          "function_name": "str",
+          "script_url": "str",
+          "script_id": "str",
+          "script_sha256": "str",
+          "script_source_path": "str",
+          "script_source_status": "str",
+          "script_source_length": "int",
+          "line": "int",
+          "column": "int",
+          "argc": "int",
+          "ok": "bool",
+          "js_mode": "str",
+          "target_match": "bool",
+          "object_target_match": "bool",
+          "capture_tier": "str",
+          "capture_status": "str",
+          "auto_capture_values": "bool",
+          "data": "dict",
+          "segment_id": "str",
+          "control_version": "int",
+          "config_hash": "str"
+        },
+        "js.random": {
+          "schema": "str",
+          "type": "str",
+          "ts_us": "int",
+          "pid": "int",
+          "call_id": "str",
+          "sequence": "int",
+          "value": "float",
+          "segment_id": "str",
+          "control_version": "int",
+          "config_hash": "str"
+        }
+      },
+      "analysis_seconds": 9.801
+    },
+    "notes": [
+      "js_value_capture_event_count counts call records containing value capture, not standalone js.value.store rows.",
+      "No standalone js.value.store rows were emitted; do not infer absence of inline values.",
+      "Manifest omits several recorded config keys; full-spool is present in trace-control.json.env."
+    ],
+    "target_index_integrity_checks": [
+      {
+        "source_file": "firefox-cookie-4634.jsonl",
+        "source_line": 2,
+        "source_event_type": "cookie.http_set",
+        "field_name": "cf_clearance",
+        "declared_bytes": 597,
+        "indexed_preview_chars": 512,
+        "artifact_path_present": false,
+        "raw_source_has_exact_full_field": true
+      },
+      {
+        "source_file": "firefox-cookie-4634.jsonl",
+        "source_line": 6,
+        "source_event_type": "cookie.http_set",
+        "field_name": "cf_clearance",
+        "declared_bytes": 597,
+        "indexed_preview_chars": 512,
+        "artifact_path_present": false,
+        "raw_source_has_exact_full_field": true
+      },
+      {
+        "source_file": "firefox-cookie-4634.jsonl",
+        "source_line": 7,
+        "source_event_type": "cookie.lifecycle",
+        "field_name": "cf_clearance",
+        "declared_bytes": 597,
+        "indexed_preview_chars": 512,
+        "artifact_path_present": false,
+        "raw_source_has_exact_full_field": true
+      },
+      {
+        "source_file": "firefox-http-raw-4634.jsonl",
+        "source_line": 9,
+        "source_event_type": "http.request_headers",
+        "field_name": "cf_clearance",
+        "declared_bytes": 597,
+        "indexed_preview_chars": 512,
+        "artifact_path_present": false,
+        "raw_source_has_exact_full_field": false
+      },
+      {
+        "source_file": "firefox-http-raw-4634.jsonl",
+        "source_line": 10,
+        "source_event_type": "http.request_headers",
+        "field_name": "cf_clearance",
+        "declared_bytes": 597,
+        "indexed_preview_chars": 512,
+        "artifact_path_present": false,
+        "raw_source_has_exact_full_field": false
+      },
+      {
+        "source_file": "firefox-http-raw-4634.jsonl",
+        "source_line": 12,
+        "source_event_type": "http.request_headers",
+        "field_name": "cf_clearance",
+        "declared_bytes": 597,
+        "indexed_preview_chars": 512,
+        "artifact_path_present": false,
+        "raw_source_has_exact_full_field": false
+      },
+      {
+        "source_file": "firefox-http-raw-4634.jsonl",
+        "source_line": 13,
+        "source_event_type": "http.request_headers",
+        "field_name": "cf_clearance",
+        "declared_bytes": 597,
+        "indexed_preview_chars": 512,
+        "artifact_path_present": false,
+        "raw_source_has_exact_full_field": false
+      },
+      {
+        "source_file": "firefox-http-raw-4634.jsonl",
+        "source_line": 16,
+        "source_event_type": "http.request_headers",
+        "field_name": "cf_clearance",
+        "declared_bytes": 597,
+        "indexed_preview_chars": 512,
+        "artifact_path_present": false,
+        "raw_source_has_exact_full_field": false
+      },
+      {
+        "source_file": "firefox-http-raw-4634.jsonl",
+        "source_line": 17,
+        "source_event_type": "http.request_headers",
+        "field_name": "cf_clearance",
+        "declared_bytes": 597,
+        "indexed_preview_chars": 512,
+        "artifact_path_present": false,
+        "raw_source_has_exact_full_field": false
+      },
+      {
+        "source_file": "firefox-http-raw-4634.jsonl",
+        "source_line": 18,
+        "source_event_type": "http.request_headers",
+        "field_name": "cf_clearance",
+        "declared_bytes": 597,
+        "indexed_preview_chars": 512,
+        "artifact_path_present": false,
+        "raw_source_has_exact_full_field": false
+      },
+      {
+        "source_file": "firefox-http-raw-4634.jsonl",
+        "source_line": 20,
+        "source_event_type": "http.request_headers",
+        "field_name": "cf_clearance",
+        "declared_bytes": 597,
+        "indexed_preview_chars": 512,
+        "artifact_path_present": false,
+        "raw_source_has_exact_full_field": false
+      }
+    ],
+    "config_recording_gap": {
+      "TRACE_JS_FULL_SPOOL": {
+        "manifest": null,
+        "control": "1"
+      },
+      "TRACE_JS_SCRIPT_DUMP": {
+        "manifest": null,
+        "control": "1"
+      },
+      "TRACE_JS_SCRIPT_HASH": {
+        "manifest": null,
+        "control": "1"
+      },
+      "TRACE_JS_MAX_VALUE_BYTES": {
+        "manifest": "0",
+        "control": "0"
+      },
+      "TRACE_JS_DEFERRED_VALUE_CAPTURE": {
+        "manifest": null,
+        "control": "1"
+      }
+    },
+    "important_distinctions": [
+      "The run issued server cookies but did not show the same homepage progression as the light run.",
+      "No trace.degraded event is not proof of undisturbed page execution: four script timeout warnings are present.",
+      "Some indexed cookie fields have a shortened preview/no artifact while their original source event retains the entire scalar; classify source retention separately from derived-index retention."
+    ],
+    "standalone_metadata_unique_paths": 0,
+    "standalone_metadata_unique_hashes": 0,
+    "standalone_metadata_flags": {},
+    "input_metadata_sha256": {
+      "manifest.json": "4756829ac4bc5559582e621bd76d2428419509521bcab0c177b9e4cf7516e74b",
+      "trace-control.json": "6b523a98222271a56415bf7489682562ee1b445fa207ac0469b37b41f32ee67a",
+      "ui-launcher.log": "36e78aa80bde6eecf9f398d2482c49b252dae0e6ae03a8c923d11372d3383f97",
+      "index/trace-health.json": "0210f37ac18f4af806ed6af227ee8140f16e3477c90ce8297a6d0f03d003d2af"
+    }
+  },
+  "limitations": [
+    "Runs use different builds, profiles and timestamps; not a one-variable causal A/B test.",
+    "XHR send-to-response includes network, scheduling, IPC and listener-delivery time; not pure server latency.",
+    "Observer-timed call durations include instrumentation cost and are not CPU samples.",
+    "No token values, challenge payloads or protected algorithm source are exported.",
+    "No new browser run or source/config changes were made for this review."
+  ],
+  "source_hotspots": [
+    {
+      "path": "gecko-dev/js/src/vm/Interpreter.cpp",
+      "symbol": "FirefoxTraceJSMaxValueBytes",
+      "observed_source_fact": "Explicit 0 expands to 0xffffffff, so long preview strings are not bounded."
+    },
+    {
+      "path": "gecko-dev/js/src/vm/Interpreter.cpp",
+      "symbol": "AutoFirefoxTraceJSCall::writeValuePreview",
+      "observed_source_fact": "Full spool excludes the deferred-pool branch for string artifacts and calls FirefoxTraceWriteJSValueStoreFile."
+    },
+    {
+      "path": "gecko-dev/js/src/vm/Interpreter.cpp",
+      "symbol": "FirefoxTraceWriteJSValueStoreFile",
+      "observed_source_fact": "Each value occurrence reaches the value-to-parent API before any local fallback."
+    },
+    {
+      "path": "gecko-dev/dom/ipc/ContentParent.cpp",
+      "symbol": "ContentParent::RecvFirefoxTraceJSValue",
+      "observed_source_fact": "The parent checks for an existing content-addressed file, but this occurs after IPC delivery."
+    }
+  ],
+  "review_actions": {
+    "browser_started": false,
+    "trace_resumed": false,
+    "source_modified": false,
+    "handoff_modified": false,
+    "temporary_artifacts_created": false,
+    "retained_files": [
+      "analysis/observer-effect-comparison.json",
+      "analysis/observer-effect-review.md"
+    ]
+  }
+}

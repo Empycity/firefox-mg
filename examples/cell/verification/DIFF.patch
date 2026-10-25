@@ -1,0 +1,606 @@
+diff --git a/gecko-dev/dom/ipc/ContentParent.cpp b/gecko-dev/dom/ipc/ContentParent.cpp
+--- a/gecko-dev/dom/ipc/ContentParent.cpp
++++ b/gecko-dev/dom/ipc/ContentParent.cpp
+@@ -10,6 +10,7 @@
+ #include "base/basictypes.h"
+ 
+ #include "ContentParent.h"
++#include "FirefoxTraceBatchWriter.h"
+ #include "mozilla/ipc/ProcessUtils.h"
+ #include "mozilla/CmdLineAndEnvUtils.h"
+ #include "BrowserParent.h"
+@@ -6233,14 +6234,15 @@
+   return IPC_OK();
+ }
+ 
+-mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceDOMEvent(
+-    const nsACString& aLine) {
++static mozilla::ipc::IPCResult FirefoxTraceReceiveDOMEvent(
++    ContentParent* aParent, const nsACString& aLine,
++    FirefoxTraceBatchWriter& aWriter) {
+   const char* enabled = PR_GetEnv("FIREFOX_TRACE_ENABLE");
+   if (!enabled || !enabled[0] || strcmp(enabled, "0") == 0) {
+     return IPC_OK();
+   }
+ 
+-  FirefoxTraceMaybePushRuntimeConfigToChild(this);
++  FirefoxTraceMaybePushRuntimeConfigToChild(aParent);
+ 
+   if (!FirefoxTraceRuntimeAllowsEvent(aLine)) {
+     return IPC_OK();
+@@ -6342,33 +6344,41 @@
+     logDir = "/tmp/firefox-trace";
+   }
+ 
+-  mkdir(logDir, 0755);
+-
+   nsAutoCString path(logDir);
+   if (!path.IsEmpty() && path.Last() != '/') {
+     path.Append('/');
+   }
++  using Stream = FirefoxTraceBatchWriter::Stream;
++  Stream stream = Stream::DOM;
+   const char* filename = "firefox-dom-%d.jsonl";
+   if (isXHR) {
+     filename = "firefox-xhr-%d.jsonl";
++    stream = Stream::XHR;
+   } else if (isFetch) {
+     filename = "firefox-fetch-%d.jsonl";
++    stream = Stream::Fetch;
+   } else if (isWebSocket) {
+     filename = "firefox-websocket-%d.jsonl";
++    stream = Stream::WebSocket;
+   } else if (isStorage) {
+     filename = "firefox-storage-%d.jsonl";
++    stream = Stream::Storage;
+   } else if (isCookie) {
+     filename = "firefox-cookie-%d.jsonl";
++    stream = Stream::Cookie;
+   } else if (isWasm) {
+     filename = "firefox-wasm-%d.jsonl";
++    stream = Stream::Wasm;
+   } else if (isScriptResource) {
+     filename = "firefox-script-%d.jsonl";
++    stream = Stream::Script;
+   } else if (isJS) {
+     filename = "firefox-js-%d.jsonl";
++    stream = Stream::JS;
+   }
+   path.AppendPrintf(filename, getpid());
+ 
+-  FILE* file = fopen(path.get(), "a");
++  FILE* file = aWriter.Open(stream, logDir, path.get());
+   if (!file) {
+     return IPC_OK();
+   }
+@@ -6377,19 +6387,25 @@
+   FirefoxTraceDecorateRuntimeEventLine(aLine, decoratedLine);
+   fwrite(decoratedLine.BeginReading(), 1, decoratedLine.Length(), file);
+   fputc('\n', file);
+-  fclose(file);
+-  return IPC_OK();
++  return IPC_OK();
++}
++
++mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceDOMEvent(
++    const nsACString& aLine) {
++  FirefoxTraceBatchWriter writer;
++  return FirefoxTraceReceiveDOMEvent(this, aLine, writer);
+ }
+ 
+ mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceDOMEventBatch(
+     const nsACString& aLines) {
++  FirefoxTraceBatchWriter writer;
+   uint32_t start = 0;
+   while (start < aLines.Length()) {
+     int32_t end = aLines.FindChar('\n', start);
+     uint32_t length = end < 0 ? aLines.Length() - start
+                               : static_cast<uint32_t>(end) - start;
+     if (length) {
+-      RecvFirefoxTraceDOMEvent(Substring(aLines, start, length));
++      FirefoxTraceReceiveDOMEvent(this, Substring(aLines, start, length), writer);
+     }
+     if (end < 0) {
+       break;
+diff --git a/gecko-dev/dom/ipc/FirefoxTraceBatchWriter.h b/gecko-dev/dom/ipc/FirefoxTraceBatchWriter.h
+new file mode 100644
+--- /dev/null
++++ b/gecko-dev/dom/ipc/FirefoxTraceBatchWriter.h
+@@ -0,0 +1,52 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++#ifndef mozilla_dom_FirefoxTraceBatchWriter_h
++#define mozilla_dom_FirefoxTraceBatchWriter_h
++
++#include <stdio.h>
++#include <sys/stat.h>
++
++namespace mozilla::dom {
++
++// One scope per IPC batch, not one process-global cache: stop/finalize sees
++// closed files, output-directory changes cannot reuse an old descriptor, and
++// unrelated batches never retain unwritten stdio buffers.
++class FirefoxTraceBatchWriter final {
++ public:
++  enum class Stream : size_t {
++    DOM, XHR, Fetch, WebSocket, Storage, Cookie, Wasm, Script, JS, Count
++  };
++
++  FirefoxTraceBatchWriter() = default;
++  FirefoxTraceBatchWriter(const FirefoxTraceBatchWriter&) = delete;
++  FirefoxTraceBatchWriter& operator=(const FirefoxTraceBatchWriter&) = delete;
++
++  ~FirefoxTraceBatchWriter() {
++    for (FILE* file : files_) {
++      if (file) {
++        fclose(file);
++      }
++    }
++  }
++
++  FILE* Open(Stream aStream, const char* aDirectory, const char* aPath) {
++    size_t index = static_cast<size_t>(aStream);
++    if (index >= static_cast<size_t>(Stream::Count)) {
++      return nullptr;
++    }
++    if (!files_[index]) {
++      mkdir(aDirectory, 0755);
++      files_[index] = fopen(aPath, "a");
++    }
++    return files_[index];
++  }
++
++ private:
++  FILE* files_[static_cast<size_t>(Stream::Count)] = {};
++};
++
++}  // namespace mozilla::dom
++
++#endif  // mozilla_dom_FirefoxTraceBatchWriter_h
+diff --git a/patches/gecko-firefox-trace.patch b/patches/gecko-firefox-trace.patch
+--- a/patches/gecko-firefox-trace.patch
++++ b/patches/gecko-firefox-trace.patch
+@@ -7249,10 +7249,16 @@
+    virtual void OnChannelReceivedMessage(const Message& aMsg) override;
+  
+ diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
+-index aa775fdf14..f46b932c0a 100644
++index aa775fdf14..01ee8bed81 100644
+ --- a/dom/ipc/ContentParent.cpp
+ +++ b/dom/ipc/ContentParent.cpp
+-@@ -26,6 +26,11 @@
++@@ -12,4 +12,5 @@
++ #include "ContentParent.h"
+++#include "FirefoxTraceBatchWriter.h"
++ #include "mozilla/ipc/ProcessUtils.h"
++ #include "mozilla/CmdLineAndEnvUtils.h"
++ #include "BrowserParent.h"
++@@ -26,6 +27,11 @@
+  #include "HandlerServiceParent.h"
+  #include "IHistory.h"
+  #include <cstdint>
+@@ -7264,7 +7270,7 @@
+  #include <map>
+  #include <utility>
+  
+-@@ -234,6 +239,7 @@
++@@ -234,6 +240,7 @@
+  #if defined(MOZ_WIDGET_GTK) || defined(XP_WIN)
+  #  include "nsIconChannel.h"
+  #endif
+@@ -7272,7 +7278,7 @@
+  #include "nsMemoryInfoDumper.h"
+  #include "nsMemoryReporterManager.h"
+  #include "nsOpenURIInFrameParams.h"
+-@@ -251,6 +257,7 @@
++@@ -251,6 +258,7 @@
+  #include "nsWindowWatcher.h"
+  #include "prenv.h"
+  #include "prio.h"
+@@ -7280,7 +7286,7 @@
+  #include "private/pprio.h"
+  #include "xpcpublic.h"
+  #include "nsOpenWindowInfo.h"
+-@@ -422,6 +429,9 @@ extern FileDescriptor CreateAudioIPCConnection();
++@@ -422,6 +430,9 @@ extern FileDescriptor CreateAudioIPCConnection();
+  
+  namespace dom {
+  
+@@ -7290,7 +7296,7 @@
+  LazyLogModule gProcessLog("Process");
+  
+  MOZ_RUNINIT static std::map<RemoteMediaIn, media::MediaCodecsSupported>
+-@@ -1592,6 +1602,9 @@ void ContentParent::Init() {
++@@ -1592,6 +1603,9 @@ void ContentParent::Init() {
+    nsTArray<nsCString> remoteSchemes;
+    MOZ_ALWAYS_SUCCEEDS(io->GetSimpleURIUnknownRemoteSchemes(remoteSchemes));
+    Unused << SendSimpleURIUnknownRemoteSchemes(std::move(remoteSchemes));
+@@ -7300,7 +7306,7 @@
+  }
+  
+  void ContentParent::AsyncSendShutDownMessage() {
+-@@ -5662,6 +5675,1056 @@ mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
++@@ -5662,6 +5676,1071 @@ mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
+    return IPC_OK();
+  }
+  
+@@ -7862,14 +7868,15 @@
+ +  return IPC_OK();
+ +}
+ +
+-+mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceDOMEvent(
+-+    const nsACString& aLine) {
+++static mozilla::ipc::IPCResult FirefoxTraceReceiveDOMEvent(
+++    ContentParent* aParent, const nsACString& aLine,
+++    FirefoxTraceBatchWriter& aWriter) {
+ +  const char* enabled = PR_GetEnv("FIREFOX_TRACE_ENABLE");
+ +  if (!enabled || !enabled[0] || strcmp(enabled, "0") == 0) {
+ +    return IPC_OK();
+ +  }
+ +
+-+  FirefoxTraceMaybePushRuntimeConfigToChild(this);
+++  FirefoxTraceMaybePushRuntimeConfigToChild(aParent);
+ +
+ +  if (!FirefoxTraceRuntimeAllowsEvent(aLine)) {
+ +    return IPC_OK();
+@@ -7971,33 +7978,41 @@
+ +    logDir = "/tmp/firefox-trace";
+ +  }
+ +
+-+  mkdir(logDir, 0755);
+-+
+ +  nsAutoCString path(logDir);
+ +  if (!path.IsEmpty() && path.Last() != '/') {
+ +    path.Append('/');
+ +  }
+++  using Stream = FirefoxTraceBatchWriter::Stream;
+++  Stream stream = Stream::DOM;
+ +  const char* filename = "firefox-dom-%d.jsonl";
+ +  if (isXHR) {
+ +    filename = "firefox-xhr-%d.jsonl";
+++    stream = Stream::XHR;
+ +  } else if (isFetch) {
+ +    filename = "firefox-fetch-%d.jsonl";
+++    stream = Stream::Fetch;
+ +  } else if (isWebSocket) {
+ +    filename = "firefox-websocket-%d.jsonl";
+++    stream = Stream::WebSocket;
+ +  } else if (isStorage) {
+ +    filename = "firefox-storage-%d.jsonl";
+++    stream = Stream::Storage;
+ +  } else if (isCookie) {
+ +    filename = "firefox-cookie-%d.jsonl";
+++    stream = Stream::Cookie;
+ +  } else if (isWasm) {
+ +    filename = "firefox-wasm-%d.jsonl";
+++    stream = Stream::Wasm;
+ +  } else if (isScriptResource) {
+ +    filename = "firefox-script-%d.jsonl";
+++    stream = Stream::Script;
+ +  } else if (isJS) {
+ +    filename = "firefox-js-%d.jsonl";
+++    stream = Stream::JS;
+ +  }
+ +  path.AppendPrintf(filename, getpid());
+ +
+-+  FILE* file = fopen(path.get(), "a");
+++  FILE* file = aWriter.Open(stream, logDir, path.get());
+ +  if (!file) {
+ +    return IPC_OK();
+ +  }
+@@ -8006,19 +8021,25 @@
+ +  FirefoxTraceDecorateRuntimeEventLine(aLine, decoratedLine);
+ +  fwrite(decoratedLine.BeginReading(), 1, decoratedLine.Length(), file);
+ +  fputc('\n', file);
+-+  fclose(file);
+ +  return IPC_OK();
+++}
+++
+++mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceDOMEvent(
+++    const nsACString& aLine) {
+++  FirefoxTraceBatchWriter writer;
+++  return FirefoxTraceReceiveDOMEvent(this, aLine, writer);
+ +}
+ +
+ +mozilla::ipc::IPCResult ContentParent::RecvFirefoxTraceDOMEventBatch(
+ +    const nsACString& aLines) {
+++  FirefoxTraceBatchWriter writer;
+ +  uint32_t start = 0;
+ +  while (start < aLines.Length()) {
+ +    int32_t end = aLines.FindChar('\n', start);
+ +    uint32_t length = end < 0 ? aLines.Length() - start
+ +                              : static_cast<uint32_t>(end) - start;
+ +    if (length) {
+-+      RecvFirefoxTraceDOMEvent(Substring(aLines, start, length));
+++      FirefoxTraceReceiveDOMEvent(this, Substring(aLines, start, length), writer);
+ +    }
+ +    if (end < 0) {
+ +      break;
+@@ -19024,3 +19045,60 @@
+ zV~?>D>}B=}dySoC=h%66f&G@f&fZ{evbWef>>}%Bm)I3{m0f2y*oW*U`-uI8{eykU
+ mzGDBefQ48rmRQR$%V^6OOOhqck^#mc2<Dx*&3p7}$^I`pb+KCj
+ 
++diff --git a/dom/ipc/FirefoxTraceBatchWriter.h b/dom/ipc/FirefoxTraceBatchWriter.h
++new file mode 100644
++--- /dev/null
+++++ b/dom/ipc/FirefoxTraceBatchWriter.h
++@@ -0,0 +1,52 @@
+++/* This Source Code Form is subject to the terms of the Mozilla Public
+++ * License, v. 2.0. If a copy of the MPL was not distributed with this
+++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+++
+++#ifndef mozilla_dom_FirefoxTraceBatchWriter_h
+++#define mozilla_dom_FirefoxTraceBatchWriter_h
+++
+++#include <stdio.h>
+++#include <sys/stat.h>
+++
+++namespace mozilla::dom {
+++
+++// One scope per IPC batch, not one process-global cache: stop/finalize sees
+++// closed files, output-directory changes cannot reuse an old descriptor, and
+++// unrelated batches never retain unwritten stdio buffers.
+++class FirefoxTraceBatchWriter final {
+++ public:
+++  enum class Stream : size_t {
+++    DOM, XHR, Fetch, WebSocket, Storage, Cookie, Wasm, Script, JS, Count
+++  };
+++
+++  FirefoxTraceBatchWriter() = default;
+++  FirefoxTraceBatchWriter(const FirefoxTraceBatchWriter&) = delete;
+++  FirefoxTraceBatchWriter& operator=(const FirefoxTraceBatchWriter&) = delete;
+++
+++  ~FirefoxTraceBatchWriter() {
+++    for (FILE* file : files_) {
+++      if (file) {
+++        fclose(file);
+++      }
+++    }
+++  }
+++
+++  FILE* Open(Stream aStream, const char* aDirectory, const char* aPath) {
+++    size_t index = static_cast<size_t>(aStream);
+++    if (index >= static_cast<size_t>(Stream::Count)) {
+++      return nullptr;
+++    }
+++    if (!files_[index]) {
+++      mkdir(aDirectory, 0755);
+++      files_[index] = fopen(aPath, "a");
+++    }
+++    return files_[index];
+++  }
+++
+++ private:
+++  FILE* files_[static_cast<size_t>(Stream::Count)] = {};
+++};
+++
+++}  // namespace mozilla::dom
+++
+++#endif  // mozilla_dom_FirefoxTraceBatchWriter_h
+diff --git a/tests/test_trace_batch_writer.py b/tests/test_trace_batch_writer.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_trace_batch_writer.py
+@@ -0,0 +1,105 @@
++"""Portable byte-preservation tests for the Gecko patch's batch-local writer."""
++import pathlib
++import shutil
++import subprocess
++import tempfile
++import unittest
++
++ROOT = pathlib.Path(__file__).resolve().parents[1]
++
++
++def patch_header():
++    patch = (ROOT / "patches/gecko-firefox-trace.patch").read_text()
++    name = "dom/ipc/FirefoxTraceBatchWriter.h"
++    section = patch.split(f"diff --git a/{name} b/{name}\n", 1)[1]
++    section = section.split("\ndiff --git ", 1)[0]
++    return "".join(line[1:] for line in section.splitlines(keepends=True)
++                   if line.startswith("+") and not line.startswith("+++"))
++
++
++@unittest.skipUnless(shutil.which("clang++") or shutil.which("c++"), "C++ compiler required")
++class TraceBatchWriterTests(unittest.TestCase):
++    def test_mixed_stream_bytes_closure_rotation_and_failed_open_retry(self):
++        with tempfile.TemporaryDirectory(prefix="trace-batch-writer-") as directory:
++            work = pathlib.Path(directory)
++            (work / "FirefoxTraceBatchWriter.h").write_text(patch_header())
++            (work / "test.cpp").write_text(r'''
++#include "FirefoxTraceBatchWriter.h"
++#include <cassert>
++#include <string>
++#include <type_traits>
++using Writer = mozilla::dom::FirefoxTraceBatchWriter;
++static_assert(!std::is_copy_constructible<Writer>::value);
++int main() {
++  const std::string event = "{\"value\":\"a\xe2\x80\xa8" "b\"}\n";
++  {
++    Writer writer;
++    for (size_t turn = 0; turn < 20; ++turn) {
++      for (size_t slot = 0; slot < 9; ++slot) {
++        std::string path = std::to_string(slot) + ".jsonl";
++        auto stream = static_cast<Writer::Stream>(slot);
++        FILE* file = writer.Open(stream, ".", path.c_str());
++        assert(file && file == writer.Open(stream, ".", path.c_str()));
++        assert(fwrite(event.data(), 1, event.size(), file) == event.size());
++      }
++    }
++    assert(!writer.Open(Writer::Stream::Count, ".", "invalid"));
++    assert(!writer.Open(static_cast<Writer::Stream>(999), ".", "invalid"));
++  }
++  {
++    Writer writer;
++    assert(!writer.Open(Writer::Stream::JS, "missing/child", "missing/child/x"));
++    mkdir("missing", 0755);
++    FILE* file = writer.Open(Writer::Stream::JS, "missing/child", "missing/child/x");
++    assert(file);
++    const char bytes[] = {'a', 0, 'b', '\n'};
++    assert(fwrite(bytes, 1, sizeof(bytes), file) == sizeof(bytes));
++  }
++  {
++    Writer writer;
++    FILE* file = writer.Open(Writer::Stream::JS, "rotated", "rotated/js");
++    assert(file);
++    std::string large(1024 * 1024, 'x');
++    assert(fwrite(large.data(), 1, large.size(), file) == large.size());
++  }
++}
++''')
++            compiler = shutil.which("clang++") or shutil.which("c++")
++            subprocess.run([compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror",
++                            "test.cpp", "-o", "test"], cwd=work, check=True, capture_output=True)
++            subprocess.run([str(work / "test")], cwd=work, check=True, capture_output=True)
++            expected = '{"value":"a\u2028b"}\n'.encode() * 20
++            for slot in range(9):
++                self.assertEqual((work / f"{slot}.jsonl").read_bytes(), expected)
++            self.assertEqual((work / "missing/child/x").read_bytes(), b"a\0b\n")
++            self.assertEqual((work / "rotated/js").read_bytes(), b"x" * (1024 * 1024))
++            self.assertFalse((work / "invalid").exists())
++
++    def test_published_header_matches_local_checkout(self):
++        local = ROOT / "gecko-dev/dom/ipc/FirefoxTraceBatchWriter.h"
++        if local.exists():
++            self.assertEqual(patch_header(), local.read_text())
++
++    def test_runtime_cache_sentinel_is_removed_before_signing(self):
++        for relative in ["tools/install-trace-runtime.sh",
++                         "skills/firefox-trace-agent/tools/install-trace-runtime.sh"]:
++            source = (ROOT / relative).read_text()
++            cleanup = 'find "$RUNTIME_APP" -type f -name .purgecaches -delete'
++            self.assertLess(source.index(cleanup), source.index('codesign --force --deep --sign - "$RUNTIME_APP"'))
++            with tempfile.TemporaryDirectory(prefix="trace-signing-") as directory:
++                work = pathlib.Path(directory)
++                bundle = work / "Nightly space.app"
++                resources = bundle / "Contents/Resources/browser"
++                resources.mkdir(parents=True)
++                (resources / ".purgecaches").write_text("")
++                (resources / "keep.txt").write_text("keep")
++                (work / ".purgecaches").write_text("outside")
++                subprocess.run(["sh", "-c", 'RUNTIME_APP="$1"; ' + cleanup,
++                                "cleanup", str(bundle)], check=True)
++                self.assertFalse((resources / ".purgecaches").exists())
++                self.assertEqual((resources / "keep.txt").read_text(), "keep")
++                self.assertEqual((work / ".purgecaches").read_text(), "outside")
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tools/trace-stop-on-target.py b/tools/trace-stop-on-target.py
+--- a/tools/trace-stop-on-target.py
++++ b/tools/trace-stop-on-target.py
+@@ -110,7 +110,14 @@
+ 
+ 
+ def event_urls(event: dict[str, Any]) -> list[str]:
+-    return [str(event.get(key)) for key in URL_KEYS if event.get(key)]
++    urls = [str(event.get(key)) for key in URL_KEYS if event.get(key)]
++    # document.cookie events have page_url, unlike HTTP cookie events which
++    # have host_url/channel_url. Do not let the initiator page override an
++    # explicit request endpoint: that would stop on unrelated XHR/Fetch calls.
++    if not urls and str(event.get("type") or "").startswith("cookie."):
++        if event.get("page_url"):
++            urls.append(str(event["page_url"]))
++    return urls
+ 
+ 
+ def url_matches(event: dict[str, Any], url_contains: str) -> bool:
+@@ -149,7 +156,7 @@
+                     "field_location": field_key.removesuffix("_fields"),
+                     "event_type": str(event.get("type") or "unknown"),
+                     "request_id": event.get("request_id"),
+-                    "url": event.get("url"),
++                    "url": next(iter(event_urls(event)), None),
+                     "source_file": source_file,
+                 }
+     cookie = top_level_cookie_match(event, targets["cookie_fields"])
+diff --git a/skills/firefox-trace-agent/tools/trace-stop-on-target.py b/skills/firefox-trace-agent/tools/trace-stop-on-target.py
+--- a/skills/firefox-trace-agent/tools/trace-stop-on-target.py
++++ b/skills/firefox-trace-agent/tools/trace-stop-on-target.py
+@@ -110,7 +110,14 @@
+ 
+ 
+ def event_urls(event: dict[str, Any]) -> list[str]:
+-    return [str(event.get(key)) for key in URL_KEYS if event.get(key)]
++    urls = [str(event.get(key)) for key in URL_KEYS if event.get(key)]
++    # document.cookie events have page_url, unlike HTTP cookie events which
++    # have host_url/channel_url. Do not let the initiator page override an
++    # explicit request endpoint: that would stop on unrelated XHR/Fetch calls.
++    if not urls and str(event.get("type") or "").startswith("cookie."):
++        if event.get("page_url"):
++            urls.append(str(event["page_url"]))
++    return urls
+ 
+ 
+ def url_matches(event: dict[str, Any], url_contains: str) -> bool:
+@@ -149,7 +156,7 @@
+                     "field_location": field_key.removesuffix("_fields"),
+                     "event_type": str(event.get("type") or "unknown"),
+                     "request_id": event.get("request_id"),
+-                    "url": event.get("url"),
++                    "url": next(iter(event_urls(event)), None),
+                     "source_file": source_file,
+                 }
+     cookie = top_level_cookie_match(event, targets["cookie_fields"])
+diff --git a/tests/test_trace_stop_on_target.py b/tests/test_trace_stop_on_target.py
+--- a/tests/test_trace_stop_on_target.py
++++ b/tests/test_trace_stop_on_target.py
+@@ -15,6 +15,28 @@
+ 
+ 
+ class TraceStopOnTargetTests(unittest.TestCase):
++    def test_document_cookie_target_uses_page_url_without_widening_network_filter(self):
++        with tempfile.TemporaryDirectory() as raw_dir:
++            targets = {key: set() for key in MODULE.FIELD_KEYS}
++            targets["cookie_fields"] = {"trace_done"}
++            event = {"type": "cookie.set", "key": "trace_done", "value_preview": "ok",
++                     "page_url": "https://fixture.test/target/"}
++            match = MODULE.find_target(pathlib.Path(raw_dir), event, targets,
++                                       "cookie.jsonl", "/target/")
++            self.assertIsNotNone(match)
++            self.assertEqual(match["url"], event["page_url"])
++            structured = dict(event, cookie_fields={"trace_done": "ok"})
++            match = MODULE.find_target(pathlib.Path(raw_dir), structured, targets,
++                                       "cookie.jsonl", "/target/")
++            self.assertEqual(match["url"], event["page_url"])
++            self.assertIsNone(MODULE.find_target(pathlib.Path(raw_dir), event, targets,
++                                               "cookie.jsonl", "/other/"))
++            explicit = dict(event, host_url="https://fixture.test/other/")
++            self.assertFalse(MODULE.url_matches(explicit, "/target/"))
++            network = {"type": "fetch.request", "url": "https://fixture.test/other/",
++                       "page_url": "https://fixture.test/target/"}
++            self.assertFalse(MODULE.url_matches(network, "/target/"))
++
+     def run_watchdog(self, trace_dir, *extra):
+         control = trace_dir / "fake-control.py"
+         finalizer = trace_dir / "fake-finalize.py"
+diff --git a/tools/install-trace-runtime.sh b/tools/install-trace-runtime.sh
+--- a/tools/install-trace-runtime.sh
++++ b/tools/install-trace-runtime.sh
+@@ -101,6 +101,10 @@
+ PY
+ fi
+ 
++# Firefox consumes this development cache sentinel on first launch. Sealing
++# it into a packaged app makes the signature invalid immediately afterwards.
++find "$RUNTIME_APP" -type f -name .purgecaches -delete
++
+ codesign --force --deep --sign - "$RUNTIME_APP"
+ codesign --verify --strict "$TARGET_XUL"
+ codesign --verify --strict "$RUNTIME_APP/Contents/MacOS/libgkcodecs.dylib"
+diff --git a/skills/firefox-trace-agent/tools/install-trace-runtime.sh b/skills/firefox-trace-agent/tools/install-trace-runtime.sh
+--- a/skills/firefox-trace-agent/tools/install-trace-runtime.sh
++++ b/skills/firefox-trace-agent/tools/install-trace-runtime.sh
+@@ -31,6 +31,9 @@
+ done < <(find "$RUNTIME_APP" -type l -print0)
+ find "$RUNTIME_APP" -type f -name .DS_Store -delete
+ 
++# Firefox deletes development cache sentinels on first launch. Do not seal them.
++find "$RUNTIME_APP" -type f -name .purgecaches -delete
++
+ codesign --force --deep --sign - "$RUNTIME_APP"
+ codesign --verify --strict "$TARGET_XUL"
+ codesign --verify --strict "$RUNTIME_APP/Contents/MacOS/libgkcodecs.dylib"

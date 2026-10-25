@@ -1,0 +1,18 @@
+{
+  "runtime/Nightly.app/Contents/MacOS/XUL": {
+    "bytes": 249271008,
+    "sha256": "dbf7f4094aff29a0ab0149ac6f500b2d00ab464931b5f95d134c2939d8082546"
+  },
+  "agent-next.json": {
+    "bytes": 6277,
+    "sha256": "bb31880b9d2bdc6890816c5000bad19bef74596118d442e6c1ddeb0c6152610a"
+  },
+  "verify_local.py": {
+    "bytes": 11666,
+    "sha256": "0d8ebcd471479fe36655b8df0fb6875a7324231761e4a08f0f4f97439f7e9385"
+  },
+  "runs/validated/portable/fixture-manifest.json": {
+    "bytes": 3824,
+    "sha256": "4eb905a5172427a6ab7729c9428951b41d1a3e2e86b88c1c8194f4c410a81571"
+  }
+}

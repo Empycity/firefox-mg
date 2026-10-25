@@ -1,0 +1,9 @@
+{
+  "browser_pid": 3464,
+  "watchdog_pid": 3465,
+  "headless": false,
+  "url": "http://127.0.0.1:58584/vm-stress.html",
+  "trace": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-fixed/trace",
+  "started_at": 1792772166.84697,
+  "process_observation": " 3464 /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/runtime/Nightly.app/Contents/MacOS/firefox\n"
+}

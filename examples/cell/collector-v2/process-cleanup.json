@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "ownership_source": "Only the seven runs recorded in portable-receipts.json",
+  "owned_process_groups": [
+    9630,
+    9631,
+    22196,
+    22197,
+    30624,
+    30625,
+    32133,
+    32134,
+    34046,
+    34047,
+    48509,
+    48516,
+    66886,
+    66887
+  ],
+  "remaining_members": [],
+  "not_touched": [
+    "runs/treatment (not created by this task)"
+  ]
+}

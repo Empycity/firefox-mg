@@ -1,0 +1,47 @@
+{
+ "extracted_at_unix": 1792819030,
+ "source": "traces/test (ui-20261024-131154, console default full-chain, runtime=Ai_MCP v2)",
+ "cookies": [
+  {
+   "name": "MAID",
+   "host": "www.cell.com",
+   "value": "gku99Q5zgPCCIN2lVEK+Ww==",
+   "path": "/",
+   "expiry": 1818738817907,
+   "secure": true,
+   "httpOnly": true,
+   "sameSite": 256
+  },
+  {
+   "name": "MACHINE_LAST_SEEN",
+   "host": "www.cell.com",
+   "value": "2026-10-23T22%3A13%3A37.743-07%3A00",
+   "path": "/",
+   "expiry": 1818738817907,
+   "secure": true,
+   "httpOnly": true,
+   "sameSite": 256
+  },
+  {
+   "name": "cf_clearance",
+   "host": ".cell.com",
+   "value": "mCSz_6hr.1MOXR4f_INjAbkhuWC.hnl0POogZ4wQJ1A-1792818821-1.2.1.1-ycyq0b1uw2VJOTQ7Ez._d.kdO7YmoVPp0oNcwu5tcztWjeMY2tBWUbIxAbdXwpFpaW5uLX3_BmW8QUl7yBIsjKITMUR_ERnxlJML6FpJXyziVPPN1EKW4NCrbldbeMaOJWHRlgxTdJ97ewY_vG2INVlBqsxB5kmuvZ27j9MTtAPnpx.OnQGURELhB9JESazfgLYlgzvsN4PGjJg89zn3.U9fanir7yk_XF_ggn5bHh3AjrxrHMW1X5LPoQPaqVZHUBFufuAKpVL9gB.PqOO_kJckfmzNqqglNSpM7Xla887bcDMBG_v69FDUzCI9q9qzQgYxQhxb.kVvmL9XwkspgXkWUn7RGC.c6Y54s5WrBnyAC4DvgryOxqJRNtWenTbkTFL04nN0QoCJ3SX315J5etKdm0.5TGxkifjOCGMjWIwiQxwWn5XkA.S.2NrZQOqpBa2OG1M5r7UyFhax7LApuSdZyaDdl_CHD9UhR2Wta3uDZQKkWGUqfZWRBlpjPTDl6eDXWa0zqk1GKzj9xJT9DA",
+   "path": "/",
+   "expiry": 1824354821881,
+   "secure": true,
+   "httpOnly": true,
+   "sameSite": 0
+  },
+  {
+   "name": "OptanonConsent",
+   "host": ".cell.com",
+   "value": "isGpcEnabled=0&datestamp=Sat+Oct+24+2026+13%3A14%3A27+GMT%2B0800+(China+Standard+Time)&version=202505.2.0&browserGpcFlag=0&isIABGlobal=false&hosts=&consentId=194fdbdb-6653-4b63-be03-fe6416e71bde&interactionCount=1&isAnonUser=1&landingPath=https%3A%2F%2Fwww.cell.com%2F&groups=1%3A1%2C2%3A0%2C3%3A0%2C4%3A0",
+   "path": "/",
+   "expiry": 1824354867000,
+   "secure": false,
+   "httpOnly": false,
+   "sameSite": 1
+  }
+ ],
+ "cf_clearance_len": 597
+}

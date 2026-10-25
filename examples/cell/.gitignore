@@ -1,0 +1,26 @@
+/runtime/
+/profiles/
+/verification/baseline/
+/verification/modified/
+/verification/rollback-drill/
+/verification/native-smoke*/profile/
+/verification/native-smoke*/trace/
+/verification/trace-batch-replay
+/verification/link-check
+
+# Collector regression runtime and hashed rollback snapshots.
+/collector-v2/runtime/
+/collector-v2/baseline/
+/collector-v2/modified/
+/collector-v2/rollback-drill/
+/collector-v2/runs/*/profile/
+/collector-v2/runs/*/trace/
+
+# Session-heavy artifacts — never sync (user directive 2026-10-25).
+/traces/
+/runtime-v2/
+/collector-v2/runs/
+.DS_Store
+*.pid
+/node-env/harness-log.json
+/node-env/wset-fns.log

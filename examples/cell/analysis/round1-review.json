@@ -1,0 +1,675 @@
+{
+  "schema": "cell.trace_review.v1",
+  "source": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/traces/round1",
+  "evidence_complete": false,
+  "health_counts": {
+    "dom_bom_events": 3304,
+    "raw_events": 353508,
+    "runtime_config_acks": 11,
+    "target_field_matches": 0,
+    "target_fields_without_complete_artifact": 0,
+    "trace_degraded": 23,
+    "trace_suppressed": 0,
+    "vm_window_artifacts": 0
+  },
+  "incomplete_reasons": [
+    "ipc:event_budget",
+    "js:boundary_buffer_overwrite",
+    "environment:value_capture_incomplete"
+  ],
+  "loss_reason_counts": {
+    "ipc:event_budget": 21,
+    "js:boundary_buffer_overwrite": 2,
+    "environment:value_capture_incomplete": 1
+  },
+  "js_event_counts": {
+    "js.call.enter": 175037,
+    "js.call.return": 175045,
+    "trace.degraded": 2
+  },
+  "js_pid_counts": {
+    "11969": 105814,
+    "11971": 234929,
+    "11972": 9341
+  },
+  "script_roles": [
+    [
+      "challenge-iframe",
+      234928
+    ],
+    [
+      "top-level-challenge",
+      104256
+    ],
+    [
+      "https://www.cell.com/wro/d49d5e5b27dcdff558fd6d8ddab1268f8e7fffbc~product.js",
+      4732
+    ],
+    [
+      "https://www.cell.com/",
+      2386
+    ],
+    [
+      "https://www.cell.com/products/marlin/cell/releasedAssets/js/selected.bundle-f21758fdb7322bc31f7c.js",
+      1946
+    ],
+    [
+      "https://challenges.cloudflare.com/turnstile/v0/b/d2d3316b729e/api.js",
+      1554
+    ],
+    [
+      "https://cdn.cookielaw.org/scripttemplates/otSDKStub.js",
+      242
+    ],
+    [
+      "https://www.cell.com/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js",
+      38
+    ]
+  ],
+  "hot_functions": [
+    {
+      "script_role": "challenge-iframe",
+      "function": "ds",
+      "events": 61017
+    },
+    {
+      "script_role": "challenge-iframe",
+      "function": "F",
+      "events": 43373
+    },
+    {
+      "script_role": "challenge-iframe",
+      "function": "d",
+      "events": 42586
+    },
+    {
+      "script_role": "top-level-challenge",
+      "function": "W",
+      "events": 32189
+    },
+    {
+      "script_role": "top-level-challenge",
+      "function": "P",
+      "events": 28111
+    },
+    {
+      "script_role": "top-level-challenge",
+      "function": "a5",
+      "events": 11735
+    },
+    {
+      "script_role": "challenge-iframe",
+      "function": "a6",
+      "events": 10725
+    },
+    {
+      "script_role": "top-level-challenge",
+      "function": "Pc",
+      "events": 8382
+    },
+    {
+      "script_role": "challenge-iframe",
+      "function": "Jx",
+      "events": 7982
+    },
+    {
+      "script_role": "challenge-iframe",
+      "function": "dy",
+      "events": 7093
+    },
+    {
+      "script_role": "top-level-challenge",
+      "function": "anonymous",
+      "events": 6733
+    },
+    {
+      "script_role": "challenge-iframe",
+      "function": "df",
+      "events": 6701
+    },
+    {
+      "script_role": "challenge-iframe",
+      "function": "dt",
+      "events": 6688
+    },
+    {
+      "script_role": "challenge-iframe",
+      "function": "J7",
+      "events": 6614
+    },
+    {
+      "script_role": "challenge-iframe",
+      "function": "dV",
+      "events": 4420
+    }
+  ],
+  "request_timelines": [
+    {
+      "pid": 11952,
+      "request_id": "fetch_1",
+      "events": [
+        {
+          "type": "fetch.request",
+          "ts_us": 1792687285545806,
+          "body_length": -1,
+          "source": "firefox-fetch-11952.jsonl:1"
+        },
+        {
+          "type": "fetch.response",
+          "ts_us": 1792687286835748,
+          "status": 204,
+          "body_size": -1,
+          "source": "firefox-fetch-11952.jsonl:5"
+        },
+        {
+          "type": "fetch.done",
+          "ts_us": 1792687286835887,
+          "source": "firefox-fetch-11952.jsonl:6"
+        }
+      ],
+      "endpoint": "brunhild.challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/i/a4e9f2ce7c15c89a"
+    },
+    {
+      "pid": 11952,
+      "request_id": "fetch_2",
+      "events": [
+        {
+          "type": "fetch.request",
+          "ts_us": 1792687285641012,
+          "body_length": -1,
+          "source": "firefox-fetch-11952.jsonl:2"
+        },
+        {
+          "type": "fetch.response",
+          "ts_us": 1792687286030460,
+          "status": 401,
+          "body_size": 1,
+          "source": "firefox-fetch-11952.jsonl:3"
+        },
+        {
+          "type": "fetch.done",
+          "ts_us": 1792687286030668,
+          "source": "firefox-fetch-11952.jsonl:4"
+        }
+      ],
+      "endpoint": "challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/pat/a4e9f2ce7c15c89a"
+    },
+    {
+      "pid": 11971,
+      "request_id": "fetch_3",
+      "events": [
+        {
+          "type": "fetch.call",
+          "ts_us": 1792687291241818,
+          "body_length": -1,
+          "origin_call_id": "call_1431759",
+          "source": "firefox-fetch-11952.jsonl:7"
+        },
+        {
+          "type": "fetch.request",
+          "ts_us": 1792687291242805,
+          "body_length": -1,
+          "source": "firefox-fetch-11952.jsonl:8"
+        },
+        {
+          "type": "fetch.response",
+          "ts_us": 1792687291242891,
+          "status": 0,
+          "body_size": -1,
+          "source": "firefox-fetch-11952.jsonl:9"
+        },
+        {
+          "type": "fetch.done",
+          "ts_us": 1792687291242960,
+          "source": "firefox-fetch-11952.jsonl:10"
+        }
+      ]
+    },
+    {
+      "pid": 11969,
+      "request_id": "xhr_1",
+      "events": [
+        {
+          "type": "xhr.open",
+          "ts_us": 1792687268581306,
+          "origin_call_id": "call_29126",
+          "source": "firefox-xhr-11952.jsonl:1"
+        },
+        {
+          "type": "xhr.send",
+          "ts_us": 1792687269104032,
+          "origin_call_id": "call_29126",
+          "source": "firefox-xhr-11952.jsonl:2"
+        },
+        {
+          "type": "xhr.response",
+          "ts_us": 1792687272599381,
+          "status": 200,
+          "source": "firefox-xhr-11952.jsonl:3"
+        }
+      ],
+      "endpoint": "www.cell.com/cdn-cgi/challenge-platform/h/b/fo/1716740618:1792685119:JD-QgWBk_OGrcZxPyM1spUFAxT_uVgC_AsVSTzmSbFA"
+    },
+    {
+      "pid": 11971,
+      "request_id": "xhr_1",
+      "events": [
+        {
+          "type": "xhr.open",
+          "ts_us": 1792687276650661,
+          "origin_call_id": "call_28120",
+          "source": "firefox-xhr-11952.jsonl:4"
+        },
+        {
+          "type": "xhr.send",
+          "ts_us": 1792687277323876,
+          "origin_call_id": "call_28120",
+          "source": "firefox-xhr-11952.jsonl:5"
+        },
+        {
+          "type": "xhr.response",
+          "ts_us": 1792687285169554,
+          "status": 200,
+          "source": "firefox-xhr-11952.jsonl:6"
+        }
+      ],
+      "endpoint": "challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/fo/810208526:1792685124:PSUWJP0j665dBYkN9F_4cCpzKMfg-Puj2zQs3Unve3M"
+    },
+    {
+      "pid": 11971,
+      "request_id": "xhr_2",
+      "events": [
+        {
+          "type": "xhr.open",
+          "ts_us": 1792687303121783,
+          "origin_call_id": "call_2334898",
+          "source": "firefox-xhr-11952.jsonl:7"
+        },
+        {
+          "type": "xhr.send",
+          "ts_us": 1792687313654301,
+          "origin_call_id": "call_2334898",
+          "source": "firefox-xhr-11952.jsonl:8"
+        },
+        {
+          "type": "xhr.response",
+          "ts_us": 1792687314678120,
+          "status": 200,
+          "source": "firefox-xhr-11952.jsonl:9"
+        }
+      ],
+      "endpoint": "challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/fo/810208526:1792685124:PSUWJP0j665dBYkN9F_4cCpzKMfg-Puj2zQs3Unve3M"
+    },
+    {
+      "pid": 11969,
+      "request_id": "xhr_2",
+      "events": [
+        {
+          "type": "xhr.open",
+          "ts_us": 1792687314870754,
+          "origin_call_id": "call_486439",
+          "source": "firefox-xhr-11952.jsonl:10"
+        },
+        {
+          "type": "xhr.send",
+          "ts_us": 1792687316255731,
+          "origin_call_id": "call_486439",
+          "source": "firefox-xhr-11952.jsonl:11"
+        },
+        {
+          "type": "xhr.response",
+          "ts_us": 1792687317070962,
+          "status": 200,
+          "source": "firefox-xhr-11952.jsonl:12"
+        }
+      ],
+      "endpoint": "www.cell.com/cdn-cgi/challenge-platform/h/b/fo/1716740618:1792685119:JD-QgWBk_OGrcZxPyM1spUFAxT_uVgC_AsVSTzmSbFA"
+    },
+    {
+      "pid": 11972,
+      "request_id": "xhr_1",
+      "events": [
+        {
+          "type": "xhr.open",
+          "ts_us": 1792687320740537,
+          "origin_call_id": "call_1935",
+          "source": "firefox-xhr-11952.jsonl:13"
+        },
+        {
+          "type": "xhr.send",
+          "ts_us": 1792687320745617,
+          "origin_call_id": "call_2095",
+          "source": "firefox-xhr-11952.jsonl:14"
+        },
+        {
+          "type": "xhr.response",
+          "ts_us": 1792687321417644,
+          "status": 200,
+          "source": "firefox-xhr-11952.jsonl:15"
+        }
+      ],
+      "endpoint": "cdn.cookielaw.org/consent/dada9834-04e2-4bcd-b5ba-cae44d498dfa/dada9834-04e2-4bcd-b5ba-cae44d498dfa.json"
+    },
+    {
+      "pid": 11972,
+      "request_id": "xhr_2",
+      "events": [
+        {
+          "type": "xhr.open",
+          "ts_us": 1792687321460493,
+          "origin_call_id": "call_7026",
+          "source": "firefox-xhr-11952.jsonl:16"
+        },
+        {
+          "type": "xhr.send",
+          "ts_us": 1792687321476199,
+          "origin_call_id": "call_7138",
+          "source": "firefox-xhr-11952.jsonl:17"
+        },
+        {
+          "type": "xhr.response",
+          "ts_us": 1792687322353188,
+          "status": 200,
+          "source": "firefox-xhr-11952.jsonl:20"
+        }
+      ],
+      "endpoint": "geolocation.onetrust.com/cookieconsentpub/v1/geo/location"
+    },
+    {
+      "pid": 11972,
+      "request_id": "xhr_3",
+      "events": [
+        {
+          "type": "xhr.open",
+          "ts_us": 1792687321620668,
+          "origin_call_id": "call_7772",
+          "source": "firefox-xhr-11952.jsonl:18"
+        },
+        {
+          "type": "xhr.send",
+          "ts_us": 1792687321642151,
+          "origin_call_id": "call_7892",
+          "source": "firefox-xhr-11952.jsonl:19"
+        },
+        {
+          "type": "xhr.response",
+          "ts_us": 1792687322458645,
+          "status": 200,
+          "source": "firefox-xhr-11952.jsonl:21"
+        }
+      ],
+      "endpoint": "www.cell.com/ssoSessionCheck"
+    }
+  ],
+  "origin_chains": [
+    {
+      "pid": 11971,
+      "origin_call_id": "call_1431759",
+      "observed": null,
+      "retained_ancestor_depth": 0,
+      "missing_ancestor": "call_1431759"
+    },
+    {
+      "pid": 11969,
+      "origin_call_id": "call_29126",
+      "observed": null,
+      "retained_ancestor_depth": 0,
+      "missing_ancestor": "call_29126"
+    },
+    {
+      "pid": 11971,
+      "origin_call_id": "call_28120",
+      "observed": null,
+      "retained_ancestor_depth": 0,
+      "missing_ancestor": "call_28120"
+    },
+    {
+      "pid": 11971,
+      "origin_call_id": "call_2334898",
+      "observed": null,
+      "retained_ancestor_depth": 0,
+      "missing_ancestor": "call_2334898"
+    },
+    {
+      "pid": 11969,
+      "origin_call_id": "call_486439",
+      "observed": null,
+      "retained_ancestor_depth": 0,
+      "missing_ancestor": "call_486439"
+    },
+    {
+      "pid": 11972,
+      "origin_call_id": "call_1935",
+      "observed": {
+        "pid": 11972,
+        "call_id": "call_1935",
+        "parent_call_id": "call_1847",
+        "function_name": "nrWrapper",
+        "js_mode": "boundary",
+        "target_match": false,
+        "script_role": "https://www.cell.com/",
+        "source": "firefox-js-11952.jsonl:342076"
+      },
+      "retained_ancestor_depth": 6,
+      "missing_ancestor": null
+    },
+    {
+      "pid": 11972,
+      "origin_call_id": "call_2095",
+      "observed": {
+        "pid": 11972,
+        "call_id": "call_2095",
+        "parent_call_id": "call_1847",
+        "function_name": "nrWrapper",
+        "js_mode": "boundary",
+        "target_match": false,
+        "script_role": "https://www.cell.com/",
+        "source": "firefox-js-11952.jsonl:342142"
+      },
+      "retained_ancestor_depth": 6,
+      "missing_ancestor": null
+    },
+    {
+      "pid": 11972,
+      "origin_call_id": "call_7026",
+      "observed": {
+        "pid": 11972,
+        "call_id": "call_7026",
+        "parent_call_id": "call_7002",
+        "function_name": "nrWrapper",
+        "js_mode": "boundary",
+        "target_match": false,
+        "script_role": "https://www.cell.com/",
+        "source": "firefox-js-11952.jsonl:346426"
+      },
+      "retained_ancestor_depth": 4,
+      "missing_ancestor": "call_6834"
+    },
+    {
+      "pid": 11972,
+      "origin_call_id": "call_7138",
+      "observed": {
+        "pid": 11972,
+        "call_id": "call_7138",
+        "parent_call_id": "call_7002",
+        "function_name": "nrWrapper",
+        "js_mode": "boundary",
+        "target_match": false,
+        "script_role": "https://www.cell.com/",
+        "source": "firefox-js-11952.jsonl:346466"
+      },
+      "retained_ancestor_depth": 4,
+      "missing_ancestor": "call_6834"
+    },
+    {
+      "pid": 11972,
+      "origin_call_id": "call_7772",
+      "observed": {
+        "pid": 11972,
+        "call_id": "call_7772",
+        "parent_call_id": "call_7757",
+        "function_name": "nrWrapper",
+        "js_mode": "boundary",
+        "target_match": false,
+        "script_role": "https://www.cell.com/",
+        "source": "firefox-js-11952.jsonl:346961"
+      },
+      "retained_ancestor_depth": 3,
+      "missing_ancestor": "call_7601"
+    },
+    {
+      "pid": 11972,
+      "origin_call_id": "call_7892",
+      "observed": {
+        "pid": 11972,
+        "call_id": "call_7892",
+        "parent_call_id": "call_7757",
+        "function_name": "nrWrapper",
+        "js_mode": "boundary",
+        "target_match": false,
+        "script_role": "https://www.cell.com/",
+        "source": "firefox-js-11952.jsonl:346997"
+      },
+      "retained_ancestor_depth": 3,
+      "missing_ancestor": "call_7601"
+    }
+  ],
+  "cookie_milestones": [
+    {
+      "type": "cookie.http_set",
+      "key": "cf_clearance",
+      "ts_us": 1792687316909454,
+      "source": "firefox-cookie-11952.jsonl:4",
+      "outcome": "accepted"
+    },
+    {
+      "type": "cookie.set",
+      "key": "cf_chl_rc_ni",
+      "ts_us": 1792687317063767,
+      "source": "firefox-cookie-11952.jsonl:6",
+      "outcome": null
+    },
+    {
+      "type": "cookie.http_set",
+      "key": "JSESSIONID",
+      "ts_us": 1792687317423172,
+      "source": "firefox-cookie-11952.jsonl:7",
+      "outcome": "accepted"
+    },
+    {
+      "type": "cookie.http_set",
+      "key": "MAID",
+      "ts_us": 1792687317424861,
+      "source": "firefox-cookie-11952.jsonl:8",
+      "outcome": "accepted"
+    },
+    {
+      "type": "cookie.http_set",
+      "key": "MACHINE_LAST_SEEN",
+      "ts_us": 1792687317425329,
+      "source": "firefox-cookie-11952.jsonl:9",
+      "outcome": "accepted"
+    },
+    {
+      "type": "cookie.http_set",
+      "key": "PF",
+      "ts_us": 1792687318792541,
+      "source": "firefox-cookie-11952.jsonl:10",
+      "outcome": "accepted"
+    }
+  ],
+  "script_resources": [
+    {
+      "url": "https://www.cell.com/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=a4e9f298eb5251f0",
+      "artifact_stored": false,
+      "raw_capture_enabled": false,
+      "raw_size": 0,
+      "raw_captured_size": 0,
+      "source": "firefox-script-11952.jsonl:1"
+    },
+    {
+      "url": "https://www.cell.com/wro/d49d5e5b27dcdff558fd6d8ddab1268f8e7fffbc~product.js",
+      "artifact_stored": false,
+      "raw_capture_enabled": false,
+      "raw_size": 0,
+      "raw_captured_size": 0,
+      "source": "firefox-script-11952.jsonl:2"
+    },
+    {
+      "url": "https://cdn.cookielaw.org/scripttemplates/otSDKStub.js",
+      "artifact_stored": false,
+      "raw_capture_enabled": false,
+      "raw_size": 0,
+      "raw_captured_size": 0,
+      "source": "firefox-script-11952.jsonl:3"
+    },
+    {
+      "url": "https://www.cell.com/products/marlin/cell/releasedAssets/js/selected.bundle-f21758fdb7322bc31f7c.js",
+      "artifact_stored": false,
+      "raw_capture_enabled": false,
+      "raw_size": 0,
+      "raw_captured_size": 0,
+      "source": "firefox-script-11952.jsonl:4"
+    },
+    {
+      "url": "https://www.cell.com/products/marlin/cell/releasedAssets/js/main.bundle-8dd566a1db12610e99e7.js",
+      "artifact_stored": false,
+      "raw_capture_enabled": false,
+      "raw_size": 0,
+      "raw_captured_size": 0,
+      "source": "firefox-script-11952.jsonl:5"
+    },
+    {
+      "url": "https://www.cell.com/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js",
+      "artifact_stored": false,
+      "raw_capture_enabled": false,
+      "raw_size": 0,
+      "raw_captured_size": 0,
+      "source": "firefox-script-11952.jsonl:6"
+    }
+  ],
+  "source_hashes": {
+    "firefox-control-acks.jsonl": {
+      "bytes": 4030,
+      "sha256": "9ca82e2c58b82ee14b4e30036530c730369259b47896d2f7bb3f6ad959ca23c3"
+    },
+    "firefox-control.jsonl": {
+      "bytes": 512,
+      "sha256": "65fe1ebecce967aaa2e3f331289f74b33192af2a90b3bc92cf29fe43c578b14f"
+    },
+    "firefox-cookie-11952.jsonl": {
+      "bytes": 14001,
+      "sha256": "34e90c24c0eacde7cf4447a2e635c1a9b4b29c3ca6550586bec07b174bb2edf1"
+    },
+    "firefox-dom-11952.jsonl": {
+      "bytes": 1431977,
+      "sha256": "ac141954a861906b60ed5739f9b6104207ca07c8da0b19c219ce50e68f95862f"
+    },
+    "firefox-fetch-11952.jsonl": {
+      "bytes": 10318,
+      "sha256": "11e98c79eed695acda42b1a27b4436a80dd3cf66908689621e29939c8eec590b"
+    },
+    "firefox-js-11952.jsonl": {
+      "bytes": 200993170,
+      "sha256": "febf90bb85b4403cb61f0877ef4effb22e9c2e2b9358477224a13a6a52cc8823"
+    },
+    "firefox-script-11952.jsonl": {
+      "bytes": 6500,
+      "sha256": "c6a20b61cccb6238bc27dfda3f90f99034375802b38f7fb0196c7d802aa98e1e"
+    },
+    "firefox-storage-11952.jsonl": {
+      "bytes": 3270,
+      "sha256": "fcca774eb65ecfe91852ef5d65296f41661b61be1f5ae84249c3918122d647cd"
+    },
+    "firefox-xhr-11952.jsonl": {
+      "bytes": 17067,
+      "sha256": "2edd3f265319e569e1436b826942199b6cc1d09a86807bcbb783918e7fc9a02c"
+    }
+  },
+  "constraints": [
+    "HTTP statuses are observations, not an application-success proof.",
+    "Server-issued cookies are state milestones, not JS producer returns.",
+    "A static-fallback script is not a proved VM identity.",
+    "Missing JS values and source artifacts cannot be recovered from this light trace."
+  ]
+}

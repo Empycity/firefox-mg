@@ -1,0 +1,21 @@
+{
+  "removed_owned_paths": [
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/rollback-drill",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/rollback-drill-final",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/link-check",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/trace-batch-replay",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/gecko-dev/obj-aarch64-apple-darwin27.0.0",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke/profile",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-fixed/profile",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-fixed/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-final/profile",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-final/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-release/profile"
+  ],
+  "original_round1_sources_unchanged": true,
+  "retained_local_fixture_files": 13,
+  "superseded_handoff_files": 0,
+  "original_runtime_overwritten": false,
+  "source_build_outputs_retained_for_rebuild": true
+}

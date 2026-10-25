@@ -1,0 +1,176 @@
+{
+  "url": "https://www.cell.com/cdn-cgi/challenge-platform/h/b/fo/1237140664:1792912206:MKChrArAadySXn40OLI82ECwzcjwMUSztxEl4Ubk_nE/a4ff7beed88268ae/vqBwlHnpF.sNFy7ozans9npyDBa3FEa70PxC8mAyckA-1792913092-1.2.1.1-AHG_jHvRJ4oGg6CpgVjilb86gackLj1H.tykIonyb24ATnFAZ6fZYKlHGUhlas5D",
+  "method": "POST",
+  "resourceType": "xhr",
+  "status": 200,
+  "statusText": "",
+  "failure": null,
+  "requestHeaders": {
+    "accept": "*/*",
+    "content-type": "text/plain;charset=UTF-8",
+    "cookie": "OptanonConsent=consentId=e18bf324-f4d2-4d7f-aa22-0181653efa4a&datestamp=Sun+Oct+25+2026+15%3A24%3A52+GMT%2B0800+(%E4%B8%AD%E5%9B%BD%E6%A0%87%E5%87%86%E6%97%B6%E9%97%B4)&version=202505.2.0&interactionCount=0&isAnonUser=1",
+    "origin": "https://www.cell.com",
+    "referer": "https://www.cell.com/",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+    "cf-chl": "vqBwlHnpF.sNFy7ozans9npyDBa3FEa70PxC8mAyckA-1792913092-1.2.1.1-AHG_jHvRJ4oGg6CpgVjilb86gackLj1H.tykIonyb24ATnFAZ6fZYKlHGUhlas5D",
+    "cf-chl-ra": "0",
+    "sec-ch-ua": "\"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"156\", \"Google Chrome\";v=\"156\"",
+    "sec-ch-ua-arch": "\"arm\"",
+    "sec-ch-ua-bitness": "\"64\"",
+    "sec-ch-ua-full-version": "\"156.0.8078.47\"",
+    "sec-ch-ua-full-version-list": "\"Not:A-Brand\";v=\"8.0.0.0\", \"Chromium\";v=\"156.0.8078.47\", \"Google Chrome\";v=\"156.0.8078.47\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-model": "\"\"",
+    "sec-ch-ua-platform": "\"macOS\"",
+    "sec-ch-ua-platform-version": "\"27.0.1\""
+  },
+  "requestHeadersArray": [
+    {
+      "name": "Accept",
+      "value": "*/*"
+    },
+    {
+      "name": "Content-Type",
+      "value": "text/plain;charset=UTF-8"
+    },
+    {
+      "name": "Cookie",
+      "value": "OptanonConsent=consentId=e18bf324-f4d2-4d7f-aa22-0181653efa4a&datestamp=Sun+Oct+25+2026+15%3A24%3A52+GMT%2B0800+(%E4%B8%AD%E5%9B%BD%E6%A0%87%E5%87%86%E6%97%B6%E9%97%B4)&version=202505.2.0&interactionCount=0&isAnonUser=1"
+    },
+    {
+      "name": "Origin",
+      "value": "https://www.cell.com"
+    },
+    {
+      "name": "Referer",
+      "value": "https://www.cell.com/"
+    },
+    {
+      "name": "User-Agent",
+      "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
+    },
+    {
+      "name": "cf-chl",
+      "value": "vqBwlHnpF.sNFy7ozans9npyDBa3FEa70PxC8mAyckA-1792913092-1.2.1.1-AHG_jHvRJ4oGg6CpgVjilb86gackLj1H.tykIonyb24ATnFAZ6fZYKlHGUhlas5D"
+    },
+    {
+      "name": "cf-chl-ra",
+      "value": "0"
+    },
+    {
+      "name": "sec-ch-ua",
+      "value": "\"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"156\", \"Google Chrome\";v=\"156\""
+    },
+    {
+      "name": "sec-ch-ua-arch",
+      "value": "\"arm\""
+    },
+    {
+      "name": "sec-ch-ua-bitness",
+      "value": "\"64\""
+    },
+    {
+      "name": "sec-ch-ua-full-version",
+      "value": "\"156.0.8078.47\""
+    },
+    {
+      "name": "sec-ch-ua-full-version-list",
+      "value": "\"Not:A-Brand\";v=\"8.0.0.0\", \"Chromium\";v=\"156.0.8078.47\", \"Google Chrome\";v=\"156.0.8078.47\""
+    },
+    {
+      "name": "sec-ch-ua-mobile",
+      "value": "?0"
+    },
+    {
+      "name": "sec-ch-ua-model",
+      "value": "\"\""
+    },
+    {
+      "name": "sec-ch-ua-platform",
+      "value": "\"macOS\""
+    },
+    {
+      "name": "sec-ch-ua-platform-version",
+      "value": "\"27.0.1\""
+    }
+  ],
+  "responseHeaders": {
+    "alt-svc": "h3=\":443\"; ma=86400",
+    "cf-chl-gen": "aTD/DUyMZBI8aCbCXFUWIVvJaGEZdoHGixcSgVXGN0k=$hyQawxCrjZx2bMx0nOpxPg==",
+    "cf-ray": "a4ff7bf5e95f68ae-LAX",
+    "content-encoding": "br",
+    "content-type": "text/plain; charset=UTF-8",
+    "date": "Sun, 25 Oct 2026 07:24:54 GMT",
+    "server": "cloudflare",
+    "timing-allow-origin": "https://www.cell.com"
+  },
+  "responseHeadersArray": [
+    {
+      "name": "alt-svc",
+      "value": "h3=\":443\"; ma=86400"
+    },
+    {
+      "name": "cf-chl-gen",
+      "value": "aTD/DUyMZBI8aCbCXFUWIVvJaGEZdoHGixcSgVXGN0k=$hyQawxCrjZx2bMx0nOpxPg=="
+    },
+    {
+      "name": "cf-ray",
+      "value": "a4ff7bf5e95f68ae-LAX"
+    },
+    {
+      "name": "content-encoding",
+      "value": "br"
+    },
+    {
+      "name": "content-type",
+      "value": "text/plain; charset=UTF-8"
+    },
+    {
+      "name": "date",
+      "value": "Sun, 25 Oct 2026 07:24:54 GMT"
+    },
+    {
+      "name": "server",
+      "value": "cloudflare"
+    },
+    {
+      "name": "timing-allow-origin",
+      "value": "https://www.cell.com"
+    }
+  ],
+  "setCookieHeaders": [],
+  "query": {
+    "queryString": "",
+    "params": {},
+    "entries": []
+  },
+  "requestBody": {
+    "available": true,
+    "size": 2338,
+    "encoding": "utf8",
+    "text": "SmURVg6z3mS-eNQKcdL60tzPVeb40Qgx9GvltQNlC79WKG7Ptr-IuvOvd0p1ZqUrwUK-FdttmTs44A+GA5Y8ciMh99i-3nxt8evvgBCVlKXRUil+Nx5d+LnD2E$2X8HXkdE52laEIoDNE1lhHsu3H8Ux1r6OW9dbHRBDNloxsgARVccHVbvcFCST9BkkkJakokC9SvVU3Qsy$hZY3lO9FaPPmhltv6Dss7XexpHmVFOh2kUDbVmE2ChdKrxx4Zwe3Yd8O-Xc9$oCOQiP1t4iN5l5bhmuGQaX2Y4Su1CNNmHvkGUWObcXIZ8G5zoCVc2FKFSrUKP7mNEjb8DOh+ae2upvZ9x$zsT5MkEg8N1I+cJy7bZkr8SbL6IXR5G53lATaCwehUZ+C4FLI+MHARm4Uzo7mdd8G4Rt6SMCJV++80Mo5WRlzWO81PymezRXGMzPLT2P20nonbhcX$YEEAW-0$6CodDqmsqYbgd+1ARlAbNoBwyaKp2OmWjPp$JXt-x9ZFCo-nOCC-rzSzt9LTtn7juH36JbImnVpFpqORdPo3vh5d4g6XRmwcqmpwxWLroQYt9ieWOeUa3Z1A7al0KC-ZELIOTGBBkPCzd$btvY6cYHjnp9rQDZ6hNW$Bm$2q+DpAHDZj4EFRrcrH-bIRnQCVhdN$I-xX8YcNxW1J5kLi5$bpY93tsCw3wKYXpE4AeHTwAY5tINpBwmu5Gm8tIgIQBeHqq1xA47IpT4NIn+g6HP3yXXgDX7A+EbqXu060BYLnDJqcq8Ou-jpbJNdWzVCMAgQY208-Jwlq3iPI2BRZoiTsJFbqnlDQKZ2tWGeYQ$6dmPVQz-6ShbdqAjwWxDH999ek$pEvpAtEclxGZToTMK0GYBWv0ZYxAyMK9WTJ-UNd4$8oKQsWyzuGkP0hVyhk3DVWPNn579c+hIU1oTUHWRnGYLz4NiYhzjDzhYOcBs8baWTUtR6KkY5XSXw+UTMj+oYp2czjWPuBRzLHF$HADu1zqSMB5wkL9YQkFArdR7WZeAsl+jIp0gRQUDt192RDIgZb5tTQ8Q0moq1qU9tF6kYuGU2dvZIbcs5Pm8d+UVv+IxoMIEmNu926L7cDjEtvmIBIWnooTCBhOSj6K-JRNccZT$pKh9eCCdsibvFbkVKTV9a8l-yMW-mOwHyRqxJvRbLLxhCFADhkCJhI5Z-D6LcbV9PQpKSqjX2okam-hWaQup09pk1iz+9-+6px06+gY4Iu2x9$8m$$E-qRM4-XGxSbpYJTRayzsDBVE2AmiT1Bn1IvFrzgNqarOlckw-uR5xzVgVBNbZmuJnLscy3bUpJZspx9dYsJLhc7-rsQGNaPHHiO2ITPXvymFYyNllA0TwwRt+tN2JXBNqkKini+xHzaEO$0qR1i8-r8JJlxdsSxZJpghrL1Ac$m89qwtYtnn1DiF1731wqkstbunS1Sozq1U+81UFet7axw+Da+6g$aZGqZRCDnxbXxw1dQrTciB7gVj0aOLoE8IUrTQFC9cjjExkpPyV5tmJk5h-+gtquAy8u$XNqlJeJkbKvQYVIA7wQAhxigDHRouRVbkBUVN2I-1Be-2ipLqGAOOvua6F2eo0vNTLrQ+4dB9opDXnu+hxedVY77IPWnTngd0qKpNJVU+7-QIWFyuE8Yx6+uWvt-MkbG$ex6IgC8rliiJ5BM2gkvuC$2e1rsTFXdlAnbhDcs2RnlzqHJW2MDemMkjF0BKJ4KBaTDeZswA2X5LNi9+2VjgF0Qj-PZLR$uPU+TN1WgBOQdqogcukR1clnB06FYwbSkWysr22dHe6Acd5jsL0l1FbzPFtbte2mPA2-64dWeeWNzaL2OA$UGqxS9M-xMJALiH5Hvs$YvNGyyxd5Tg6c5wF4TmUrP90U4stnMEBOJ6zxTBZ4jG5tIqeKBKPQnLOssggGwgWu0aclAJM6x5bVRLAbsOm6Jhr3Jv2BSpHi2G35ZL3jsbNZac8d5AbvGBMe$U4FChS+OQF+FnwHg7tSZO1kIeOGBv48KlNkm6tZOuFqkJhU3FPTz3bXHDyzAMtc4rto$SAyo6ERClbqFJTzzw3Z3mtVhEigBZtr1eEV9prbzrcs+jwLZmw8Ku3Gov25tHLkG1pv7hQmwUSluHSbL0XsmO2imRsKY86sSB8TdgoRsUwVii9OvubwSgMGGec-EB64hZLm$2ZWUXYV0V+cdKVg6K9i6JdPB4MwZi9q1O6xADqGMK0PrirWXDYuKpplBJdkSkCSrDH3zvMpvL-o$CW2A8pXU6OOTUKhZWU7i$wbdWblYBavy6y2qycbGI6nvcR+GAWBUtgFuwP$3u7wcrcIh$obG"
+  },
+  "responseBody": {
+    "available": false,
+    "size": 0,
+    "reason": "not cached (page cache capture capacity exhausted); export with outputFile to fetch the full body. live fetch failed: response.body: Protocol error (Network.getResponseBody): No resource with given identifier found"
+  },
+  "sizes": {
+    "requestBodySize": 2338,
+    "requestHeadersSize": 1284,
+    "responseBodySize": 80786,
+    "responseHeadersSize": 0
+  },
+  "timing": {
+    "startTime": 1792913093944.731,
+    "domainLookupStart": -1,
+    "domainLookupEnd": -1,
+    "connectStart": -1,
+    "secureConnectionStart": -1,
+    "connectEnd": -1,
+    "requestStart": 0.141,
+    "responseStart": 245.16,
+    "responseEnd": 471.29
+  },
+  "observedAt": 1792913093945
+}

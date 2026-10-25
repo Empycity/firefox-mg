@@ -1,0 +1,56 @@
+[
+  {
+    "path": "gecko-dev/dom/ipc/ContentParent.cpp",
+    "baseline": "verification/baseline/ContentParent.cpp",
+    "before_sha256": "83d4cfb3e3506d514fd41fb4beeb6e3a70641d745798fe864916d86ca47a6d5a",
+    "after_sha256": "8b00740eeef59d9a3e012554eb1dcbcf55b4f339a7b68a76f1de6ac27137861e"
+  },
+  {
+    "path": "gecko-dev/dom/ipc/FirefoxTraceBatchWriter.h",
+    "baseline": null,
+    "before_sha256": null,
+    "after_sha256": "07cbae5f642177801ad5a10aa01b81bfb0fd9c00b8a95d03c4ea1e8d2d2c68d9"
+  },
+  {
+    "path": "patches/gecko-firefox-trace.patch",
+    "baseline": "verification/baseline/gecko-firefox-trace.patch",
+    "before_sha256": "9bf1e34c70b58c0e20dd04f51f47365df742f2d3b046270adcd19aed8231e2f8",
+    "after_sha256": "7b2c160e2ad6263f5012e4b1fea8df250da4aa9f66abf0d5ae2b9fb57fbfabc8"
+  },
+  {
+    "path": "tests/test_trace_batch_writer.py",
+    "baseline": null,
+    "before_sha256": null,
+    "after_sha256": "62977cfef40f608ebc1c6439fc555775f59c7e46265dbe1f4d7fa8a1cbf27a7d"
+  },
+  {
+    "path": "tools/trace-stop-on-target.py",
+    "baseline": "verification/baseline/trace-stop-on-target.py",
+    "before_sha256": "3ddfe5dcc746ccaea970d6ceba187adfe0aaf9f1830926041925dbdfc6f84a37",
+    "after_sha256": "ead0435d38cb243939d674b87296b6d9d82ee7ced7afb1fa412056a3513a9f51"
+  },
+  {
+    "path": "skills/firefox-trace-agent/tools/trace-stop-on-target.py",
+    "baseline": "verification/baseline/trace-stop-on-target.py",
+    "before_sha256": "3ddfe5dcc746ccaea970d6ceba187adfe0aaf9f1830926041925dbdfc6f84a37",
+    "after_sha256": "ead0435d38cb243939d674b87296b6d9d82ee7ced7afb1fa412056a3513a9f51"
+  },
+  {
+    "path": "tests/test_trace_stop_on_target.py",
+    "baseline": "verification/baseline/test_trace_stop_on_target.py",
+    "before_sha256": "8ba8914913a120f09f291b3ade09ba5df62b70fb790f67a871d12313991a1030",
+    "after_sha256": "88180392c05f839ab94990c40147c996ae4a829ccb70e85b4e342552268ca628"
+  },
+  {
+    "path": "tools/install-trace-runtime.sh",
+    "baseline": "verification/baseline/install-trace-runtime.sh",
+    "before_sha256": "2d5f76bba8d5acf75c19e888f021a69d3c8aef2df8ccb17cf0b22859b1e680b2",
+    "after_sha256": "22efd677d3b7e68d25ee333ff1fc3fa72e6758e16181a9196e6837cf50f681e5"
+  },
+  {
+    "path": "skills/firefox-trace-agent/tools/install-trace-runtime.sh",
+    "baseline": "verification/baseline/bundled-install-trace-runtime.sh",
+    "before_sha256": "a7fed0f1d47bc50a106b327fb726315cd56ad48b9ecb1a751f148a2818e0c35e",
+    "after_sha256": "3550119c7ed3d55d3d43a571d5aa84047b05bd165f938936909f78373fa4de3e"
+  }
+]

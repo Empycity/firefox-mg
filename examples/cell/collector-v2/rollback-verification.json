@@ -1,0 +1,31 @@
+{
+  "passed": true,
+  "scope": "Source-only rollback and diff reapplication on an isolated copy, not a rebuilt rollback browser",
+  "file_count": 17,
+  "commands": [
+    {
+      "command": [
+        "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/ROLLBACK.sh",
+        "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill"
+      ],
+      "exit_code": 0,
+      "stdout": "restored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/gecko-dev/js/src/vm/Interpreter.cpp\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/gecko-dev/dom/ipc/ContentChild.cpp\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/patches/gecko-firefox-trace.patch\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/tools/run-trace-firefox.sh\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/skills/firefox-trace-agent/tools/run-trace-firefox.sh\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/tests/test_trace_batch_writer.py\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/docs/TRACE_MODE_PLAYBOOK.md\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/skills/firefox-trace-agent/references/trace-mode-operation-manual.md\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/tools/install-trace-runtime.sh\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/skills/firefox-trace-agent/tools/install-trace-runtime.sh\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/gecko-dev/dom/ipc/ContentParent.cpp\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/tools/trace-stop-on-target.py\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/skills/firefox-trace-agent/tools/trace-stop-on-target.py\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/tests/test_trace_stop_on_target.py\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/examples/cell/.gitignore\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/gecko-dev/js/src/vm/FirefoxTraceValueTransport.h\nrestored /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill/tests/test_trace_value_transport.py\nSource rollback complete. Built runtimes and user traces were not modified.\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/usr/bin/patch",
+        "-p1",
+        "--batch",
+        "--forward",
+        "-i",
+        "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/DIFF.patch",
+        "-d",
+        "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill"
+      ],
+      "exit_code": 0,
+      "stdout": "patching file 'gecko-dev/js/src/vm/Interpreter.cpp'\npatching file 'gecko-dev/dom/ipc/ContentChild.cpp'\npatching file 'patches/gecko-firefox-trace.patch'\npatching file 'tools/run-trace-firefox.sh'\npatching file 'skills/firefox-trace-agent/tools/run-trace-firefox.sh'\npatching file 'tests/test_trace_batch_writer.py'\npatching file 'docs/TRACE_MODE_PLAYBOOK.md'\npatching file 'skills/firefox-trace-agent/references/trace-mode-operation-manual.md'\npatching file 'tools/install-trace-runtime.sh'\npatching file 'skills/firefox-trace-agent/tools/install-trace-runtime.sh'\npatching file 'gecko-dev/dom/ipc/ContentParent.cpp'\npatching file 'tools/trace-stop-on-target.py'\npatching file 'skills/firefox-trace-agent/tools/trace-stop-on-target.py'\npatching file 'tests/test_trace_stop_on_target.py'\npatching file 'examples/cell/.gitignore'\npatching file 'gecko-dev/js/src/vm/FirefoxTraceValueTransport.h'\npatching file 'tests/test_trace_value_transport.py'\n",
+      "stderr": ""
+    }
+  ]
+}

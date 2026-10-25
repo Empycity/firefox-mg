@@ -1,0 +1,35 @@
+{
+  "BASELINE": {
+    "exit_code": 0,
+    "stdout": "{\"events\":350084,\"bytes\":200993170,\"opens\":350084,\"seconds\":14.7494}\n",
+    "stderr": "",
+    "mode": "single",
+    "sha256": "febf90bb85b4403cb61f0877ef4effb22e9c2e2b9358477224a13a6a52cc8823",
+    "events": 350084,
+    "bytes": 200993170,
+    "opens": 350084,
+    "seconds": 14.7494
+  },
+  "MODIFIED": {
+    "exit_code": 0,
+    "stdout": "{\"events\":350084,\"bytes\":200993170,\"opens\":384,\"seconds\":0.321444}\n",
+    "stderr": "",
+    "mode": "batch",
+    "sha256": "febf90bb85b4403cb61f0877ef4effb22e9c2e2b9358477224a13a6a52cc8823",
+    "events": 350084,
+    "bytes": 200993170,
+    "opens": 384,
+    "seconds": 0.321444
+  },
+  "ROLLBACK": {
+    "exit_code": 0,
+    "stdout": "{\"events\":350084,\"bytes\":200993170,\"opens\":350084,\"seconds\":15.727}\n",
+    "stderr": "",
+    "mode": "single",
+    "sha256": "febf90bb85b4403cb61f0877ef4effb22e9c2e2b9358477224a13a6a52cc8823",
+    "events": 350084,
+    "bytes": 200993170,
+    "opens": 350084,
+    "seconds": 15.727
+  }
+}

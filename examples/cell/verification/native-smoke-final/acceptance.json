@@ -1,0 +1,29 @@
+{
+  "passed": true,
+  "fixture": "local-dispatch-v1",
+  "steps": 2000,
+  "elapsed_ms": 271,
+  "heartbeats": 6,
+  "max_heartbeat_gap_ms": 175,
+  "evidence_complete": true,
+  "health_counts": {
+    "dom_bom_events": 8,
+    "raw_events": 200,
+    "runtime_config_acks": 4,
+    "target_field_matches": 1,
+    "target_fields_without_complete_artifact": 0,
+    "trace_degraded": 0,
+    "trace_suppressed": 0,
+    "vm_window_artifacts": 0
+  },
+  "js_value_artifact_count": 1,
+  "script_identity": {
+    "ambiguous_event_count": 0,
+    "joined_event_count": 0,
+    "resource_hash_count": 0,
+    "url_key_count": 0
+  },
+  "source_artifact_count": 1,
+  "fixture_sha256": "d77ac5872e31badb4bde0a720d4efba9671d6fd18026aa08a53affc214520734",
+  "scope": "Local headed regression, not a remote-site no-hang guarantee"
+}

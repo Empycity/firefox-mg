@@ -1,0 +1,70 @@
+[
+  {
+    "path": "gecko-dev/js/src/vm/Interpreter.cpp",
+    "sha256": "e548c578f15bcadc43194be5a34f1fd477518fb93a467dc5659d797f110aadf7"
+  },
+  {
+    "path": "gecko-dev/dom/ipc/ContentChild.cpp",
+    "sha256": "573e407341068e4c6bca6c5e03b0c6406e4f2e12c3add32ad19b0a3b1884f34e"
+  },
+  {
+    "path": "patches/gecko-firefox-trace.patch",
+    "sha256": "7b2c160e2ad6263f5012e4b1fea8df250da4aa9f66abf0d5ae2b9fb57fbfabc8"
+  },
+  {
+    "path": "tools/run-trace-firefox.sh",
+    "sha256": "0697ca74ed1d82d2f803806639c5ee89a4991b433a561a9644c09ec2404dd5ae"
+  },
+  {
+    "path": "skills/firefox-trace-agent/tools/run-trace-firefox.sh",
+    "sha256": "292c757271c231454f6c8e27b3834c2601b83a81941e273977f9d69743bbec24"
+  },
+  {
+    "path": "tests/test_trace_batch_writer.py",
+    "sha256": "62977cfef40f608ebc1c6439fc555775f59c7e46265dbe1f4d7fa8a1cbf27a7d"
+  },
+  {
+    "path": "docs/TRACE_MODE_PLAYBOOK.md",
+    "sha256": "c5c1ea2b35f0e6050c1c2e31ca76c2f099ed0d637772b3278ac04dd146127c6f"
+  },
+  {
+    "path": "skills/firefox-trace-agent/references/trace-mode-operation-manual.md",
+    "sha256": "c5c1ea2b35f0e6050c1c2e31ca76c2f099ed0d637772b3278ac04dd146127c6f"
+  },
+  {
+    "path": "tools/install-trace-runtime.sh",
+    "sha256": "22efd677d3b7e68d25ee333ff1fc3fa72e6758e16181a9196e6837cf50f681e5"
+  },
+  {
+    "path": "skills/firefox-trace-agent/tools/install-trace-runtime.sh",
+    "sha256": "3550119c7ed3d55d3d43a571d5aa84047b05bd165f938936909f78373fa4de3e"
+  },
+  {
+    "path": "gecko-dev/dom/ipc/ContentParent.cpp",
+    "sha256": "8b00740eeef59d9a3e012554eb1dcbcf55b4f339a7b68a76f1de6ac27137861e"
+  },
+  {
+    "path": "gecko-dev/dom/ipc/ContentParent.h",
+    "sha256": "3f1e0361c1765f774d5afd1f307b06f50d4dd59cd142b5fe033e3e37263c1c49"
+  },
+  {
+    "path": "gecko-dev/dom/ipc/PContent.ipdl",
+    "sha256": "c4ebf461f42b011ada268dcb1b77dbb5fa58051c75eaa57a7e848557851c7860"
+  },
+  {
+    "path": "tools/trace-stop-on-target.py",
+    "sha256": "ead0435d38cb243939d674b87296b6d9d82ee7ced7afb1fa412056a3513a9f51"
+  },
+  {
+    "path": "skills/firefox-trace-agent/tools/trace-stop-on-target.py",
+    "sha256": "ead0435d38cb243939d674b87296b6d9d82ee7ced7afb1fa412056a3513a9f51"
+  },
+  {
+    "path": "tests/test_trace_stop_on_target.py",
+    "sha256": "88180392c05f839ab94990c40147c996ae4a829ccb70e85b4e342552268ca628"
+  },
+  {
+    "path": "examples/cell/.gitignore",
+    "sha256": "555453bf05af00e9556ccd62833ece5313efd54097d879fab97235627100cbd5"
+  }
+]

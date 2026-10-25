@@ -1,0 +1,56 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Firefox Trace local dispatch stress</title>
+<h1>本地 Trace 写盘与响应性回归</h1>
+<pre id="status">running</pre>
+<script>
+"use strict";
+// Synthetic arithmetic dispatch only; no captured website code or remote data.
+const operations = [0, 3, 1, 2, 1, 0, 2, 3];
+function dispatch(opcode, value) {
+  switch (opcode) {
+    case 0: return (value + 17) | 0;
+    case 1: return (value ^ 0x13579) | 0;
+    case 2: return Math.imul(value, 33);
+    case 3: return (value >>> 3) | (value << 29);
+  }
+  throw new Error("invalid local opcode");
+}
+function evidenceString() {
+  return "trace-batch-evidence:" + "Q".repeat(4096);
+}
+const start = performance.now();
+let previous = start, maxHeartbeatGapMs = 0, heartbeats = 0, value = 7, steps = 0;
+const timer = setInterval(() => {
+  const now = performance.now();
+  maxHeartbeatGapMs = Math.max(maxHeartbeatGapMs, now - previous);
+  previous = now;
+  heartbeats++;
+}, 16);
+async function run() {
+  while (steps < 2000) {
+    for (let batch = 0; batch < 100; batch++, steps++) {
+      value = dispatch(operations[steps % operations.length], value);
+    }
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  clearInterval(timer);
+  const report = {
+    fixture: "local-dispatch-v1", steps, checksum: value,
+    elapsedMs: performance.now() - start, heartbeats, maxHeartbeatGapMs,
+    evidence: evidenceString(), random: Math.random(), time: Date.now()
+  };
+  const response = await fetch("/complete", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(report)
+  });
+  const accepted = await response.json();
+  if (!response.ok || accepted.ok !== true) throw new Error("local fixture rejected");
+  document.getElementById("status").textContent = JSON.stringify(report, null, 2);
+  document.cookie = "__trace_smoke_finished=ok; Path=/; SameSite=Lax";
+}
+run().catch(error => {
+  clearInterval(timer);
+  document.getElementById("status").textContent = String(error.stack || error);
+});
+</script>

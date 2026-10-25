@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "deleted_agent_owned_paths": [
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/accepted/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/accepted/profile",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/baseline/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/baseline/profile",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/final/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/final/profile",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/ipc-drain/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/ipc-drain/profile",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/modified/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/modified/profile",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/release/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/release/profile",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/rollback-drill",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/tamper-drill",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/.DS_Store",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runtime/.DS_Store",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/validated/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/validated/profile"
+  ],
+  "preserved_user_inputs": [
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/traces/round1",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/traces/round2-values",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/profiles/round2-values",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/runtime/Nightly.app"
+  ],
+  "portable_verified_before_deletion": true,
+  "preserved_unowned_paths": [
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/collector-v2/runs/treatment"
+  ]
+}

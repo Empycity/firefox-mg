@@ -1,0 +1,41 @@
+{
+  "no_owned_browser_or_watchdog_running": true,
+  "checks": [
+    {
+      "receipt": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-release/process-receipt.json",
+      "pids": [
+        4070,
+        4071
+      ],
+      "ps_exit_code": 1,
+      "ps_stdout": ""
+    },
+    {
+      "receipt": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-fixed/process-receipt.json",
+      "pids": [
+        3464,
+        3465
+      ],
+      "ps_exit_code": 1,
+      "ps_stdout": ""
+    },
+    {
+      "receipt": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-final/process-receipt.json",
+      "pids": [
+        3670,
+        3671
+      ],
+      "ps_exit_code": 1,
+      "ps_stdout": ""
+    },
+    {
+      "receipt": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke/process-receipt.json",
+      "pids": [
+        3095,
+        3096
+      ],
+      "ps_exit_code": 1,
+      "ps_stdout": ""
+    }
+  ]
+}

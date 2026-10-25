@@ -1,0 +1,282 @@
+Cell Trace verification (executed; remote Cell rerun NOT RUN)
+
+=== build-sdk26.log ===
+ 0:48.65 W 1059 compiler warnings present.
+ 0:48.73 W Overall system resources - Wall time: 49s; CPU: 0%; Read bytes: 0; Write bytes: 0; Read time: 0; Write time: 0
+ 0:48.73 Your build was successful!
+ /Users/empycity/Desktop/JS-tools/firefoxTrace/gecko-dev/obj-aarch64-apple-darwin25.6.0/config.status is out of date with respect to /Users/empycity/Desktop/JS-tools/firefoxTrace/gecko-dev/obj-aarch64-apple-darwin25.6.0/.mozconfig.json
+Configure complete!
+Be sure to run |mach build| to pick up any changes
+To view a profile of the build, run |mach resource-usage|.
+
+BUILD_EXIT_CODE=0
+
+=== link-regenerated.log ===
+ 0:24.79 warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+ 0:24.79 note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+ 0:25.04 toolkit/library/build/XUL
+ 0:30.17 W 1059 compiler warnings present.
+ 0:30.24 W Overall system resources - Wall time: 30s; CPU: 0%; Read bytes: 0; Write bytes: 0; Read time: 0; Write time: 0
+ 0:30.24 Your build was successful!
+To view a profile of the build, run |mach resource-usage|.
+
+BUILD_EXIT_CODE=0
+
+=== install-final.log ===
+Verified pre-sign XUL SHA-256: 72a6c4b3fedbf0daafba68754acced23cc5307708e7ed19adc0b22c7e1f336cf
+/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/runtime/Nightly.app: replacing existing signature
+/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/runtime/Nightly.app: accepted
+override=security disabled
+Mozilla Firefox 142.0a1
+Installed and ad-hoc signed: /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/runtime/Nightly.app
+
+=== tests.log ===
+.........................................
+----------------------------------------------------------------------
+Ran 41 tests in 2.034s
+
+OK
+
+=== manual-sync-tests.log ===
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+
+=== codesign-verification.txt ===
+EXIT_CODE=0
+
+=== replay-results.json ===
+{
+  "BASELINE": {
+    "exit_code": 0,
+    "stdout": "{\"events\":350084,\"bytes\":200993170,\"opens\":350084,\"seconds\":14.7494}\n",
+    "stderr": "",
+    "mode": "single",
+    "sha256": "febf90bb85b4403cb61f0877ef4effb22e9c2e2b9358477224a13a6a52cc8823",
+    "events": 350084,
+    "bytes": 200993170,
+    "opens": 350084,
+    "seconds": 14.7494
+  },
+  "MODIFIED": {
+    "exit_code": 0,
+    "stdout": "{\"events\":350084,\"bytes\":200993170,\"opens\":384,\"seconds\":0.321444}\n",
+    "stderr": "",
+    "mode": "batch",
+    "sha256": "febf90bb85b4403cb61f0877ef4effb22e9c2e2b9358477224a13a6a52cc8823",
+    "events": 350084,
+    "bytes": 200993170,
+    "opens": 384,
+    "seconds": 0.321444
+  },
+  "ROLLBACK": {
+    "exit_code": 0,
+    "stdout": "{\"events\":350084,\"bytes\":200993170,\"opens\":350084,\"seconds\":15.727}\n",
+    "stderr": "",
+    "mode": "single",
+    "sha256": "febf90bb85b4403cb61f0877ef4effb22e9c2e2b9358477224a13a6a52cc8823",
+    "events": 350084,
+    "bytes": 200993170,
+    "opens": 350084,
+    "seconds": 15.727
+  }
+}
+
+
+=== config-verification.json ===
+{
+  "passed": true,
+  "loader": "TraceDesktopApp.apply_agent_config -> open_payload -> resolve_payload_js_mode/resolve_payload_vm -> startup_env_from_payload",
+  "config_sha256": "3dc901120ef1ebc78491d93a4ce151129eb3b26d623e07cd9c8b8c70c6f2acdd",
+  "checked_environment": {
+    "TRACE_JS_MODE": "boundary",
+    "TRACE_JS_FULL_SPOOL": "1",
+    "TRACE_JS_CAPTURE_VALUES": "1",
+    "TRACE_JS_AUTO_CAPTURE_VALUES": "1",
+    "TRACE_JS_OBJECT_DEPTH": "0",
+    "FIREFOX_TRACE_JS_LIMIT_EVENTS": "0",
+    "TRACE_IPC_MAX_EVENTS_PER_SECOND": "0",
+    "TRACE_IPC_MAX_BYTES_PER_SECOND": "0",
+    "TRACE_DOM_MODE": "signal",
+    "TRACE_DOM_PREVIEW": "all",
+    "TRACE_DOM_CONTRACT": "1",
+    "TRACE_DOM_OBJECT_VALUES": "1",
+    "TRACE_XHR_REQUEST_BODY": "full",
+    "TRACE_XHR_RESPONSE_BODY": "full",
+    "TRACE_FETCH_REQUEST_BODY": "full",
+    "TRACE_FETCH_RESPONSE_BODY": "full",
+    "TRACE_SCRIPT_RESOURCE_STORE": "1",
+    "TRACE_JS_SCRIPT_DUMP": "1",
+    "TRACE_VM_WINDOW": "0",
+    "TRACE_OPCODE": "0",
+    "TRACE_VM_STEP": "0",
+    "TRACE_WASM": "0",
+    "TRACE_WASM_DUMP": "0",
+    "TRACE_WASM_INSN": "0"
+  },
+  "runtime_acceptance": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-release/acceptance.json",
+  "not_run": [
+    "remote cell rerun"
+  ]
+}
+
+=== native-smoke-release/acceptance.json ===
+{
+  "passed": true,
+  "fixture": "local-dispatch-v1",
+  "steps": 2000,
+  "elapsed_ms": 236,
+  "heartbeats": 5,
+  "max_heartbeat_gap_ms": 152,
+  "evidence_complete": true,
+  "health_counts": {
+    "dom_bom_events": 7,
+    "raw_events": 192,
+    "runtime_config_acks": 4,
+    "target_field_matches": 1,
+    "target_fields_without_complete_artifact": 0,
+    "trace_degraded": 0,
+    "trace_suppressed": 0,
+    "vm_window_artifacts": 0
+  },
+  "js_value_artifact_count": 1,
+  "script_identity": {
+    "ambiguous_event_count": 0,
+    "joined_event_count": 0,
+    "resource_hash_count": 0,
+    "url_key_count": 0
+  },
+  "source_artifact_count": 1,
+  "fixture_sha256": "d77ac5872e31badb4bde0a720d4efba9671d6fd18026aa08a53affc214520734",
+  "scope": "Local headed regression, not a remote-site no-hang guarantee"
+}
+
+
+=== native-smoke-release/watchdog.log ===
+{"reason":"target-found","field":"__trace_smoke_finished","field_location":"cookie","event_type":"cookie.set","request_id":null,"url":"http://127.0.0.1:59338/vm-stress.html","source_file":"firefox-cookie-4070.jsonl","bytes_at_stop":173146,"stop_elapsed_seconds":4.089,"elapsed_seconds":4.39,"stop_sent":true,"stop_acknowledged":true,"finalized":true}
+
+
+=== rollback-verification.json ===
+{
+  "restored_files": 9,
+  "destination": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/rollback-drill-final",
+  "baseline_restore_hashes_verified": true,
+  "diff_reconstructs_all_modified_hashes": true,
+  "temporary_copy_removed": true
+}
+
+
+=== process-cleanup.json ===
+{
+  "no_owned_browser_or_watchdog_running": true,
+  "checks": [
+    {
+      "receipt": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-release/process-receipt.json",
+      "pids": [
+        4070,
+        4071
+      ],
+      "ps_exit_code": 1,
+      "ps_stdout": ""
+    },
+    {
+      "receipt": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-fixed/process-receipt.json",
+      "pids": [
+        3464,
+        3465
+      ],
+      "ps_exit_code": 1,
+      "ps_stdout": ""
+    },
+    {
+      "receipt": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-final/process-receipt.json",
+      "pids": [
+        3670,
+        3671
+      ],
+      "ps_exit_code": 1,
+      "ps_stdout": ""
+    },
+    {
+      "receipt": "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke/process-receipt.json",
+      "pids": [
+        3095,
+        3096
+      ],
+      "ps_exit_code": 1,
+      "ps_stdout": ""
+    }
+  ]
+}
+
+
+=== cleanup.json ===
+{
+  "removed_owned_paths": [
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/rollback-drill",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/rollback-drill-final",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/link-check",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/trace-batch-replay",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/gecko-dev/obj-aarch64-apple-darwin27.0.0",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke/profile",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-fixed/profile",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-fixed/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-final/profile",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-final/trace",
+    "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/native-smoke-release/profile"
+  ],
+  "original_round1_sources_unchanged": true,
+  "retained_local_fixture_files": 13,
+  "superseded_handoff_files": 0,
+  "original_runtime_overwritten": false,
+  "source_build_outputs_retained_for_rebuild": true
+}
+
+
+=== final patch / rollback checks ===
+[
+  {
+    "command": [
+      "git",
+      "-C",
+      "gecko-dev",
+      "apply",
+      "--reverse",
+      "--check",
+      "../patches/gecko-firefox-trace.patch"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "/Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/ROLLBACK.sh",
+      "--check"
+    ],
+    "exit_code": 0,
+    "stdout": "{\"verified_files\": 9, \"modified\": false}\n",
+    "stderr": ""
+  }
+]
+
+=== test-suite dependency gap ===
+The broad discovery run in all-tests.log imported an unrelated publishing example and stopped on ModuleNotFoundError: No module named PIL. Trace tests and manual sync were run separately and passed.
+
+=== reproducible microbenchmark build ===
+clang++ -std=c++17 -O2 -Wall -Wextra -Werror -I /Users/empycity/Desktop/JS-tools/firefoxTrace/gecko-dev/dom/ipc /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/lab/trace-batch-replay.cpp -o /Users/empycity/Desktop/JS-tools/firefoxTrace/examples/cell/verification/trace-batch-replay
+Replay CLI: trace-batch-replay INPUT_JSONL NEW_OUTPUT_JSONL single|batch
+Delete the output between repetitions; the program appends by design.

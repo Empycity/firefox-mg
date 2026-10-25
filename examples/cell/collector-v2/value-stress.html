@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Local Trace value transport regression</title>
+<h1>本地大值采集回归</h1><pre id="status">running</pre>
+<script>
+"use strict";
+// Deliberately synthetic; no downloaded scripts, cookies or challenge code.
+const values = [
+  "ASCII:" + "Q".repeat(262144),
+  "NUL:" + "A".repeat(4096) + "\0" + "B".repeat(262144),
+  "UNICODE:" + "中😀\u2028\u2029".repeat(18000)
+];
+function retainEvidence(value, sequence) { return value; }
+function tailEvidence(value) { return value; }
+const started = performance.now();
+let previous = started, heartbeats = 0, maxHeartbeatGapMs = 0;
+const timer = setInterval(() => {
+  const now = performance.now();
+  maxHeartbeatGapMs = Math.max(maxHeartbeatGapMs, now - previous);
+  previous = now;
+  heartbeats++;
+}, 16);
+async function run() {
+  let total = 0;
+  for (let i = 0; i < 48; i++) {
+    total += retainEvidence(values[i % values.length], i).length;
+    await new Promise(resolve => setTimeout(resolve, 8));
+  }
+  const digests = [];
+  for (const value of values) {
+    const bytes = new TextEncoder().encode(value);
+    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    digests.push({size: bytes.length, sha256: Array.from(hash, x => x.toString(16).padStart(2, "0")).join("")});
+  }
+  clearInterval(timer);
+  const report = {fixture: "value-transport-v2", iterations: 48, total,
+    digests, heartbeats, maxHeartbeatGapMs, elapsedMs: performance.now() - started};
+  const response = await fetch("/complete", {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(report)});
+  const accepted = await response.json();
+  if (!response.ok || accepted.ok !== true) throw new Error("local fixture rejected");
+  document.getElementById("status").textContent = JSON.stringify(report, null, 2);
+  document.cookie = "__trace_transport_finished=ok; Path=/; SameSite=Lax";
+  // No request sink follows this call. The control-stop drain must retain it.
+  tailEvidence("TAIL_AFTER_TARGET:value-transport-v2");
+}
+run().catch(error => {
+  clearInterval(timer);
+  document.getElementById("status").textContent = String(error.stack || error);
+});
+</script>
