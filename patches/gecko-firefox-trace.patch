@@ -2696,7 +2696,8 @@ index e3d43bfc7b..ebe185f184 100644
 +
  // Forward declare GetConstructorObjectHandle methods.
  #define HTML_TAG(_tag, _classname, _interfacename)                \
-   namespace HTML##_interfacename##Element_Binding {               \diff --git a/dom/bindings/BindingUtils.h b/dom/bindings/BindingUtils.h
+   namespace HTML##_interfacename##Element_Binding {               \
+diff --git a/dom/bindings/BindingUtils.h b/dom/bindings/BindingUtils.h
 index 77a2ce8002..7a887b4697 100644
 --- a/dom/bindings/BindingUtils.h
 +++ b/dom/bindings/BindingUtils.h
